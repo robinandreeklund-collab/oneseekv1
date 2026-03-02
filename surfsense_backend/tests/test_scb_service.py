@@ -1,4 +1,4 @@
-"""Tests for SCB service, including v2 migration and parallel optimizations."""
+"""Tests for SCB service, including v2 migration, parallel optimizations, and tool definitions."""
 
 from __future__ import annotations
 
@@ -7,8 +7,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
+from app.agents.new_chat.scb_tool_definitions import (
+    SCB_KEYWORD_INDEX,
+    SCB_NORMALIZED_NAMES,
+    SCB_NORMALIZED_TABLE_CODES,
+    SCB_TOOL_DEFINITIONS,
+    _score_tool,
+    retrieve_scb_tools,
+)
 from app.services.scb_service import (
     SCB_BASE_URL_V1,
+    SCB_OUTPUT_FORMATS,
     ScbService,
     ScbTable,
     _extract_years,
@@ -306,6 +315,16 @@ def test_selection_cell_count():
     assert service._selection_cell_count([]) == 0
 
 
+def test_selection_cell_count_empty_values():
+    """BUG-5: _selection_cell_count with empty values list should return 0."""
+    service = ScbService()
+    selections = [
+        {"code": "A", "values": []},
+        {"code": "B", "values": ["x", "y"]},
+    ]
+    assert service._selection_cell_count(selections) == 0
+
+
 def test_split_selection_batches_no_split_needed():
     service = ScbService()
     selections = [{"code": "A", "values": ["1"], "is_time": False, "is_region": False}]
@@ -526,3 +545,317 @@ def test_encode_path():
     # Swedish characters should be percent-encoded
     encoded_swedish = service._encode_path("BE/Ålder")
     assert "%C3%85" in encoded_swedish  # Å encoded
+
+
+# ---------------------------------------------------------------------------
+# TTL-cache tests (OPT-4)
+# ---------------------------------------------------------------------------
+
+
+def test_ttl_cache_type():
+    """Caches should be TTLCache instances, not plain dicts."""
+    from cachetools import TTLCache
+
+    service = ScbService()
+    assert isinstance(service._node_cache, TTLCache)
+    assert isinstance(service._metadata_cache, TTLCache)
+    assert isinstance(service._codelist_cache, TTLCache)
+
+
+def test_ttl_cache_custom_ttl():
+    """Custom cache_ttl should be honoured."""
+    service = ScbService(cache_ttl=120)
+    # TTLCache instances store ttl as attribute
+    assert service._node_cache.ttl == 120
+    assert service._metadata_cache.ttl == 120
+    assert service._codelist_cache.ttl == 120
+
+
+# ---------------------------------------------------------------------------
+# Codelist tests (#16)
+# ---------------------------------------------------------------------------
+
+
+def test_codelist_v1_returns_empty():
+    """v1 service should return empty dict for codelist requests."""
+    service = _make_v1_service()
+    result = asyncio.get_event_loop().run_until_complete(
+        service.get_codelist("some_codelist")
+    )
+    assert result == {}
+
+
+def test_codelist_v2_success():
+    """v2 service should fetch and cache codelists."""
+    service = ScbService(base_url="https://statistikdatabasen.scb.se/api/v2/")
+
+    mock_codelist = {
+        "id": "Regions",
+        "values": [
+            {"code": "00", "label": "Riket"},
+            {"code": "01", "label": "Stockholm"},
+        ],
+    }
+
+    call_count = 0
+
+    async def fake_get_json(url, *, params=None):
+        nonlocal call_count
+        call_count += 1
+        assert "codelists" in url
+        return mock_codelist
+
+    service._get_json = fake_get_json  # type: ignore[method-assign]
+
+    # First call — should fetch from API
+    result1 = asyncio.get_event_loop().run_until_complete(
+        service.get_codelist("Regions")
+    )
+    assert result1["id"] == "Regions"
+    assert call_count == 1
+
+    # Second call — should use cache
+    result2 = asyncio.get_event_loop().run_until_complete(
+        service.get_codelist("Regions")
+    )
+    assert result2["id"] == "Regions"
+    assert call_count == 1  # No additional fetch
+
+
+def test_codelist_v2_http_error():
+    """HTTP errors during codelist fetch should return empty dict."""
+    service = ScbService(base_url="https://statistikdatabasen.scb.se/api/v2/")
+
+    async def fake_get_json(url, *, params=None):
+        raise httpx.HTTPError("Simulated error")
+
+    service._get_json = fake_get_json  # type: ignore[method-assign]
+
+    result = asyncio.get_event_loop().run_until_complete(
+        service.get_codelist("nonexistent")
+    )
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Output format tests (#15)
+# ---------------------------------------------------------------------------
+
+
+def test_output_formats_constant():
+    """SCB_OUTPUT_FORMATS should contain expected formats."""
+    assert "json-stat2" in SCB_OUTPUT_FORMATS
+    assert "csv" in SCB_OUTPUT_FORMATS
+    assert "parquet" in SCB_OUTPUT_FORMATS
+    assert "xlsx" in SCB_OUTPUT_FORMATS
+
+
+def test_query_table_v2_output_format():
+    """v2 query_table should honour output_format parameter."""
+    service = ScbService(base_url="https://statistikdatabasen.scb.se/api/v2/")
+
+    captured_payload = {}
+
+    async def fake_post_json(url, payload):
+        captured_payload.update(payload)
+        return {"data": []}
+
+    service._post_json = fake_post_json  # type: ignore[method-assign]
+
+    v2_payload = {
+        "selection": [
+            {"variableCode": "Tid", "valueCodes": ["2023"]},
+        ],
+        "outputFormat": "json-stat2",
+    }
+    asyncio.get_event_loop().run_until_complete(
+        service.query_table("TAB001", v2_payload, output_format="csv")
+    )
+    assert captured_payload["outputFormat"] == "csv"
+
+
+# ---------------------------------------------------------------------------
+# Parallel BFS tests (OPT-2 + BUG-2)
+# ---------------------------------------------------------------------------
+
+
+def test_collect_tables_parallel_fetch():
+    """collect_tables should fetch multiple branches in parallel."""
+    service = _make_v1_service()
+
+    fetch_order = []
+
+    async def tracking_list_nodes(path: str):
+        fetch_order.append(path)
+        if path == "BE/":
+            return [
+                {"id": "A", "type": "l", "text": "Folder A"},
+                {"id": "B", "type": "l", "text": "Folder B"},
+            ]
+        elif "A" in path:
+            return [{"id": "T1", "type": "t", "text": "Table 1"}]
+        elif "B" in path:
+            return [{"id": "T2", "type": "t", "text": "Table 2"}]
+        return []
+
+    service.list_nodes = tracking_list_nodes  # type: ignore[method-assign]
+
+    tables = asyncio.get_event_loop().run_until_complete(
+        service.collect_tables("BE/", "test", max_concurrent=5, total_timeout=5.0)
+    )
+    assert len(tables) == 2
+    assert len(fetch_order) >= 3  # Root + at least 2 children
+
+
+def test_collect_tables_priority_ordering():
+    """High-scoring branches should be explored before low-scoring ones."""
+    service = _make_v1_service()
+
+    explored = []
+
+    async def tracking_list_nodes(path: str):
+        explored.append(path)
+        if path == "BE/":
+            return [
+                {"id": "Low", "type": "l", "text": "Irrelevant"},
+                {"id": "High", "type": "l", "text": "befolkning"},
+            ]
+        return [{"id": "TAB1", "type": "t", "text": "Some table"}]
+
+    service.list_nodes = tracking_list_nodes  # type: ignore[method-assign]
+
+    asyncio.get_event_loop().run_until_complete(
+        service.collect_tables("BE/", "befolkning", max_concurrent=1, total_timeout=5.0)
+    )
+    # "High" (matching "befolkning") should be explored before or same level as "Low"
+    assert "BE/" in explored
+    high_idx = next((i for i, p in enumerate(explored) if "High" in p), None)
+    low_idx = next((i for i, p in enumerate(explored) if "Low" in p), None)
+    assert high_idx is not None
+    # High-scoring branch should come first
+    if low_idx is not None:
+        assert high_idx <= low_idx
+
+
+# ---------------------------------------------------------------------------
+# Tool definition tests (KQ-3, #17, OPT-7)
+# ---------------------------------------------------------------------------
+
+
+def test_tool_definitions_count():
+    """Should have 47 tool definitions (21 broad + 26 specific)."""
+    assert len(SCB_TOOL_DEFINITIONS) == 47
+
+
+def test_tool_definitions_unique_ids():
+    """All tool IDs should be unique."""
+    ids = [d.tool_id for d in SCB_TOOL_DEFINITIONS]
+    assert len(ids) == len(set(ids))
+
+
+def test_new_tools_present():
+    """5 new tools from #17 should be present."""
+    tool_ids = {d.tool_id for d in SCB_TOOL_DEFINITIONS}
+    assert "scb_befolkning_dodsfall" in tool_ids
+    assert "scb_befolkning_invandring" in tool_ids
+    assert "scb_arbetsmarknad_lonestruktur" in tool_ids
+    assert "scb_handel_detaljhandel" in tool_ids
+    assert "scb_nationalrakenskaper_bnp_kvartal" in tool_ids
+
+
+def test_keyword_index_populated():
+    """OPT-7: Pre-computed keyword index should cover all tools."""
+    assert len(SCB_KEYWORD_INDEX) == len(SCB_TOOL_DEFINITIONS)
+    for definition in SCB_TOOL_DEFINITIONS:
+        assert definition.tool_id in SCB_KEYWORD_INDEX
+        assert len(SCB_KEYWORD_INDEX[definition.tool_id]) == len(definition.keywords)
+
+
+def test_normalized_names_populated():
+    """OPT-7: Pre-computed normalized names should cover all tools."""
+    assert len(SCB_NORMALIZED_NAMES) == len(SCB_TOOL_DEFINITIONS)
+    for definition in SCB_TOOL_DEFINITIONS:
+        assert definition.tool_id in SCB_NORMALIZED_NAMES
+        assert isinstance(SCB_NORMALIZED_NAMES[definition.tool_id], str)
+
+
+def test_normalized_table_codes_populated():
+    """OPT-7: Pre-computed table codes should cover all tools."""
+    assert len(SCB_NORMALIZED_TABLE_CODES) == len(SCB_TOOL_DEFINITIONS)
+
+
+def test_score_tool_uses_precomputed():
+    """_score_tool should produce non-zero score for matching queries."""
+    definition = next(d for d in SCB_TOOL_DEFINITIONS if d.tool_id == "scb_befolkning")
+    score = _score_tool(definition, "befolkning stockholm", {"befolkning", "stockholm"})
+    assert score > 0
+
+
+def test_retrieve_scb_tools_returns_correct_tools():
+    """retrieve_scb_tools should return relevant tools."""
+    tools = retrieve_scb_tools("befolkning folkmangd", limit=3)
+    assert len(tools) == 3
+    # scb_befolkning or scb_befolkning_folkmangd should be high-ranking
+    assert any("befolkning" in t for t in tools)
+
+
+def test_retrieve_scb_tools_new_tool_dodsfall():
+    """New dödsfall tool should be retrievable."""
+    tools = retrieve_scb_tools("dodsfall mortalitet", limit=5)
+    assert "scb_befolkning_dodsfall" in tools
+
+
+def test_retrieve_scb_tools_new_tool_bnp_kvartal():
+    """New BNP kvartal tool should be retrievable."""
+    tools = retrieve_scb_tools("bnp kvartal", limit=5)
+    assert "scb_nationalrakenskaper_bnp_kvartal" in tools
+
+
+def test_retrieve_scb_tools_new_tool_detaljhandel():
+    """New detaljhandel tool should be retrievable."""
+    tools = retrieve_scb_tools("detaljhandel butik", limit=5)
+    assert "scb_handel_detaljhandel" in tools
+
+
+def test_retrieve_scb_tools_empty_query():
+    """Empty-ish query should return first N tools."""
+    tools = retrieve_scb_tools("", limit=2)
+    assert len(tools) == 2
+
+
+# ---------------------------------------------------------------------------
+# Domain fan-out tests
+# ---------------------------------------------------------------------------
+
+
+def test_domain_fan_out_new_categories():
+    """Fan-out config should include handel category."""
+    from app.agents.new_chat.domain_fan_out import SCB_CATEGORIES
+
+    names = {cat.name for cat in SCB_CATEGORIES}
+    assert "handel" in names
+    assert "nationalrakenskaper" in names
+    assert "befolkning" in names
+
+
+def test_domain_fan_out_new_tool_ids_in_categories():
+    """New tool IDs should be included in fan-out categories."""
+    from app.agents.new_chat.domain_fan_out import SCB_CATEGORIES
+
+    all_tool_ids = set()
+    for cat in SCB_CATEGORIES:
+        all_tool_ids.update(cat.tool_ids)
+
+    assert "scb_befolkning_invandring" in all_tool_ids
+    assert "scb_arbetsmarknad_lonestruktur" in all_tool_ids
+    assert "scb_nationalrakenskaper_bnp_kvartal" in all_tool_ids
+    assert "scb_handel_detaljhandel" in all_tool_ids
+
+
+def test_domain_fan_out_select_handel():
+    """Query about handel should select the handel category."""
+    from app.agents.new_chat.domain_fan_out import select_categories
+
+    cats = select_categories("statistik", "detaljhandel i Sverige")
+    cat_names = {c.name for c in cats}
+    assert "handel" in cat_names

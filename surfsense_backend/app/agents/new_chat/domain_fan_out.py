@@ -178,12 +178,12 @@ _TRAFIKVERKET_CATEGORY_TRIGGERS: dict[str, set[str]] = {
 SCB_CATEGORIES = (
     FanOutCategory(
         name="befolkning",
-        tool_ids=("scb_befolkning", "scb_befolkning_folkmangd"),
+        tool_ids=("scb_befolkning", "scb_befolkning_folkmangd", "scb_befolkning_invandring"),
         priority=0,
     ),
     FanOutCategory(
         name="arbetsmarknad",
-        tool_ids=("scb_arbetsmarknad", "scb_arbetsmarknad_arbetsloshet"),
+        tool_ids=("scb_arbetsmarknad", "scb_arbetsmarknad_arbetsloshet", "scb_arbetsmarknad_lonestruktur"),
         priority=1,
     ),
     FanOutCategory(
@@ -213,20 +213,26 @@ SCB_CATEGORIES = (
     ),
     FanOutCategory(
         name="nationalrakenskaper",
-        tool_ids=("scb_nationalrakenskaper",),
+        tool_ids=("scb_nationalrakenskaper", "scb_nationalrakenskaper_bnp_kvartal"),
         priority=7,
+    ),
+    FanOutCategory(
+        name="handel",
+        tool_ids=("scb_handel", "scb_handel_detaljhandel"),
+        priority=8,
     ),
 )
 
 _SCB_CATEGORY_TRIGGERS: dict[str, set[str]] = {
-    "befolkning": {"befolkning", "invånare", "folkmängd", "invandring", "utvandring", "födda", "döda"},
-    "arbetsmarknad": {"arbetsmarknad", "arbetslöshet", "sysselsättning", "lön", "löner", "jobb"},
+    "befolkning": {"befolkning", "invånare", "folkmängd", "invandring", "utvandring", "födda", "döda", "mortalitet"},
+    "arbetsmarknad": {"arbetsmarknad", "arbetslöshet", "sysselsättning", "lön", "löner", "jobb", "lönestruktur", "yrke"},
     "priser": {"pris", "priser", "inflation", "kpi", "konsument"},
     "utbildning": {"utbildning", "skola", "gymnasium", "högskola", "universitet"},
     "naringsliv": {"företag", "foretag", "näringsliv", "omsättning", "nyföretagande"},
     "miljo": {"miljö", "miljo", "utsläpp", "utslapp", "energi", "klimat"},
     "boende": {"boende", "bostad", "bostäder", "bygglov", "nybyggnation", "hyra"},
-    "nationalrakenskaper": {"bnp", "tillväxt", "makro", "nationalräkenskaper", "investering"},
+    "nationalrakenskaper": {"bnp", "tillväxt", "makro", "nationalräkenskaper", "investering", "kvartal"},
+    "handel": {"handel", "detaljhandel", "export", "import", "butik", "e-handel", "dagligvaruhandel"},
 }
 
 

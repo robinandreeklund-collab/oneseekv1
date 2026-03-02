@@ -226,6 +226,7 @@ class Config:
     )
     SCB_MAX_CELLS = int(os.getenv("SCB_MAX_CELLS", "150000"))
     SCB_TIMEOUT = float(os.getenv("SCB_TIMEOUT", "25.0"))
+    SCB_CACHE_TTL = int(os.getenv("SCB_CACHE_TTL", "3600"))
 
     GEOCODING_USER_AGENT = os.getenv("GEOCODING_USER_AGENT")
     JOBAD_LINKS_BASE_URL = os.getenv("JOBAD_LINKS_BASE_URL")

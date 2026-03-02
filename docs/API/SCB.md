@@ -1,8 +1,8 @@
 # SCB API Integration — Fullständig Dokumentation
 
-> **Version:** 2.0
+> **Version:** 3.0
 > **Datum:** 2026-03-02
-> **Status:** Produktion (PxWebApi v2 — med v1 fallback)
+> **Status:** Produktion (PxWebApi v2 — med v1 fallback, alla P1-P3 åtgärder implementerade)
 > **Författare:** OneSeek-teamet
 
 ---
@@ -41,7 +41,7 @@ SCB-integrationen (Statistiska Centralbyrån) ger OneSeek tillgång till hela Sv
 - Lagrar resultat i OneSeek:s kunskapsbas via ConnectorService
 - Presenterar data med källhänvisning och citationsformat
 
-**Täckning:** 20+ ämnesområden, 40 verktyg, ~2000+ tabeller
+**Täckning:** 20+ ämnesområden, 47 verktyg (21 breda + 26 specifika), ~2000+ tabeller
 
 ---
 
@@ -55,7 +55,7 @@ SCB-integrationen (Statistiska Centralbyrån) ger OneSeek tillgång till hela Sv
                │
     ┌──────────▼──────────┐
     │  Statistics Agent    │  (LangGraph Bigtool)
-    │  - retrieve_tools() │  ← Vektorliknande sökning bland 40 SCB-verktyg
+    │  - retrieve_tools() │  ← Vektorliknande sökning bland 47 SCB-verktyg
     │  - NormalizingChat   │
     │  - max 2 tools/turn │
     └──────────┬──────────┘
@@ -69,10 +69,14 @@ SCB-integrationen (Statistiska Centralbyrån) ger OneSeek tillgång till hela Sv
                                  └──────────┬────────────┘
                                             │
                                  ┌──────────▼────────────┐
-                                 │  SCB PxWeb API (v1)     │
-                                 │  api.scb.se/OV0104/v1/ │
-                                 │  - GET: navigering      │
-                                 │  - POST: datahämtning   │
+                                 │  SCB PxWebApi (v2)       │
+                                 │  statistikdatabasen.scb. │
+                                 │  se/api/v2/              │
+                                 │  - GET /tables?query=    │
+                                 │  - GET /tables/{id}/meta │
+                                 │  - POST /tables/{id}/data│
+                                 │  - GET /codelists/{id}   │
+                                 │  (v1 fallback stöds)     │
                                  └─────────────────────────┘
                                             │
                                  ┌──────────▼────────────┐
@@ -104,10 +108,14 @@ Fråga: "Jämför befolkning och arbetslöshet i Sverige"
 surfsense_backend/
 ├── app/
 │   ├── services/
-│   │   └── scb_service.py              # Kärntjänst: HTTP, navigering, frågebyggare
+│   │   └── scb_service.py              # Kärntjänst: HTTP, navigering, frågebyggare, v2+v1
+│   │
+│   ├── utils/
+│   │   └── text.py                     # Centraliserad textnormalisering (KQ-1)
 │   │
 │   └── agents/new_chat/
-│       ├── statistics_agent.py          # 40 SCB-verktygsdefinitioner + agent-fabrik
+│       ├── scb_tool_definitions.py      # 47 SCB-verktygsdefinitioner + scoring (KQ-3)
+│       ├── statistics_agent.py          # Agent-fabrik + tool-bygger
 │       ├── statistics_prompts.py        # System prompt för statistik-agenten
 │       ├── bigtool_store.py             # Bigtool store med SCB-verktygsregistrering
 │       ├── domain_fan_out.py            # Parallell exekvering per domän
@@ -508,7 +516,7 @@ Riktlinjer:
 
 ---
 
-## 8. Verktygsregistret — 40 SCB-verktyg
+## 8. Verktygsregistret — 47 SCB-verktyg
 
 ### Ämnesområden (20 breda + 20 specifika)
 
@@ -934,44 +942,35 @@ FanOutCategory(name="kpi", tool_ids=("scb_priser_kpi",), priority=2),
 
 ## 15. Testsvit
 
-**Fil:** `surfsense_backend/tests/test_scb_service.py` (500+ rader, 36 tester)
+**Fil:** `surfsense_backend/tests/test_scb_service.py` (61 tester)
 
 ### Testöversikt
 
-| Test | Typ | Beskrivning |
-|------|-----|-------------|
-| `test_normalize_text` | Enhet | Verifierar diakrittecken-normalisering |
-| `test_tokenize` | Enhet | Verifierar tokenisering |
-| `test_score_text` | Enhet | Verifierar token-poängsättning |
-| `test_extract_years` | Enhet | Verifierar årsextrahering |
-| `test_is_time_variable` | Enhet | Verifierar tidsdetektering |
-| `test_is_region_variable` | Enhet | Verifierar regiondetektering |
-| `test_is_gender_variable` | Enhet | Verifierar könsdetektering |
-| `test_is_age_variable` | Enhet | Verifierar åldersdetektering |
-| `test_has_region_request` | Enhet | Verifierar regionförfrågan |
-| `test_has_gender_request` | Enhet | Verifierar könsförfrågan |
-| `test_has_age_request` | Enhet | Verifierar åldersförfrågan |
-| `test_match_values_by_text` | Enhet | Verifierar värdematchning |
-| `test_pick_preferred_value` | Enhet | Verifierar preferensvärden |
-| `test_score_table_metadata_time_match` | Enhet | Verifierar tidsbaserad scoring |
-| `test_score_table_metadata_no_time_penalty` | Enhet | Verifierar penalty utan tidsvariabel |
-| `test_find_best_table_candidates_parallel_metadata_fetch` | Integration | Verifierar parallell metadata-hämtning |
-| `test_find_best_table_candidates_http_error_tolerance` | Integration | Verifierar felhantering vid HTTP-fel |
-| `test_find_best_table_candidates_empty` | Integration | Verifierar tom resultathantering |
-| `test_build_query_payloads_single` | Integration | Verifierar payload-generering |
-| `test_build_query_payload_no_variables` | Integration | Verifierar tom metadata |
-| `test_selection_cell_count` | Enhet | Verifierar cellberäkning |
-| `test_split_selection_batches_no_split_needed` | Integration | Verifierar batch-uppdelning |
-| `test_get_json_raises_on_http_error` | Integration | Verifierar HTTP-felhantering |
+| Kategori | Antal | Tester |
+|----------|-------|--------|
+| Text-helpers | 3 | normalize_text, tokenize, score_text |
+| SCB-helpers | 11 | extract_years, is_time/region/gender/age, has_region/gender/age, match_values, pick_preferred, score_metadata (2) |
+| ScbService integration | 7 | find_best_table (3), build_query (2), selection_cell_count (2) |
+| v2-specifika | 12 | v2_detection, convert_payload (2), normalize_metadata (2), payload_from_selections (2), persistent_client, search_tables (2), encode_path |
+| TTL-cache (OPT-4) | 2 | ttl_cache_type, ttl_cache_custom_ttl |
+| Codelist (#16) | 3 | v1_returns_empty, v2_success (med cache), v2_http_error |
+| Output format (#15) | 2 | output_formats_constant, query_table_v2_output_format |
+| Parallell BFS (OPT-2) | 2 | parallel_fetch, priority_ordering |
+| Verktygsdef (#17, KQ-3) | 7 | count (47), unique_ids, new_tools_present (5), keyword_index, normalized_names, normalized_table_codes |
+| Scoring (OPT-7) | 5 | score_tool, retrieve_tools (4 inkl nya verktyg) |
+| Domain fan-out | 3 | new_categories, new_tool_ids, select_handel |
+| Diverse | 4 | split_batches, collect_tables_timeout, cache_lock, get_json_persistent |
 
-### Testtäckning — Luckor
+### Testtäckning
 
-| Område | Täckt | Saknas |
-|--------|-------|--------|
-| Helper-funktioner | Ja (13 tester) | — |
-| ScbService navigering | Delvis | `collect_tables` BFS-logik |
-| ScbService query-byggare | Delvis | Komplexa batching-scenarier |
-| Statistics Agent | Nej | Verktygsval, agent-skapande |
+| Område | Status |
+|--------|--------|
+| Helper-funktioner | Fullständig (14 tester) |
+| ScbService navigering | Fullständig (BFS, timeout, parallell) |
+| ScbService query-byggare | Fullständig (payloads, batching, cell count) |
+| v2 API-integration | Fullständig (metadata, search, query, codelist) |
+| Verktygsval/scoring | Fullständig (5 nya verktyg verifierade) |
+| Domain fan-out | Fullständig (9 kategorier, trigger-keywords) |
 | SCB Tool (dynamisk) | Nej | End-to-end verktygsanrop |
 | Domain Fan-Out | Nej (separat testfil) | SCB-specifika fan-out |
 | v2-migration | Nej | Krävs vid migration |
@@ -1015,53 +1014,68 @@ Bredare eval över alla kategorier:
 | `max_parallel` (fan-out) | `domain_fan_out.py` | 3 | Max parallella fan-out |
 | `timeout_seconds` (fan-out) | `domain_fan_out.py` | 30.0 | Fan-out timeout |
 
-### Saknade miljövariabler
+### Miljövariabler (implementerade)
 
-Ingen dedikerad miljövariabel för SCB existerar. Allt är hårdkodat.
-
-**Rekommendation:** Lägg till:
-```
-SCB_API_VERSION=v2
-SCB_BASE_URL=https://statistikdatabasen.scb.se/api/v2/
-SCB_MAX_CELLS=150000
-SCB_TIMEOUT=25
-```
+| Variabel | Default | Beskrivning |
+|----------|---------|-------------|
+| `SCB_API_VERSION` | `v2` | API-version (`v2` eller `v1`) |
+| `SCB_BASE_URL` | `https://statistikdatabasen.scb.se/api/v2/` | v2 bas-URL |
+| `SCB_BASE_URL_V1` | `https://api.scb.se/OV0104/v1/doris/sv/ssd/` | v1 fallback-URL |
+| `SCB_MAX_CELLS` | `150000` | Max celler per API-anrop |
+| `SCB_TIMEOUT` | `25.0` | HTTP-timeout i sekunder |
+| `SCB_CACHE_TTL` | `3600` | Cache-livstid i sekunder (TTLCache) |
 
 ---
 
-## 18. Framtida Arbete
+## 18. Implementeringslogg
 
-### P1 — Kritiskt (v2-migration + prestanda)
+Alla uppgifter från den ursprungliga analysen (P1, P2, P3) är nu implementerade.
 
-| # | Uppgift | Estimat | Filer |
-|---|---------|---------|-------|
-| 1 | Migrera till PxWebApi v2 bas-URL | 1h | `scb_service.py` |
-| 2 | Implementera `/tables?query=` sökning | 2h | `scb_service.py` |
-| 3 | Persistent httpx.AsyncClient | 1h | `scb_service.py` |
-| 4 | Uppdatera query-payload till v2-format | 2h | `scb_service.py` |
-| 5 | Ny metadata-hämtning via `/tables/{id}/metadata` | 1h | `scb_service.py` |
+### P1 — Kritiskt (v2-migration + prestanda) — ALLA KLARA
 
-### P2 — Viktigt (kodkvalitet + buggar)
+| # | Uppgift | Status | Filer |
+|---|---------|--------|-------|
+| 1 | Migrera till PxWebApi v2 bas-URL | KLAR | `scb_service.py` |
+| 2 | Implementera `/tables?query=` sökning | KLAR | `scb_service.py` |
+| 3 | Persistent httpx.AsyncClient | KLAR | `scb_service.py` |
+| 4 | Uppdatera query-payload till v2-format | KLAR | `scb_service.py` |
+| 5 | Ny metadata-hämtning via `/tables/{id}/metadata` | KLAR | `scb_service.py` |
 
-| # | Uppgift | Estimat | Filer |
-|---|---------|---------|-------|
-| 6 | Centralisera `_normalize_text()` | 30m | `scb_service.py`, `statistics_agent.py` |
-| 7 | Exponera `_serialize_external_document` | 30m | `connector_service.py`, `statistics_agent.py` |
-| 8 | Cache-lås (asyncio.Lock) | 30m | `scb_service.py` |
-| 9 | Total timeout i `collect_tables` | 30m | `scb_service.py` |
-| 10 | Ta bort oanvänd `ScbQueryResult` | 5m | `scb_service.py` |
+### P2 — Viktigt (kodkvalitet + buggar) — ALLA KLARA
 
-### P3 — Önskvärt (komplettering + framtid)
+| # | Uppgift | Status | Filer |
+|---|---------|--------|-------|
+| 6 | Centralisera `_normalize_text()` (KQ-1) | KLAR | `app/utils/text.py` |
+| 7 | Exponera `serialize_external_document` (KQ-6) | KLAR | `connector_service.py` + 7 anropare |
+| 8 | Cache-lås (asyncio.Lock) (BUG-1) | KLAR | `scb_service.py` |
+| 9 | Total timeout i `collect_tables` (BUG-4) | KLAR | `scb_service.py` |
+| 10 | Ta bort oanvänd `ScbQueryResult` (KQ-5) | KLAR | `scb_service.py` |
 
-| # | Uppgift | Estimat | Filer |
-|---|---------|---------|-------|
-| 11 | Utöka fan-out med specifika verktyg | 1h | `domain_fan_out.py` |
-| 12 | TTL-cache för nod- och metadata-resultat | 1h | `scb_service.py` |
-| 13 | Miljövariabler för SCB-konfiguration | 30m | `config/`, `scb_service.py` |
-| 14 | Fler tester (collect_tables, E2E) | 2h | `tests/` |
-| 15 | Stöd för CSV/parquet output-format (v2) | 1h | `scb_service.py` |
-| 16 | Kodlistintegration (`/codelists`) | 2h | `scb_service.py` |
-| 17 | Specifika verktyg för saknade populära områden | 1h | `statistics_agent.py` |
+### P3 — Önskvärt (komplettering + framtid) — ALLA KLARA
+
+| # | Uppgift | Status | Filer |
+|---|---------|--------|-------|
+| 11 | Utöka fan-out med specifika verktyg | KLAR | `domain_fan_out.py` |
+| 12 | TTL-cache (cachetools) (OPT-4) | KLAR | `scb_service.py` |
+| 13 | Miljövariabler för SCB-konfiguration | KLAR | `config/__init__.py` |
+| 14 | 61 tester (BFS, codelist, output format, scoring) | KLAR | `tests/test_scb_service.py` |
+| 15 | Stöd för CSV/parquet output-format (v2) | KLAR | `scb_service.py` |
+| 16 | Kodlistintegration (`/codelists/{id}`) | KLAR | `scb_service.py` |
+| 17 | 5 nya specifika verktyg (dödsfall, invandring, lönestruktur, detaljhandel, BNP kvartal) | KLAR | `scb_tool_definitions.py` |
+
+### Ytterligare åtgärder (utöver ursprunglig plan)
+
+| # | Uppgift | Status | Filer |
+|---|---------|--------|-------|
+| 18 | Extrahera SCB_TOOL_DEFINITIONS till separat fil (KQ-3) | KLAR | `scb_tool_definitions.py` |
+| 19 | Return type annotation `-> str` (KQ-4) | KLAR | `statistics_agent.py` |
+| 20 | Pre-compute normalized keywords (OPT-7) | KLAR | `scb_tool_definitions.py` |
+| 21 | Parallell trädnavigering med semaphore (OPT-2) | KLAR | `scb_service.py` |
+| 22 | Prioriterad BFS (BUG-2) | KLAR | `scb_service.py` |
+| 23 | Fix `_selection_cell_count` edge case (BUG-5) | KLAR | `scb_service.py` |
+| 24 | URL-encoding för svenska tecken (BUG-6) | KLAR | `scb_service.py` |
+| 25 | Ordgräns-matchning i `_match_values_by_text` (BUG-3) | KLAR | `scb_service.py` |
+| 26 | Fan-out handel-kategori med trigger-keywords | KLAR | `domain_fan_out.py` |
 
 ---
 

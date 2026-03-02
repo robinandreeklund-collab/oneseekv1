@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import quote as url_quote
 
 import httpx
+from cachetools import TTLCache
 
 from app.utils.text import (
     normalize_text as _normalize_text,
@@ -39,6 +40,12 @@ SCB_BASE_URL = SCB_BASE_URL_V2 if SCB_API_VERSION == "v2" else SCB_BASE_URL_V1
 
 SCB_MAX_CELLS = int(os.getenv("SCB_MAX_CELLS", "150000"))
 SCB_DEFAULT_TIMEOUT = float(os.getenv("SCB_TIMEOUT", "25.0"))
+SCB_CACHE_TTL = int(os.getenv("SCB_CACHE_TTL", "3600"))  # 1 hour default
+
+# v2 output formats
+SCB_OUTPUT_FORMATS = frozenset({
+    "json-stat2", "csv", "xlsx", "parquet", "html", "px", "json-px",
+})
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -252,16 +259,24 @@ class ScbService:
         base_url: str = SCB_BASE_URL,
         timeout: float = SCB_DEFAULT_TIMEOUT,
         max_cells: int = SCB_MAX_CELLS,
+        cache_ttl: int = SCB_CACHE_TTL,
     ) -> None:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
         self.max_cells = max_cells
         self._is_v2 = "/api/v2" in self.base_url
         self._client: httpx.AsyncClient | None = None
-        # Caches with lock (BUG-1 fix)
+        # TTL caches with lock (OPT-4 + BUG-1 fix)
         self._cache_lock = asyncio.Lock()
-        self._node_cache: dict[str, list[dict[str, Any]]] = {}
-        self._metadata_cache: dict[str, dict[str, Any]] = {}
+        self._node_cache: TTLCache[str, list[dict[str, Any]]] = TTLCache(
+            maxsize=1000, ttl=cache_ttl,
+        )
+        self._metadata_cache: TTLCache[str, dict[str, Any]] = TTLCache(
+            maxsize=500, ttl=cache_ttl,
+        )
+        self._codelist_cache: TTLCache[str, dict[str, Any]] = TTLCache(
+            maxsize=200, ttl=cache_ttl,
+        )
 
     # -- Lifecycle -----------------------------------------------------------
 
@@ -381,15 +396,29 @@ class ScbService:
         max_nodes: int = 140,
         max_children: int = 8,
         total_timeout: float = 60.0,
+        max_concurrent: int = 5,
     ) -> list[ScbTable]:
-        """BFS through v1 tree structure. Used as fallback when v2 search unavailable."""
+        """Priority-BFS through v1 tree, with parallel node fetching (OPT-2).
+
+        Uses a semaphore-bounded parallel fetch for each BFS level, and
+        prioritises high-scoring branches (BUG-2 fix: depth-first for scored
+        branches avoids broad nodes consuming the whole node budget).
+        """
         query_tokens = set(_tokenize(query))
-        queue: list[tuple[str, int, tuple[str, ...]]] = [
-            (base_path.rstrip("/") + "/", 0, ())
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        # Priority queue: (negative_score, depth, path, breadcrumb)
+        # Using negative score so lower = better when sorted ascending
+        queue: list[tuple[int, int, str, tuple[str, ...]]] = [
+            (0, 0, base_path.rstrip("/") + "/", ())
         ]
         seen: set[str] = set()
         tables: list[ScbTable] = []
         deadline = asyncio.get_event_loop().time() + total_timeout
+
+        async def _fetch_bounded(path: str) -> list[dict[str, Any]]:
+            async with semaphore:
+                return await self.list_nodes(path)
 
         while queue and len(tables) < max_tables and len(seen) < max_nodes:
             # BUG-4 fix: total timeout
@@ -397,53 +426,72 @@ class ScbService:
                 logger.warning("collect_tables timed out after %.0fs", total_timeout)
                 break
 
-            current_path, depth, breadcrumb = queue.pop(0)
-            if current_path in seen:
-                continue
-            seen.add(current_path)
+            # BUG-2 fix: sort queue by priority (highest score first)
+            queue.sort(key=lambda item: (item[0], item[1]))
 
-            try:
-                items = await self.list_nodes(current_path)
-            except httpx.HTTPError:
-                continue
-
-            children: list[tuple[int, str, int, tuple[str, ...]]] = []
-            for item in items:
-                item_id = str(item.get("id") or "").strip()
-                if not item_id:
+            # OPT-2: Batch-fetch up to max_concurrent paths at same priority level
+            batch_paths: list[tuple[int, int, str, tuple[str, ...]]] = []
+            while queue and len(batch_paths) < max_concurrent:
+                entry = queue.pop(0)
+                neg_score, depth, path, breadcrumb = entry
+                if path in seen:
                     continue
-                item_type = str(item.get("type") or "").strip().lower()
-                item_text = str(item.get("text") or item_id)
-                if item_type == "t":
-                    table_path = f"{current_path}{item_id}"
-                    tables.append(
-                        ScbTable(
-                            id=item_id,
-                            path=table_path,
-                            title=item_text,
-                            updated=item.get("updated"),
-                            breadcrumb=breadcrumb,
-                        )
-                    )
-                    if len(tables) >= max_tables:
-                        break
-                elif item_type == "l" and depth < max_depth:
-                    score = _score_text(query_tokens, f"{item_id} {item_text}")
-                    next_path = f"{current_path}{item_id}/"
-                    next_breadcrumb = (*breadcrumb, item_text)
-                    children.append((score, next_path, depth + 1, next_breadcrumb))
+                seen.add(path)
+                batch_paths.append(entry)
 
-            if children:
-                children.sort(key=lambda item: item[0], reverse=True)
-                if depth <= 1:
-                    selected = children
-                else:
-                    selected = [child for child in children if child[0] > 0]
-                    if len(selected) < max_children:
-                        selected = children[:max_children]
-                queue.extend(
-                    [(path, next_depth, next_breadcrumb) for _, path, next_depth, next_breadcrumb in selected]
-                )
+            if not batch_paths:
+                continue
+
+            # Parallel fetch for this batch
+            fetch_tasks = [_fetch_bounded(entry[2]) for entry in batch_paths]
+            try:
+                results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            except Exception:
+                continue
+
+            for (_neg_score, depth, current_path, breadcrumb), items in zip(
+                batch_paths, results, strict=False
+            ):
+                if isinstance(items, Exception):
+                    continue
+                if not isinstance(items, list):
+                    continue
+
+                children: list[tuple[int, int, str, tuple[str, ...]]] = []
+                for item in items:
+                    item_id = str(item.get("id") or "").strip()
+                    if not item_id:
+                        continue
+                    item_type = str(item.get("type") or "").strip().lower()
+                    item_text = str(item.get("text") or item_id)
+                    if item_type == "t":
+                        table_path = f"{current_path}{item_id}"
+                        tables.append(
+                            ScbTable(
+                                id=item_id,
+                                path=table_path,
+                                title=item_text,
+                                updated=item.get("updated"),
+                                breadcrumb=breadcrumb,
+                            )
+                        )
+                        if len(tables) >= max_tables:
+                            break
+                    elif item_type == "l" and depth < max_depth:
+                        score = _score_text(query_tokens, f"{item_id} {item_text}")
+                        next_path = f"{current_path}{item_id}/"
+                        next_breadcrumb = (*breadcrumb, item_text)
+                        children.append((-score, depth + 1, next_path, next_breadcrumb))
+
+                if children:
+                    children.sort(key=lambda item: (item[0], item[1]))
+                    if depth <= 1:
+                        selected = children
+                    else:
+                        selected = [child for child in children if child[0] < 0]
+                        if len(selected) < max_children:
+                            selected = children[:max_children]
+                    queue.extend(selected)
 
         return tables
 
@@ -627,20 +675,76 @@ class ScbService:
         )
         return best_table
 
+    # -- Codelist Integration (#16) -----------------------------------------
+
+    async def get_codelist(self, codelist_id: str, *, lang: str = "sv") -> dict[str, Any]:
+        """Fetch a codelist via v2 GET /codelists/{id}.
+
+        Codelists provide centralised value mappings (e.g. region codes →
+        names) that can be reused across multiple tables.  Only available
+        on v2.
+        """
+        if not self._is_v2:
+            return {}
+
+        cache_key = f"cl:{codelist_id}:{lang}"
+        async with self._cache_lock:
+            if cache_key in self._codelist_cache:
+                return dict(self._codelist_cache[cache_key])
+
+        url = f"{self.base_url}codelists/{url_quote(codelist_id, safe='')}"
+        try:
+            data = await self._get_json(url, params={"lang": lang})
+        except httpx.HTTPError as exc:
+            logger.warning("codelist fetch failed for %s: %s", codelist_id, exc)
+            return {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        async with self._cache_lock:
+            self._codelist_cache[cache_key] = data
+        return data
+
     # -- Data Retrieval -----------------------------------------------------
 
-    async def query_table(self, table_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Execute a data query. Uses v2 or v1 format automatically."""
+    async def query_table(
+        self,
+        table_path: str,
+        payload: dict[str, Any],
+        *,
+        output_format: str = "json-stat2",
+    ) -> dict[str, Any]:
+        """Execute a data query. Uses v2 or v1 format automatically.
+
+        Args:
+            table_path: Table ID (v2) or path (v1).
+            payload: Query payload in v1 or v2 format.
+            output_format: Response format — 'json-stat2' (default), 'csv',
+                'xlsx', 'parquet', 'html', 'px', 'json-px'.  Non-json formats
+                only supported on v2.
+        """
         if self._is_v2:
-            return await self._query_table_v2(table_path, payload)
+            return await self._query_table_v2(table_path, payload, output_format=output_format)
         return await self._query_table_v1(table_path, payload)
 
-    async def _query_table_v2(self, table_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _query_table_v2(
+        self,
+        table_id: str,
+        payload: dict[str, Any],
+        *,
+        output_format: str = "json-stat2",
+    ) -> dict[str, Any]:
         clean_id = table_id.strip("/")
         url = f"{self.base_url}tables/{url_quote(clean_id, safe='')}/data"
 
         # Convert v1 payload format to v2 if needed
         v2_payload = self._convert_payload_to_v2(payload)
+
+        # Override output format if requested (#15)
+        if output_format and output_format in SCB_OUTPUT_FORMATS:
+            v2_payload["outputFormat"] = output_format
+
         data = await self._post_json(url, v2_payload)
         if isinstance(data, dict):
             return data
@@ -875,8 +979,14 @@ class ScbService:
         }
 
     def _selection_cell_count(self, selections: list[dict[str, Any]]) -> int:
-        lengths = [max(len(sel.get("values") or []), 1) for sel in selections]
-        return prod(lengths) if lengths else 0
+        """Count total cells as product of all value-list lengths.
+
+        Returns 0 if any variable has zero values (BUG-5 fix).
+        """
+        lengths = [len(sel.get("values") or []) for sel in selections]
+        if not lengths or any(n == 0 for n in lengths):
+            return 0
+        return prod(lengths)
 
     def _choose_split_index(
         self, selections: list[dict[str, Any]]
