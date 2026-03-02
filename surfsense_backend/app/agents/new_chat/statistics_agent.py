@@ -125,7 +125,7 @@ def _build_scb_tool(
                 if index - 1 < len(batch_summaries):
                     entry["selection"] = batch_summaries[index - 1]
                 data_batches.append(entry)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, UnicodeDecodeError, ValueError) as exc:
             return json.dumps(
                 {"error": f"SCB request failed: {exc!s}"}, ensure_ascii=True
             )

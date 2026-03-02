@@ -636,6 +636,34 @@ def test_get_json_with_persistent_client():
     asyncio.get_event_loop().run_until_complete(service.close())
 
 
+def test_decode_json_response_latin1_fallback():
+    """_decode_json_response falls back to Latin-1 when UTF-8 fails."""
+    # Simulate a response with Latin-1 encoded Swedish text
+    latin1_body = '{"region": "Göteborgs kommun", "år": "2024"}'.encode("latin-1")
+
+    mock_response = MagicMock()
+    # response.json() raises UnicodeDecodeError because body isn't valid UTF-8
+    mock_response.json = MagicMock(
+        side_effect=UnicodeDecodeError("utf-8", latin1_body, 13, 14, "invalid continuation byte")
+    )
+    mock_response.content = latin1_body
+
+    result = ScbService._decode_json_response(mock_response)
+    assert result["region"] == "Göteborgs kommun"
+    assert result["år"] == "2024"
+
+
+def test_decode_json_response_utf8_works():
+    """_decode_json_response uses response.json() when UTF-8 works."""
+    expected = {"region": "Göteborgs kommun"}
+    mock_response = MagicMock()
+    mock_response.json = MagicMock(return_value=expected)
+
+    result = ScbService._decode_json_response(mock_response)
+    assert result == expected
+    mock_response.json.assert_called_once()
+
+
 def test_encode_path():
     """_encode_path should encode all path segments."""
     service = ScbService()

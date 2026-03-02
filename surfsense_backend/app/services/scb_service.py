@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -313,13 +314,35 @@ class ScbService:
         client = self._get_client()
         response = await client.get(url, params=params)
         response.raise_for_status()
-        return response.json()
+        return self._decode_json_response(response)
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
         client = self._get_client()
         response = await client.post(url, json=payload)
         response.raise_for_status()
-        return response.json()
+        return self._decode_json_response(response)
+
+    @staticmethod
+    def _decode_json_response(response: httpx.Response) -> Any:
+        """Decode JSON from an httpx response, handling encoding mismatches.
+
+        Some SCB endpoints declare charset=utf-8 but return Latin-1 bytes
+        (e.g. Swedish characters å/ä/ö encoded as single bytes).  This
+        method falls back to Latin-1 decoding when UTF-8 fails.
+        """
+        try:
+            return response.json()
+        except UnicodeDecodeError:
+            raw = response.content
+            for encoding in ("latin-1", "cp1252"):
+                try:
+                    text = raw.decode(encoding)
+                    return json.loads(text)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+            # Last resort: replace bad bytes
+            text = raw.decode("utf-8", errors="replace")
+            return json.loads(text)
 
     # -- v2 Table Search (OPT-3) --------------------------------------------
 
