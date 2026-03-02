@@ -1860,7 +1860,7 @@ export default function NewChatPage() {
 																...p.responses,
 																[dpeRound]: {
 																	...(existing ?? { round: dpeRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }),
-																	text: existing?.text ?? dpePreview,
+																	text: existing?.text || dpePreview,
 																	wordCount: dpeWordCount,
 																	latencyMs: dpeLatency,
 																	status: "complete",
@@ -2925,7 +2925,7 @@ export default function NewChatPage() {
 												return { ...prev, participants: prev.participants.map((p) => {
 													if (p.display !== dpeM2) return p;
 													const ex = p.responses[dpeR2];
-													return { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(ex ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: ex?.text ?? dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } };
+													return { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(ex ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: ex?.text || dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } };
 												}) };
 											});
 											break;

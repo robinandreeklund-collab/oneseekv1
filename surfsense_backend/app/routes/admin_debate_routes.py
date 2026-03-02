@@ -11,18 +11,24 @@ Fixes applied:
 - KQ-02: Import voice map from debate_voice.py (single source of truth)
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
 import os
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.new_chat.debate_voice import DEFAULT_OPENAI_VOICE_MAP
+from app.agents.new_chat.debate_voice import (
+    DEFAULT_CARTESIA_VOICE_MAP,
+    DEFAULT_OPENAI_VOICE_MAP,
+)
 from app.db import SearchSpaceMembership, User, get_async_session
 from app.users import current_active_user
 
@@ -36,7 +42,8 @@ REDIS_KEY = "debate:voice_settings"
 DEFAULT_VOICE_MAP = DEFAULT_OPENAI_VOICE_MAP
 
 # Default max token budget per participant response
-DEFAULT_MAX_TOKENS = 500
+# Keep in sync with debate_executor.DEFAULT_MAX_RESPONSE_TOKENS
+DEFAULT_MAX_TOKENS = 2000
 
 # SEC-02: Simple in-memory rate limiting (per-user, 10 writes per minute)
 _rate_limit_store: dict[str, list[float]] = {}
@@ -193,6 +200,19 @@ async def get_debate_voice_settings(
             await r.aclose()
 
     return DebateVoiceSettingsResponse(settings=DebateVoiceSettings())
+
+
+# ── GET /admin/debate/voice-defaults ─────────────────────────────────
+# OPT-13: Single source of truth for voice maps — frontend can fetch
+# these instead of maintaining a local copy.
+
+@router.get("/debate/voice-defaults")
+async def get_debate_voice_defaults() -> dict[str, Any]:
+    """Return default voice maps so the frontend doesn't need local copies."""
+    return {
+        "openai": dict(DEFAULT_OPENAI_VOICE_MAP),
+        "cartesia": dict(DEFAULT_CARTESIA_VOICE_MAP),
+    }
 
 
 # ── PUT /admin/debate/voice-settings ─────────────────────────────────

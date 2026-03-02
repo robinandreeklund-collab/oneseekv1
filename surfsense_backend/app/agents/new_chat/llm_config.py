@@ -13,6 +13,7 @@ managing prompt configurations.
 from dataclasses import dataclass
 from pathlib import Path
 
+import litellm
 import yaml
 from langchain_litellm import ChatLiteLLM
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.llm_service import (
     LMStudioCompatibleChatLiteLLM,
     _is_lm_studio_api_base,
+    _sanitize_api_base_for_provider,
 )
 from app.services.llm_router_service import (
     AUTO_MODE_ID,
@@ -366,6 +368,10 @@ def create_chat_litellm_from_config(llm_config: dict) -> ChatLiteLLM | None:
     Returns:
         ChatLiteLLM instance or None on error
     """
+    # Reset global litellm.api_base — ChatLiteLLM mutates it on every
+    # instantiation, so a previous provider's base URL can leak across calls.
+    litellm.api_base = None
+
     # Build the model string
     if llm_config.get("custom_provider"):
         model_string = f"{llm_config['custom_provider']}/{llm_config['model_name']}"
@@ -374,6 +380,8 @@ def create_chat_litellm_from_config(llm_config: dict) -> ChatLiteLLM | None:
         provider_prefix = PROVIDER_MAP.get(provider, provider.lower())
         model_string = f"{provider_prefix}/{llm_config['model_name']}"
 
+    provider = llm_config.get("provider", "").upper()
+
     # Create ChatLiteLLM instance with streaming enabled
     litellm_kwargs = {
         "model": model_string,
@@ -381,14 +389,19 @@ def create_chat_litellm_from_config(llm_config: dict) -> ChatLiteLLM | None:
         "streaming": True,  # Enable streaming for real-time token streaming
     }
 
-    # Add optional parameters
-    api_base = _sanitize_config_value(llm_config.get("api_base"))
+    # Add optional parameters — sanitize api_base per provider
+    api_base = _sanitize_api_base_for_provider(
+        _sanitize_config_value(llm_config.get("api_base")), provider,
+    )
     if api_base:
         litellm_kwargs["api_base"] = api_base
 
     # Add any additional litellm parameters
     if llm_config.get("litellm_params"):
-        litellm_kwargs.update(llm_config["litellm_params"])
+        extra = {**llm_config["litellm_params"]}
+        # Prevent litellm_params from re-injecting a raw api_base
+        extra.pop("api_base", None)
+        litellm_kwargs.update(extra)
 
     chat_cls = (
         LMStudioCompatibleChatLiteLLM
@@ -413,6 +426,10 @@ def create_chat_litellm_from_agent_config(
     Returns:
         ChatLiteLLM or ChatLiteLLMRouter instance, or None on error
     """
+    # Reset global litellm.api_base — ChatLiteLLM mutates it on every
+    # instantiation, so a previous provider's base URL can leak across calls.
+    litellm.api_base = None
+
     # Handle Auto mode - return ChatLiteLLMRouter
     if agent_config.is_auto_mode:
         if not _ensure_auto_mode_router_initialized():
@@ -440,14 +457,18 @@ def create_chat_litellm_from_agent_config(
         "streaming": True,  # Enable streaming for real-time token streaming
     }
 
-    # Add optional parameters
-    api_base = _sanitize_config_value(agent_config.api_base)
+    # Add optional parameters — sanitize api_base per provider
+    api_base = _sanitize_api_base_for_provider(
+        _sanitize_config_value(agent_config.api_base), agent_config.provider,
+    )
     if api_base:
         litellm_kwargs["api_base"] = api_base
 
     # Add any additional litellm parameters
     if agent_config.litellm_params:
-        litellm_kwargs.update(agent_config.litellm_params)
+        extra = {**agent_config.litellm_params}
+        extra.pop("api_base", None)
+        litellm_kwargs.update(extra)
 
     chat_cls = (
         LMStudioCompatibleChatLiteLLM

@@ -182,13 +182,25 @@ class LLMRouterService:
                 "api_key": config.get("api_key"),
             }
 
-            # Add optional api_base
-            if config.get("api_base"):
-                litellm_params["api_base"] = config["api_base"]
+            # Add optional api_base — but skip for Anthropic to avoid
+            # double /v1 (LiteLLM's native handler already knows the URL)
+            raw_api_base = config.get("api_base", "")
+            cfg_provider = config.get("provider", "").upper()
+            if raw_api_base and cfg_provider != "ANTHROPIC":
+                litellm_params["api_base"] = raw_api_base
+            elif raw_api_base and cfg_provider == "ANTHROPIC":
+                cleaned = raw_api_base.rstrip("/")
+                if cleaned.endswith("/v1"):
+                    cleaned = cleaned[:-3]
+                if cleaned and cleaned != "https://api.anthropic.com":
+                    litellm_params["api_base"] = cleaned
 
             # Add any additional litellm parameters
             if config.get("litellm_params"):
-                litellm_params.update(config["litellm_params"])
+                extra = {**config["litellm_params"]}
+                if cfg_provider == "ANTHROPIC":
+                    extra.pop("api_base", None)
+                litellm_params.update(extra)
 
             # Extract rate limits if provided
             deployment = {

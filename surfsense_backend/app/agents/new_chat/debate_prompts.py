@@ -219,10 +219,11 @@ Din uppgift:
 3. Presentera ditt huvudargument.
 
 Regler:
-- Max 300 ord.
+- Skriv 200–300 ord. Sikta på minst 200 ord.
 - Var tydlig med din position.
 - Du kommer se andra deltagares introduktioner i kommande rundor.
 - Skriv naturligt och engagerande, som i en riktig debatt.
+- Svara med löpande text (inga JSON, inga kodblock, inga listor med bullet points).
 """.strip()
 
 DEBATE_ROUND2_ARGUMENT_PROMPT = """
@@ -235,9 +236,10 @@ Din uppgift:
 3. Referera explicit till vad andra deltagare sagt.
 
 Regler:
-- Max 500 ord.
+- Skriv 300–500 ord. Sikta på minst 300 ord.
 - Var specifik — namnge andra deltagare: "Som Claude nämnde...", "Jag vill utmana Groks påstående att..."
 - Presentera evidens och resonemang.
+- Svara med löpande text (inga JSON, inga kodblock).
 """.strip()
 
 DEBATE_ROUND3_DEEPENING_PROMPT = """
@@ -250,10 +252,11 @@ Din uppgift:
 3. Presentera din starkaste slutargumentation.
 
 Regler:
-- Max 500 ord.
+- Skriv 300–500 ord. Sikta på minst 300 ord.
 - Bemöt specifika motargument.
 - Stärk din position med nya perspektiv eller evidens.
 - Var intellektuellt ärlig — erkänn giltiga poänger från motståndare.
+- Svara med löpande text (inga JSON, inga kodblock).
 """.strip()
 
 DEBATE_ROUND4_VOTING_PROMPT = """
@@ -265,15 +268,17 @@ VIKTIGT:
 - Du får INTE rösta på dig själv.
 - Rösta på den deltagare som presenterade de mest övertygande argumenten.
 - Basera din röst på argumentkvalitet, faktagrundning och hur väl de bemötte motargument.
+- Du MÅSTE välja exakt en deltagare ur listan du får.
 
-Du MÅSTE svara med EXAKT detta JSON-format och INGET ANNAT:
-{
-  "voted_for": "namn på den deltagare du röstar på",
-  "short_motivation": "En kort motivering (max 200 tecken)",
-  "three_bullets": ["• Punkt 1", "• Punkt 2", "• Punkt 3"]
-}
+Svara ENBART med ett JSON-objekt, utan markdown, utan kodblock, utan förklaringar. Exakt detta format:
 
-Svara ENDAST med JSON. Ingen annan text.
+{"voted_for": "Grok", "short_motivation": "Starkaste faktagrundade argument", "three_bullets": ["Punkt 1", "Punkt 2", "Punkt 3"]}
+
+Regler för JSON-svaret:
+- "voted_for" MÅSTE vara exakt ett av namnen i deltagarlistan (ej dig själv).
+- "short_motivation" max 200 tecken.
+- "three_bullets" exakt 3 strängar som sammanfattar varför du röstar så.
+- Inget annat innehåll — bara JSON-objektet.
 """.strip()
 
 

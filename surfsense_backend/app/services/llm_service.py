@@ -64,6 +64,30 @@ def _is_lm_studio_api_base(api_base: str | None) -> bool:
     return host in {"localhost", "127.0.0.1", "::1"} and port == 1234
 
 
+def _sanitize_api_base_for_provider(api_base: str | None, provider: str) -> str | None:
+    """Strip or drop api_base when it would break the native LiteLLM handler.
+
+    For Anthropic the native SDK already knows the correct URL.  Passing
+    *any* api_base makes LiteLLM fall back to an OpenAI-compat code path
+    that prepends /v1 again → ``POST /v1/v1/messages``.
+    """
+    if not api_base:
+        return None
+
+    upper = provider.upper() if provider else ""
+
+    if upper == "ANTHROPIC":
+        cleaned = api_base.rstrip("/")
+        if cleaned.endswith("/v1"):
+            cleaned = cleaned[:-3]
+        # Default Anthropic URL → drop it, let LiteLLM handle natively
+        if cleaned in ("https://api.anthropic.com", ""):
+            return None
+        return cleaned
+
+    return api_base
+
+
 class LMStudioCompatibleChatLiteLLM(ChatLiteLLM):
     """
     LM Studio chat templates are strict around null values in request payloads.
@@ -478,6 +502,9 @@ async def validate_llm_config(
             provider_prefix = provider_map.get(provider, provider.lower())
             model_string = f"{provider_prefix}/{model_name}"
 
+        # Reset global litellm.api_base to prevent cross-provider pollution
+        litellm.api_base = None
+
         # Create ChatLiteLLM instance
         litellm_kwargs = {
             "model": model_string,
@@ -485,13 +512,16 @@ async def validate_llm_config(
             "timeout": 30,  # Set a timeout for validation
         }
 
-        # Add optional parameters
+        # Add optional parameters — sanitize for provider
+        api_base = _sanitize_api_base_for_provider(api_base, provider)
         if api_base:
             litellm_kwargs["api_base"] = api_base
 
         # Add any additional litellm parameters
         if litellm_params:
-            litellm_kwargs.update(litellm_params)
+            extra = {**litellm_params}
+            extra.pop("api_base", None)
+            litellm_kwargs.update(extra)
 
         chat_cls = (
             LMStudioCompatibleChatLiteLLM
@@ -631,21 +661,30 @@ async def get_search_space_llm_instance(
                 )
                 model_string = f"{provider_prefix}/{global_config['model_name']}"
 
+            # Reset global litellm.api_base to prevent cross-provider pollution
+            litellm.api_base = None
+
             # Create ChatLiteLLM instance from global config
             litellm_kwargs = {
                 "model": model_string,
                 "api_key": global_config["api_key"],
             }
 
-            if global_config.get("api_base"):
-                litellm_kwargs["api_base"] = global_config["api_base"]
+            gc_provider = global_config.get("provider", "")
+            gc_api_base = _sanitize_api_base_for_provider(
+                global_config.get("api_base"), gc_provider,
+            )
+            if gc_api_base:
+                litellm_kwargs["api_base"] = gc_api_base
 
             if global_config.get("litellm_params"):
-                litellm_kwargs.update(global_config["litellm_params"])
+                extra = {**global_config["litellm_params"]}
+                extra.pop("api_base", None)
+                litellm_kwargs.update(extra)
 
             chat_cls = (
                 LMStudioCompatibleChatLiteLLM
-                if _is_lm_studio_api_base(global_config.get("api_base"))
+                if _is_lm_studio_api_base(gc_api_base)
                 else ChatLiteLLM
             )
             return chat_cls(**litellm_kwargs)
@@ -706,23 +745,36 @@ async def get_search_space_llm_instance(
             )
             model_string = f"{provider_prefix}/{llm_config.model_name}"
 
+        # Reset global litellm.api_base to prevent cross-provider pollution
+        litellm.api_base = None
+
         # Create ChatLiteLLM instance
         litellm_kwargs = {
             "model": model_string,
             "api_key": llm_config.api_key,
         }
 
-        # Add optional parameters
-        if llm_config.api_base:
-            litellm_kwargs["api_base"] = llm_config.api_base
+        # Add optional parameters — sanitize for provider
+        db_provider = (
+            llm_config.provider.value
+            if hasattr(llm_config.provider, "value")
+            else str(llm_config.provider)
+        )
+        db_api_base = _sanitize_api_base_for_provider(
+            llm_config.api_base, db_provider,
+        )
+        if db_api_base:
+            litellm_kwargs["api_base"] = db_api_base
 
         # Add any additional litellm parameters
         if llm_config.litellm_params:
-            litellm_kwargs.update(llm_config.litellm_params)
+            extra = {**llm_config.litellm_params}
+            extra.pop("api_base", None)
+            litellm_kwargs.update(extra)
 
         chat_cls = (
             LMStudioCompatibleChatLiteLLM
-            if _is_lm_studio_api_base(llm_config.api_base)
+            if _is_lm_studio_api_base(db_api_base)
             else ChatLiteLLM
         )
         return chat_cls(**litellm_kwargs)

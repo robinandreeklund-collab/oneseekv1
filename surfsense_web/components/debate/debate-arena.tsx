@@ -531,7 +531,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 					<CollapsibleContent>
 						{displayText ? (
 							<CardContent className="border-t border-border px-4 py-3">
-								<p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+								<p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground" style={{ overflowWrap: "anywhere" }}>
 									{displayText}
 									{isTextStreaming && <span className="animate-pulse text-primary text-base">▍</span>}
 								</p>

@@ -343,9 +343,15 @@ export function useDebateAudio(enabled: boolean) {
 		const int16 = new Int16Array(merged.buffer, merged.byteOffset, merged.byteLength / 2);
 
 		try {
-			// Dynamic import to avoid Next.js webpack resolution issues with CJS
-			const lamejs = await import("lamejs");
-			const encoder = new lamejs.Mp3Encoder(PCM_CHANNELS, PCM_SAMPLE_RATE, MP3_KBPS);
+			// Dynamic import — lamejs is CJS so the module may land on .default
+			const lamejsModule = await import("lamejs");
+			const lamejs = (lamejsModule as Record<string, unknown>).default ?? lamejsModule;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const Mp3Encoder = (lamejs as any).Mp3Encoder;
+			if (!Mp3Encoder) {
+				throw new Error("Mp3Encoder not found in lamejs module");
+			}
+			const encoder = new Mp3Encoder(PCM_CHANNELS, PCM_SAMPLE_RATE, MP3_KBPS);
 
 			const mp3Parts: BlobPart[] = [];
 			const SAMPLES_PER_FRAME = 1152;
