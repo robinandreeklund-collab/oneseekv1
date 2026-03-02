@@ -31,6 +31,12 @@ import {
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+	MODEL_LOGOS as SHARED_MODEL_LOGOS,
+	ENERGY_WH_PER_1K_TOKENS,
+	CO2G_PER_1K_TOKENS,
+	formatLatency,
+} from "@/lib/compare-constants";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
@@ -150,16 +156,10 @@ const TOOL_TO_DOMAIN: Record<string, string> = {
 	call_oneseek: "research",
 };
 
-const MODEL_LOGOS: Record<string, string> = {
-	call_grok: "/model-logos/grok.png",
-	call_gpt: "/model-logos/chatgpt.png",
-	call_claude: "/model-logos/claude.png",
-	call_gemini: "/model-logos/gemini.png",
-	call_deepseek: "/model-logos/deepseek.png",
-	call_perplexity: "/model-logos/perplexity.png",
-	call_qwen: "/model-logos/qwen.png",
-	call_oneseek: "/model-logos/oneseek.png",
-};
+// MODEL_LOGOS: simplified accessor using shared mapping
+const MODEL_LOGOS: Record<string, string> = Object.fromEntries(
+	Object.entries(SHARED_MODEL_LOGOS).map(([k, v]) => [k, v.src]),
+);
 
 const PHASE_LABELS: { id: ArenaPhase; label: string }[] = [
 	{ id: "fanout", label: "Fan-out" },
@@ -189,9 +189,7 @@ const SCORE_TEXT_COLORS: Record<keyof ModelScore, string> = {
 	korrekthet: "text-violet-500",
 };
 
-// CO2 / energy constants (same as compare-model.tsx)
-const ENERGY_WH_PER_1K_TOKENS = 0.2;
-const CO2G_PER_1K_TOKENS = 0.1;
+// CO2 / energy constants imported from @/lib/compare-constants
 
 // ============================================================================
 // Helpers
@@ -290,11 +288,7 @@ function totalScore(s: ModelScore): number {
 	return s.relevans + s.djup + s.klarhet + s.korrekthet;
 }
 
-function formatLatency(ms: number | null): string {
-	if (ms === null) return "";
-	if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-	return `${Math.round(ms)}ms`;
-}
+// formatLatency imported from @/lib/compare-constants
 
 function formatTokens(meta: ModelMeta): string {
 	const t = meta.tokens;
@@ -744,28 +738,40 @@ const ExpandableResponse: FC<{
 	);
 };
 
+// ── Shared criteria finalization helper (BUG-06 fix) ────────────────────────
+
+function useCriteriaFinalized(model: RankedModel) {
+	const liveScores = useContext(LiveCriterionContext);
+	const livePods = useContext(LiveCriterionPodContext);
+
+	const domainLive = liveScores[model.domain];
+	const domainPods = livePods[model.domain] || model.criterionPodInfo;
+	const hasFinalFromResult =
+		Object.keys(model.criterionPodInfo).length === 4 ||
+		(model.hasRealScores && !domainLive);
+	const allLiveDone = domainLive
+		? domainLive.relevans != null &&
+			domainLive.djup != null &&
+			domainLive.klarhet != null &&
+			domainLive.korrekthet != null
+		: false;
+	return {
+		criteriaFinalized: hasFinalFromResult || allLiveDone,
+		isEvaluating:
+			model.status === "complete" && !(hasFinalFromResult || allLiveDone),
+		domainLive,
+		domainPods,
+	};
+}
+
 // ── Duel card (top-2 models) ────────────────────────────────────────────────
 
 const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 	model,
 	delay = 0,
 }) => {
-	const liveScores = useContext(LiveCriterionContext);
-	const livePods = useContext(LiveCriterionPodContext);
-
-	// Determine per-criterion evaluation state from live SSE data
-	const domainLive = liveScores[model.domain];
-	const domainPods = livePods[model.domain] || model.criterionPodInfo;
-	// "Criteria finalized" = tool result has criterion_scores (model_complete arrived)
-	// or all 4 live criterion scores have arrived.
-	const hasFinalScoresFromResult = Object.keys(model.criterionPodInfo).length === 4
-		|| (model.hasRealScores && !domainLive);
-	const allLiveDone = domainLive
-		? (domainLive.relevans != null && domainLive.djup != null && domainLive.klarhet != null && domainLive.korrekthet != null)
-		: false;
-	const criteriaFinalized = hasFinalScoresFromResult || allLiveDone;
-	// Show spinners when model has a response but criteria aren't all done yet
-	const isEvaluating = model.status === "complete" && !criteriaFinalized;
+	const { criteriaFinalized, isEvaluating, domainLive, domainPods } =
+		useCriteriaFinalized(model);
 
 	if (model.status === "running") {
 		return (
@@ -932,18 +938,8 @@ const RunnerUpCard: FC<{
 	model: RankedModel;
 	delay?: number;
 }> = ({ model, delay = 0 }) => {
-	const liveScores = useContext(LiveCriterionContext);
-	const livePods = useContext(LiveCriterionPodContext);
-
-	const domainLive = liveScores[model.domain];
-	const domainPods = livePods[model.domain] || model.criterionPodInfo;
-	const hasFinalScoresFromResult2 = Object.keys(model.criterionPodInfo).length === 4
-		|| (model.hasRealScores && !domainLive);
-	const allLiveDone2 = domainLive
-		? (domainLive.relevans != null && domainLive.djup != null && domainLive.klarhet != null && domainLive.korrekthet != null)
-		: false;
-	const criteriaFinalized2 = hasFinalScoresFromResult2 || allLiveDone2;
-	const isEvaluating = model.status === "complete" && !criteriaFinalized2;
+	const { criteriaFinalized, isEvaluating, domainLive, domainPods } =
+		useCriteriaFinalized(model);
 
 	if (model.status === "running") {
 		return (
@@ -1019,7 +1015,7 @@ const RunnerUpCard: FC<{
 								compact
 								animate={model.hasRealScores}
 								isEvaluating={isEvaluating}
-								isComplete={domainLive?.[key] != null || criteriaFinalized2}
+								isComplete={domainLive?.[key] != null || criteriaFinalized}
 							/>
 						))}
 					</div>

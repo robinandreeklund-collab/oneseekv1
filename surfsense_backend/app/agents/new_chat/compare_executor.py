@@ -23,13 +23,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import re
+import time
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from app.agents.new_chat.compare_criterion_evaluator import evaluate_model_response
 from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.agents.new_chat.tools.external_models import (
@@ -283,8 +285,11 @@ def build_compare_subagent_spawner_node(
                 runtime_hitl=hitl,
                 reason="criterion-complete",
             )
-        except Exception:
-            pass  # non-critical
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[%s/%s]: criterion pod release failed (non-critical): %s",
+                domain, criterion, exc,
+            )
 
     async def _run_external_model_domain(
         domain: str,
@@ -294,6 +299,7 @@ def build_compare_subagent_spawner_node(
         on_criterion_complete: Any | None = None,
         thread_id: str = "",
         config: Any = None,
+        research_context: str | None = None,
     ) -> dict[str, Any]:
         """Execute a single external model as a subagent."""
         spec_data = plan_data.get("spec", {})
@@ -307,8 +313,6 @@ def build_compare_subagent_spawner_node(
         for attempt in range(_max_retries_external + 1):
             try:
                 # Create a minimal spec-like object
-                from types import SimpleNamespace
-
                 spec = SimpleNamespace(**spec_data)
                 result = await asyncio.wait_for(
                     _call_external(spec=spec, query=user_query),
@@ -364,8 +368,11 @@ def build_compare_subagent_spawner_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass  # non-critical
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[%s]: model_response_ready dispatch failed: %s",
+                domain, exc,
+            )
 
         # Run 4 parallel criterion evaluations if model returned successfully
         criterion_scores: dict[str, int] = {}
@@ -381,23 +388,22 @@ def build_compare_subagent_spawner_node(
                     {"domain": domain, "timestamp": time.time()},
                     config=config,
                 )
-            except Exception:
-                pass
-
-            try:
-                from app.agents.new_chat.compare_criterion_evaluator import (
-                    evaluate_model_response,
+            except Exception as exc:
+                logger.debug(
+                    "compare_executor[%s]: criterion_evaluation_started dispatch failed: %s",
+                    domain, exc,
                 )
 
+            try:
                 eval_result = await evaluate_model_response(
                     domain=domain,
                     model_response=response_text,
                     model_display_name=spec_data.get("display", domain),
                     user_query=user_query,
-                    research_context=None,
+                    research_context=research_context,
                     llm=llm,
                     extract_json_fn=extract_first_json_object_fn,
-                    timeout_seconds=90,
+                    timeout_seconds=30,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
                     # Criterion evaluators are LLM API calls — they run
@@ -513,8 +519,11 @@ def build_compare_subagent_spawner_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass  # non-critical
+        except Exception as exc:
+            logger.debug(
+                "compare_executor[research]: model_response_ready dispatch failed: %s",
+                exc,
+            )
 
         # Run 4 parallel criterion evaluations (same as external models)
         criterion_scores: dict[str, int] = {}
@@ -529,23 +538,22 @@ def build_compare_subagent_spawner_node(
                     {"domain": "research", "timestamp": time.time()},
                     config=config,
                 )
-            except Exception:
-                pass
-
-            try:
-                from app.agents.new_chat.compare_criterion_evaluator import (
-                    evaluate_model_response,
+            except Exception as exc:
+                logger.debug(
+                    "compare_executor[research]: criterion_evaluation_started dispatch failed: %s",
+                    exc,
                 )
 
+            try:
                 eval_result = await evaluate_model_response(
                     domain="research",
                     model_response=response_text,
                     model_display_name="OneSeek Research",
                     user_query=user_query,
-                    research_context=None,
+                    research_context=response_text,
                     llm=llm,
                     extract_json_fn=extract_first_json_object_fn,
-                    timeout_seconds=90,
+                    timeout_seconds=30,
                     on_criterion_complete=on_criterion_complete,
                     prompt_overrides=criterion_prompt_overrides,
                     acquire_criterion_pod_fn=None,
@@ -668,8 +676,11 @@ def build_compare_subagent_spawner_node(
                 await adispatch_custom_event(
                     "criterion_complete", event_data, config=config,
                 )
-            except Exception:
-                pass  # non-critical: fallback to batched emission
+            except Exception as exc:
+                logger.debug(
+                    "compare_executor[%s/%s]: criterion_complete dispatch failed: %s",
+                    domain, criterion, exc,
+                )
 
         # Generate subagent IDs with sandbox scope info
         domain_subagent_ids: dict[str, str] = {}
@@ -710,6 +721,12 @@ def build_compare_subagent_spawner_node(
         # model cards as they arrive (not all at once after gather).
         model_complete_events: list[dict[str, Any]] = []
 
+        # Shared research context: research domain sets this when complete,
+        # external model criterion evaluators can wait for it (BUG-03 fix).
+        _research_done = asyncio.Event()
+        _research_context_holder: dict[str, str | None] = {"text": None}
+        _research_wait_timeout = 15  # seconds to wait for research before proceeding without it
+
         # Execute all domains in parallel
         semaphore = asyncio.Semaphore(10)
 
@@ -722,12 +739,33 @@ def build_compare_subagent_spawner_node(
                         config=config,
                         on_criterion_complete=_on_criterion_complete,
                     )
+                    # Store research response for other domains' korrekthet eval
+                    raw_res = domain_result.get("raw_result", {})
+                    res_text = raw_res.get("response", "")
+                    if res_text:
+                        _research_context_holder["text"] = res_text
+                    _research_done.set()
                 else:
+                    # Wait for research context before criterion eval (short timeout)
+                    research_ctx: str | None = None
+                    try:
+                        await asyncio.wait_for(
+                            _research_done.wait(),
+                            timeout=_research_wait_timeout,
+                        )
+                        research_ctx = _research_context_holder["text"]
+                    except TimeoutError:
+                        logger.debug(
+                            "compare_executor[%s]: research context not available "
+                            "within %ds, proceeding without it",
+                            domain, _research_wait_timeout,
+                        )
                     domain_result = await _run_external_model_domain(
                         domain, plan_data, user_query, subagent_id,
                         on_criterion_complete=_on_criterion_complete,
                         thread_id=_thread_id,
                         config=config,
+                        research_context=research_ctx,
                     )
 
                 # Fire model-complete event immediately (while other models still run)
@@ -759,8 +797,11 @@ def build_compare_subagent_spawner_node(
                     await adispatch_custom_event(
                         "model_complete", mc_event, config=config,
                     )
-                except Exception:
-                    pass  # non-critical: fallback to batched emission
+                except Exception as exc:
+                    logger.debug(
+                        "compare_executor[%s]: model_complete dispatch failed: %s",
+                        domain, exc,
+                    )
 
                 return domain_result
 
@@ -948,14 +989,20 @@ def _build_synthesis_from_convergence(
             blocks.append(f"  - {c}")
         blocks.append("")
 
-    # Model scores: prefer criterion_scores from handoffs over convergence
-    model_scores = convergence.get("model_scores", {})
-    # Also collect scores from subagent summaries (criterion evaluator)
+    # Model scores: prefer handoff criterion_scores (actual isolated evaluator
+    # scores) over convergence model_scores (LLM-generated merge scores).
+    # This matches the frontend's score priority (BUG-05 fix).
+    model_scores: dict[str, Any] = {}
+    # First: collect actual criterion_scores from handoff summaries
     for s in summaries:
         domain = s.get("domain", "unknown")
         cs = s.get("criterion_scores", {})
-        if cs and domain not in model_scores:
+        if cs:
             model_scores[domain] = cs
+    # Fill in missing domains from convergence as fallback
+    for domain, scores in convergence.get("model_scores", {}).items():
+        if domain not in model_scores:
+            model_scores[domain] = scores
     if model_scores:
         blocks.append("PER-MODELL POÄNG (från kriterie-bedömning):")
         for domain, scores in model_scores.items():
@@ -1074,6 +1121,14 @@ _LEAKED_JSON_FIELDS = (
 # Regex alternation for the field names above
 _FIELD_ALT = "|".join(re.escape(f) for f in _LEAKED_JSON_FIELDS)
 
+# Pre-compiled regex patterns (avoid re-compilation on every call)
+_ARENA_DATA_BLOCK_RE = re.compile(
+    r"```spotlight-arena-data\s*\n[\s\S]*?```\s*\n?",
+)
+_JSON_FENCED_BLOCK_RE = re.compile(
+    r"```json\s*\n[\s\S]*?```\s*\n?",
+)
+
 # Pattern: a JSON object (possibly multi-line) whose first key is one of
 # the known leaked fields.  Handles both compact `{ "key": ... }` and
 # pretty-printed multi-line variants.
@@ -1103,18 +1158,10 @@ def _sanitize_synthesis_text(text: str) -> str:
         return text
 
     # 1. Remove the ```spotlight-arena-data block (frontend extracts it separately)
-    cleaned = re.sub(
-        r"```spotlight-arena-data\s*\n[\s\S]*?```\s*\n?",
-        "",
-        text,
-    )
+    cleaned = _ARENA_DATA_BLOCK_RE.sub("", text)
 
     # 2. Remove any ```json ... ``` fenced blocks that contain leaked fields
-    cleaned = re.sub(
-        r"```json\s*\n[\s\S]*?```\s*\n?",
-        "",
-        cleaned,
-    )
+    cleaned = _JSON_FENCED_BLOCK_RE.sub("", cleaned)
 
     # 3. Strip trailing JSON blob (greedy match to end of text)
     cleaned = _TRAILING_JSON_RE.sub("", cleaned)
@@ -1270,18 +1317,24 @@ def build_compare_synthesizer_node(
             synthesis_text = _sanitize_synthesis_text(synthesis_text)
             synthesis_message = AIMessage(content=synthesis_text)
 
-            # Compute confidence-weighted ranking for arena data
-            all_model_scores = convergence.get("model_scores", {})
+            # Compute confidence-weighted ranking for arena data.
+            # Priority: handoff criterion_scores > convergence model_scores
+            # (consistent with frontend and synthesis context — BUG-05 fix).
+            all_model_scores: dict[str, Any] = {}
             all_model_reasonings: dict[str, dict[str, str]] = {}
-            # Also collect scores and reasonings from subagent summaries
+            # First: collect actual criterion_scores from handoff summaries
             for s in subagent_summaries:
                 domain = s.get("domain", "unknown")
                 cs = s.get("criterion_scores", {})
-                if cs and domain not in all_model_scores:
+                if cs:
                     all_model_scores[domain] = cs
                 cr = s.get("criterion_reasonings", {})
-                if cr and domain not in all_model_reasonings:
+                if cr:
                     all_model_reasonings[domain] = cr
+            # Fill in missing domains from convergence as fallback
+            for domain, scores in convergence.get("model_scores", {}).items():
+                if domain not in all_model_scores:
+                    all_model_scores[domain] = scores
             weighted_ranking = rank_models_by_weighted_score(all_model_scores)
 
             # Build arena_data: merge backend scores with LLM-generated analysis
@@ -1323,32 +1376,3 @@ def build_compare_synthesizer_node(
     return compare_synthesizer
 
 
-# ─── Legacy compat: keep old function signatures for imports ─────────
-# These are no longer used in the graph but may be referenced in tests.
-
-
-async def compare_fan_out(state: dict[str, Any]) -> dict[str, Any]:
-    """Legacy: replaced by compare_domain_planner + compare_subagent_spawner."""
-    logger.warning("compare_fan_out: legacy node called, use compare_domain_planner instead")
-    return {}
-
-
-async def compare_collect(state: dict[str, Any]) -> dict[str, Any]:
-    """Legacy: replaced by convergence_node."""
-    logger.warning("compare_collect: legacy node called, use convergence_node instead")
-    return {"orchestration_phase": "compare_collect_legacy"}
-
-
-async def compare_tavily(state: dict[str, Any]) -> dict[str, Any]:
-    """Legacy: replaced by research subagent."""
-    logger.warning("compare_tavily: legacy node called, use research subagent instead")
-    return {"orchestration_phase": "compare_tavily_legacy"}
-
-
-async def compare_synthesizer(
-    state: dict[str, Any],
-    prompt_override: str | None = None,
-) -> dict[str, Any]:
-    """Legacy: replaced by build_compare_synthesizer_node."""
-    node = build_compare_synthesizer_node(prompt_override=prompt_override)
-    return await node(state)

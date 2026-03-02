@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -142,8 +143,6 @@ async def _decompose_query(query: str, llm: Any) -> list[str]:
             return [str(q) for q in _structured.queries[:_MAX_RESEARCH_QUERIES]]
         except Exception:
             pass
-
-        import re
 
         json_match = re.search(r"\{[^{}]*\}", raw_content)
         if json_match:

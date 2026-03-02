@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import weakref
 from typing import Any
 
 from .structured_schemas import (
@@ -36,8 +37,24 @@ CRITERIA = ("relevans", "djup", "klarhet", "korrekthet")
 # ── Global concurrency control ────────────────────────────────────
 # This semaphore is shared across ALL domains and ALL criterion calls.
 # 8 domains × 4 criteria = 32 total calls; we allow max 4 at once.
+#
+# Lazy initialization per event loop: avoids RuntimeError when multiple
+# event loops exist (Celery workers, pytest-asyncio, uvicorn reload).
 _MAX_CONCURRENT = 4
-_GLOBAL_CRITERION_SEM = asyncio.Semaphore(_MAX_CONCURRENT)
+_loop_semaphores: weakref.WeakValueDictionary[int, asyncio.Semaphore] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _get_criterion_sem() -> asyncio.Semaphore:
+    """Return a per-event-loop semaphore, created lazily."""
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    sem = _loop_semaphores.get(loop_id)
+    if sem is None:
+        sem = asyncio.Semaphore(_MAX_CONCURRENT)
+        _loop_semaphores[loop_id] = sem
+    return sem
 
 # Retry config
 _MAX_RETRIES = 2
@@ -138,7 +155,7 @@ async def _invoke_criterion_llm(
             CriterionEvalResult, f"criterion_{criterion}"
         )
 
-    async with _GLOBAL_CRITERION_SEM:
+    async with _get_criterion_sem():
         raw = await asyncio.wait_for(
             llm.ainvoke(messages, **_invoke_kwargs),
             timeout=timeout_seconds,
@@ -201,7 +218,7 @@ async def evaluate_criterion(
     research_context: str | None,
     llm: Any,
     extract_json_fn: Any,
-    timeout_seconds: float = 90,
+    timeout_seconds: float = 30,
     prompt_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate a single criterion with automatic retry on failure."""
@@ -313,8 +330,12 @@ async def evaluate_model_response(
                     parent_pod_id=parent_subagent_id,
                     latency_ms=crit_latency_ms,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "criterion_evaluator[%s/%s]: on_criterion_complete callback failed: %s",
+                    model_display_name, criterion, exc,
+                    exc_info=True,
+                )
         return result
 
     results = await asyncio.gather(
@@ -337,8 +358,12 @@ async def evaluate_model_response(
                         domain, criterion, 50, reasonings[criterion],
                         pod_id="", parent_pod_id=parent_subagent_id, latency_ms=0,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(
+                        "criterion_evaluator[%s/%s]: on_criterion_complete callback failed: %s",
+                        domain, criterion, exc,
+                        exc_info=True,
+                    )
         else:
             scores[criterion] = r["score"]
             reasonings[criterion] = r["reasoning"]

@@ -3,7 +3,7 @@
 > **Datum:** 2026-03-02
 > **Scope:** Hela /compare-funktionen — backend + frontend (Spotlight Arena)
 > **Analyserade filer:** 24 filer (14 backend, 10 frontend)
-> **Senast uppdaterad:** 2026-03-02 (initial analys)
+> **Senast uppdaterad:** 2026-03-02 (fix-pass: 16 av 26 åtgärdade)
 
 ---
 
@@ -17,11 +17,11 @@ Den initiala analysen identifierar **6 buggar** (varav 1 kritisk), **8 kodkvalit
 
 | Kategori | Totalt | Fixade | Kvar | IDs |
 |----------|--------|--------|------|-----|
-| Buggar (P0–P2) | 6 | 0 | **6** | BUG-01–BUG-06 |
-| Kodkvalitet (KQ) | 8 | 0 | **8** | KQ-01–KQ-08 |
-| Optimeringar (OPT) | 10 | 0 | **10** | OPT-01–OPT-10 |
-| Säkerhet (SEC) | 2 | 0 | **2** | SEC-01–SEC-02 |
-| **Totalt** | **26** | **0** | **26** | |
+| Buggar (P0–P2) | 6 | **6** | 0 | BUG-01–BUG-06 |
+| Kodkvalitet (KQ) | 8 | **5** | 3 | KQ-02–KQ-05, KQ-07–KQ-08 fixade |
+| Optimeringar (OPT) | 10 | **4** | 6 | OPT-01, OPT-04, OPT-05, OPT-07 fixade |
+| Säkerhet (SEC) | 2 | **1** | 1 | SEC-02 fixad |
+| **Totalt** | **26** | **16** | **10** | |
 
 ### Prioriterad Åtgärdslista
 
@@ -36,7 +36,7 @@ Den initiala analysen identifierar **6 buggar** (varav 1 kritisk), **8 kodkvalit
 
 ## 1. Buggar
 
-### BUG-01 [P0/Kritisk]: Module-level asyncio.Semaphore i compare_criterion_evaluator — EJ FIXAD ⚠️
+### BUG-01 [P0/Kritisk]: Module-level asyncio.Semaphore i compare_criterion_evaluator — FIXAD ✅
 
 **Fil:** `compare_criterion_evaluator.py:39-40`
 
@@ -83,7 +83,7 @@ async with _get_criterion_sem():
 
 ---
 
-### BUG-02 [P1/Hög]: Silent exception swallowing i on_criterion_complete callback — EJ FIXAD ⚠️
+### BUG-02 [P1/Hög]: Silent exception swallowing i on_criterion_complete callback — FIXAD ✅
 
 **Fil:** `compare_criterion_evaluator.py:316-317` och `compare_executor.py:367`
 
@@ -121,7 +121,7 @@ Samma mönster i `compare_executor.py:367` och alla andra `except Exception: pas
 
 ---
 
-### BUG-03 [P1/Hög]: Research-agentens research_context = None i criterion eval — EJ FIXAD ⚠️
+### BUG-03 [P1/Hög]: Research-agentens research_context = None i criterion eval — FIXAD ✅
 
 **Fil:** `compare_executor.py:397`
 
@@ -160,7 +160,7 @@ Alternativt (enklare): Kör criterion eval i convergence-noden istället, där a
 
 ---
 
-### BUG-04 [P2/Medium]: Race condition vid module-level `import re` i compare_research_worker — EJ FIXAD ⚠️
+### BUG-04 [P2/Medium]: Race condition vid module-level `import re` i compare_research_worker — FIXAD ✅
 
 **Fil:** `compare_research_worker.py:146`
 
@@ -181,7 +181,7 @@ async def _decompose_query(query: str, llm: Any) -> list[str]:
 
 ---
 
-### BUG-05 [P2/Medium]: Inkonsekvent score priority mellan backend och frontend — EJ FIXAD ⚠️
+### BUG-05 [P2/Medium]: Inkonsekvent score priority mellan backend och frontend — FIXAD ✅
 
 **Fil:** `compare_executor.py:951-958` vs `spotlight-arena.tsx:1254-1284`
 
@@ -221,7 +221,7 @@ for domain, scores in convergence.get("model_scores", {}).items():
 
 ---
 
-### BUG-06 [P2/Medium]: `hasFinalScoresFromResult` logik duplicerad med olika variabelnamn — EJ FIXAD ⚠️
+### BUG-06 [P2/Medium]: `hasFinalScoresFromResult` logik duplicerad med olika variabelnamn — FIXAD ✅
 
 **Fil:** `spotlight-arena.tsx:761-762` och `spotlight-arena.tsx:940-945`
 
@@ -274,7 +274,7 @@ Backend (`_sanitize_synthesis_text`) och frontend (`sanitizeSynthesisText`) impl
 
 ---
 
-### KQ-02: Duplicerade CO2/energi-konstanter — EJ FIXAD ⚠️
+### KQ-02: Duplicerade CO2/energi-konstanter — FIXAD ✅
 
 **Fil(er):** `compare-model.tsx:100-101` och `spotlight-arena.tsx:193-194`
 
@@ -288,7 +288,7 @@ const CO2G_PER_1K_TOKENS = 0.1;
 
 ---
 
-### KQ-03: Duplicerad MODEL_LOGOS-mapping — EJ FIXAD ⚠️
+### KQ-03: Duplicerad MODEL_LOGOS-mapping — FIXAD ✅
 
 **Fil(er):** `compare-model.tsx:58-67` och `spotlight-arena.tsx:153-162`
 
@@ -298,7 +298,7 @@ Båda filerna definierar sin egen `MODEL_LOGOS`-mapping med samma data men olika
 
 ---
 
-### KQ-04: Duplicerad `formatLatency` funktion — EJ FIXAD ⚠️
+### KQ-04: Duplicerad `formatLatency` funktion — FIXAD ✅
 
 **Fil(er):** `compare-model.tsx:69-72` och `spotlight-arena.tsx:293-297`
 
@@ -308,7 +308,7 @@ Identisk logik i båda filer.
 
 ---
 
-### KQ-05: Legacy dead code bevarad — EJ FIXAD ⚠️
+### KQ-05: Legacy dead code bevarad — FIXAD ✅
 
 **Fil:** `compare_executor.py:1326-1355`
 
@@ -349,7 +349,7 @@ En enda fil innehåller:
 
 ---
 
-### KQ-07: Inkonsekvent `from types import SimpleNamespace` inuti funktion — EJ FIXAD ⚠️
+### KQ-07: Inkonsekvent `from types import SimpleNamespace` inuti funktion — FIXAD ✅
 
 **Fil:** `compare_executor.py:310-312`
 
@@ -364,7 +364,7 @@ for attempt in range(_max_retries_external + 1):
 
 ---
 
-### KQ-08: `build_compare_synthesis_prompt` — oanvänd parameter — EJ FIXAD ⚠️
+### KQ-08: `build_compare_synthesis_prompt` — oanvänd parameter — FIXAD ✅
 
 **Fil:** `compare_prompts.py:339-350`
 
@@ -389,7 +389,7 @@ def build_compare_synthesis_prompt(
 
 ## 3. Optimeringar
 
-### OPT-01 [P3]: Research-kontext bör injiceras i korrekthetsbedömare — EJ FIXAD ⚠️
+### OPT-01 [P3]: Research-kontext bör injiceras i korrekthetsbedömare — FIXAD ✅ (via BUG-03)
 
 **Fil:** `compare_executor.py:370-410`
 
@@ -419,7 +419,7 @@ Om samma `/compare`-fråga körs igen (t.ex. vid retry eller liknande fråga) g�
 
 ---
 
-### OPT-04 [P3]: Sänk criterion_timeout från 90s till 30s — EJ FIXAD ⚠️
+### OPT-04 [P3]: Sänk criterion_timeout från 90s till 30s — FIXAD ✅
 
 **Fil:** `compare_criterion_evaluator.py:204`
 
@@ -433,7 +433,7 @@ timeout_seconds: float = 90,
 
 ---
 
-### OPT-05 [P3]: Lazy-load compare_criterion_evaluator i spawner — EJ FIXAD ⚠️
+### OPT-05 [P3]: Lazy-load compare_criterion_evaluator i spawner — FIXAD ✅
 
 **Fil:** `compare_executor.py:387-389`
 
@@ -463,7 +463,7 @@ function estimateTokensFromText(text: string): number {
 
 ---
 
-### OPT-07 [P3]: Undvik re-compilation av regex i `_sanitize_synthesis_text` — EJ FIXAD ⚠️
+### OPT-07 [P3]: Undvik re-compilation av regex i `_sanitize_synthesis_text` — FIXAD ✅
 
 **Fil:** `compare_executor.py:1106-1113`
 
@@ -578,7 +578,7 @@ def _apply_provider_env(provider: str, api_key: str) -> None:
 
 ---
 
-### SEC-02: Ingen input-validering av `/compare`-frågan — EJ FIXAD ⚠️
+### SEC-02: Ingen input-validering av `/compare`-frågan — FIXAD ✅
 
 **Fil:** `stream_compare_chat.py:99-105` och `dispatcher.py:71-72`
 
