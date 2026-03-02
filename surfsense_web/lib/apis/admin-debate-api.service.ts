@@ -13,7 +13,7 @@ const debateVoiceSettingsSchema = z.object({
 	voice_map: z.record(z.string(), z.string()),
 	language: z.string().optional().default("sv"),
 	language_instructions: z.record(z.string(), z.string()).optional().default({}),
-	max_tokens: z.number().optional().default(500),
+	max_tokens: z.number().optional().default(2000),
 	max_tokens_map: z.record(z.string(), z.number()).optional().default({}),
 	typing_speed_multiplier: z.number().optional().default(1.0),
 });
@@ -27,6 +27,14 @@ export type DebateVoiceSettings = z.infer<typeof debateVoiceSettingsSchema>;
 export type DebateVoiceSettingsResponse = z.infer<typeof debateVoiceSettingsResponseSchema>;
 
 // ── API service ─────────────────────────────────────────────────────
+
+// OPT-13: Schema for voice defaults from backend (single source of truth)
+const voiceDefaultsSchema = z.object({
+	openai: z.record(z.string(), z.string()),
+	cartesia: z.record(z.string(), z.string()),
+});
+
+export type VoiceDefaults = z.infer<typeof voiceDefaultsSchema>;
 
 class AdminDebateApiService {
 	getVoiceSettings = async (): Promise<DebateVoiceSettingsResponse> => {
@@ -43,6 +51,14 @@ class AdminDebateApiService {
 			"/api/v1/admin/debate/voice-settings",
 			debateVoiceSettingsResponseSchema,
 			{ body: settings },
+		);
+	};
+
+	// OPT-13: Fetch canonical voice maps from backend
+	getVoiceDefaults = async (): Promise<VoiceDefaults> => {
+		return baseApiService.get(
+			"/api/v1/admin/debate/voice-defaults",
+			voiceDefaultsSchema,
 		);
 	};
 }

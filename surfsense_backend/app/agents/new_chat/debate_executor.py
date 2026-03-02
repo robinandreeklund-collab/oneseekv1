@@ -23,19 +23,25 @@ import asyncio
 import json
 import logging
 import random
-import re
 import time
-import uuid
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agents.new_chat.debate_helpers import (
+    build_fallback_synthesis,
+    build_round_context,
+    count_words,
+    extract_json_from_text,
+    filter_self_votes,
+    resolve_winner,
+)
 from app.agents.new_chat.debate_prompts import (
-    DEFAULT_DEBATE_ANALYSIS_PROMPT,
     DEBATE_ROUND1_INTRO_PROMPT,
     DEBATE_ROUND2_ARGUMENT_PROMPT,
     DEBATE_ROUND3_DEEPENING_PROMPT,
     DEBATE_ROUND4_VOTING_PROMPT,
+    DEFAULT_DEBATE_ANALYSIS_PROMPT,
     ONESEEK_DEBATE_ROUND1_PROMPT,
     ONESEEK_DEBATE_ROUND2_PROMPT,
     ONESEEK_DEBATE_ROUND3_PROMPT,
@@ -73,8 +79,9 @@ ONESEEK_ROUND_PROMPTS = {
     4: ONESEEK_DEBATE_ROUND4_PROMPT,
 }
 
-# Default max token budget per participant response (overridden by admin settings)
-DEFAULT_MAX_RESPONSE_TOKENS = 500
+# Default max token budget per participant response (overridden by admin settings).
+# 2000 gives ~300-500 words on most models including Gemini on Swedish text.
+DEFAULT_MAX_RESPONSE_TOKENS = 2000
 # Voting timeout per model
 VOTE_TIMEOUT_SECONDS = 60
 # Regular response timeout
@@ -111,57 +118,10 @@ VOTE_JSON_SCHEMA = {
 }
 
 
-def _extract_json_from_text(text: str) -> dict[str, Any] | None:
-    """Try to extract a JSON object from text, handling markdown code blocks."""
-    # Try direct parse first
-    try:
-        return json.loads(text.strip())
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    # Try extracting from code blocks
-    patterns = [
-        r"```(?:json)?\s*\n?(.*?)\n?```",
-        r"\{[^{}]*\"voted_for\"[^{}]*\}",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1) if "```" in pattern else match.group(0))
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-    return None
-
-
-def _count_words(text: str) -> int:
-    """Count words in a text string."""
-    return len(text.split())
-
-
-def _build_round_context(
-    topic: str,
-    all_round_responses: dict[int, dict[str, str]],
-    current_round_responses: dict[str, str],
-    round_num: int,
-) -> str:
-    """Build the chained context string for a participant.
-
-    Includes all previous rounds and the current round's responses so far.
-    """
-    context_parts = [f"Debattämne: {topic}\n"]
-    for prev_round in range(1, round_num):
-        prev_responses = all_round_responses.get(prev_round, {})
-        if prev_responses:
-            context_parts.append(f"\n--- Runda {prev_round} ---")
-            for name, resp in prev_responses.items():
-                context_parts.append(f"[{name}]: {resp[:600]}")
-    if current_round_responses:
-        context_parts.append(f"\n--- Runda {round_num} (hittills) ---")
-        for name, resp in current_round_responses.items():
-            context_parts.append(f"[{name}]: {resp[:600]}")
-    return "\n".join(context_parts)
+# ─── Aliases for backward compat (now in debate_helpers.py) ─────────
+_extract_json_from_text = extract_json_from_text
+_count_words = count_words
+_build_round_context = build_round_context
 
 
 async def _call_debate_participant(
@@ -217,8 +177,8 @@ async def _call_debate_participant(
                     spec_data = dp["spec"]
                     break
             if spec_data:
-                from types import SimpleNamespace
-                spec = SimpleNamespace(**spec_data)
+                from app.agents.new_chat.tools.external_models import ExternalModelSpec
+                spec = ExternalModelSpec(**spec_data)
                 _mt = _resolve_max_tokens(state, model_display)
                 # Inject model identity so each model knows who it
                 # represents.  Without this, e.g. DeepSeek says "jag
@@ -238,9 +198,16 @@ async def _call_debate_participant(
                     ),
                     timeout=execution_timeout,
                 )
+                if result.get("status") == "error":
+                    error_msg = result.get("error", "unknown error")
+                    logger.warning(
+                        "debate: %s returned error in round %d: %s",
+                        model_display, round_num, error_msg[:200],
+                    )
+                    return f"[{model_display} fel: {error_msg[:100]}]"
                 return result.get("response", "")
             return f"[{model_display}: ingen spec hittades]"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("debate: %s timed out in round %d", model_display, round_num)
         return f"[{model_display} timeout efter {execution_timeout}s]"
     except Exception as exc:
@@ -251,31 +218,8 @@ async def _call_debate_participant(
         return f"[{model_display} fel: {str(exc)[:100]}]"
 
 
-def _filter_self_votes(votes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove votes where a participant voted for themselves."""
-    return [v for v in votes if v.get("voter", "").lower() != v.get("voted_for", "").lower()]
-
-
-def _resolve_winner(
-    vote_counts: dict[str, int],
-    word_counts: dict[str, int],
-) -> tuple[str, bool]:
-    """Resolve the winner, using word count as tiebreaker.
-
-    Returns (winner_name, tiebreaker_used).
-    """
-    if not vote_counts:
-        return ("", False)
-
-    max_votes = max(vote_counts.values())
-    tied = [m for m, v in vote_counts.items() if v == max_votes]
-
-    if len(tied) == 1:
-        return (tied[0], False)
-
-    # Tiebreaker: highest total word count
-    winner = max(tied, key=lambda m: word_counts.get(m, 0))
-    return (winner, True)
+_filter_self_votes = filter_self_votes
+_resolve_winner = resolve_winner
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -291,8 +235,51 @@ def build_debate_domain_planner_node(
     """Build deterministic debate domain planner.
 
     Generates domain_plans with all debate participants.
+    OPT-02: participants + domain_plans are cached since they're
+    deterministic (depend only on specs + include_research flag).
     """
     specs = external_model_specs or list(EXTERNAL_MODEL_SPECS)
+
+    # OPT-02: Pre-compute the static participant/domain data once at
+    # build time — they never change between invocations.
+    _cached_participants: list[dict[str, Any]] = []
+    _cached_domain_plans: dict[str, dict[str, Any]] = {}
+
+    for spec in specs:
+        domain_key = spec.tool_name.replace("call_", "")
+        _cached_participants.append({
+            "key": spec.key,
+            "display": spec.display,
+            "tool_name": spec.tool_name,
+            "config_id": spec.config_id,
+            "is_oneseek": False,
+        })
+        _cached_domain_plans[domain_key] = {
+            "agent": f"debate_{domain_key}",
+            "tools": [spec.tool_name],
+            "rationale": f"Debattdeltagare: {spec.display}",
+            "spec": {
+                "tool_name": spec.tool_name,
+                "display": spec.display,
+                "key": spec.key,
+                "config_id": spec.config_id,
+            },
+        }
+
+    if include_research:
+        _cached_participants.append({
+            "key": "oneseek",
+            "display": "OneSeek",
+            "tool_name": "call_oneseek",
+            "config_id": -1,
+            "is_oneseek": True,
+        })
+        _cached_domain_plans["research"] = {
+            "agent": "debate_oneseek",
+            "tools": ["call_oneseek"],
+            "rationale": "OneSeek: Svensk AI-agent med realtidsverktyg",
+            "is_oneseek": True,
+        }
 
     async def debate_domain_planner_node(
         state: dict[str, Any],
@@ -310,57 +297,17 @@ def build_debate_domain_planner_node(
         if not user_query:
             return {"domain_plans": {}}
 
-        # Build participant list
-        participants: list[dict[str, Any]] = []
-        domain_plans: dict[str, dict[str, Any]] = {}
-
-        for spec in specs:
-            domain_key = spec.tool_name.replace("call_", "")
-            participant = {
-                "key": spec.key,
-                "display": spec.display,
-                "tool_name": spec.tool_name,
-                "config_id": spec.config_id,
-                "is_oneseek": False,
-            }
-            participants.append(participant)
-            domain_plans[domain_key] = {
-                "agent": f"debate_{domain_key}",
-                "tools": [spec.tool_name],
-                "rationale": f"Debattdeltagare: {spec.display}",
-                "spec": {
-                    "tool_name": spec.tool_name,
-                    "display": spec.display,
-                    "key": spec.key,
-                    "config_id": spec.config_id,
-                },
-            }
-
-        if include_research:
-            participants.append({
-                "key": "oneseek",
-                "display": "OneSeek",
-                "tool_name": "call_oneseek",
-                "config_id": -1,
-                "is_oneseek": True,
-            })
-            domain_plans["research"] = {
-                "agent": "debate_oneseek",
-                "tools": ["call_oneseek"],
-                "rationale": "OneSeek: Svensk AI-agent med realtidsverktyg",
-                "is_oneseek": True,
-            }
-
+        # Return deep copies to avoid mutation across invocations
         return {
-            "domain_plans": domain_plans,
-            "debate_participants": participants,
+            "domain_plans": {k: {**v} for k, v in _cached_domain_plans.items()},
+            "debate_participants": [{**p} for p in _cached_participants],
             "debate_topic": user_query,
             "debate_current_round": 0,
             "debate_round_responses": {},
             "debate_votes": [],
             "debate_word_counts": {},
             "debate_status": "planning",
-            "orchestration_phase": f"debate_domain_planner_{len(participants)}",
+            "orchestration_phase": f"debate_domain_planner_{len(_cached_participants)}",
         }
 
     return debate_domain_planner_node
@@ -419,8 +366,8 @@ def build_debate_round_executor_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("debate: SSE event emission failed: %s", exc)
 
         # ─── Rounds 1-3: Sequential with chained context ─────────
         for round_num in range(1, 4):
@@ -441,8 +388,8 @@ def build_debate_round_executor_node(
                     },
                     config=config,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("debate: SSE event emission failed: %s", exc)
 
             # Prefetch pipeline: stores (response_text, prepared_audio)
             # keyed by participant display name.  Filled by the look-ahead
@@ -450,14 +397,24 @@ def build_debate_round_executor_node(
             # one streams text + audio.
             _prefetched: dict[str, asyncio.Task] = {}
 
+            # OPT-04: Compute the static base context (previous rounds)
+            # once per round instead of re-building for every participant.
+            _base_context = _build_round_context(
+                topic, all_round_responses, {}, round_num,
+            )
+
             for position, participant in enumerate(round_order):
                 model_key = participant["key"]
                 model_display = participant["display"]
 
-                # Build context for this participant
-                full_context = _build_round_context(
-                    topic, all_round_responses, round_responses, round_num,
-                )
+                # Append only the current round's growing responses
+                if round_responses:
+                    _current_parts = [f"\n--- Runda {round_num} (hittills) ---"]
+                    for name, resp in round_responses.items():
+                        _current_parts.append(f"[{name}]: {resp[:1200]}")
+                    full_context = _base_context + "\n".join(_current_parts)
+                else:
+                    full_context = _base_context
                 query_with_context = f"{round_prompt}\n\n{full_context}"
 
                 # Emit participant_start
@@ -473,8 +430,8 @@ def build_debate_round_executor_node(
                         },
                         config=config,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("debate: SSE event emission failed: %s", exc)
 
                 # ─── Get LLM response (prefetched or call now) ───────
                 start_time = time.monotonic()
@@ -485,11 +442,30 @@ def build_debate_round_executor_node(
                     _task = _prefetched.pop(model_display)
                     try:
                         response_text, _prepared_audio = await _task
-                        logger.info(
-                            "debate: using prefetched response for %s (%d words, audio=%s)",
-                            model_display, _count_words(response_text),
-                            f"{_prepared_audio[1]:.1f}s" if _prepared_audio and _prepared_audio[0] else "none",
+                        # BUG-02: Validate context freshness — discard if
+                        # stale (more responses arrived since prefetch).
+                        _current_ctx = _build_round_context(
+                            topic, all_round_responses, round_responses, round_num,
                         )
+                        if _current_ctx != _task._prefetch_ctx:
+                            logger.info(
+                                "debate: discarding stale prefetch for %s (context changed)",
+                                model_display,
+                            )
+                            response_text = ""
+                            _prepared_audio = None
+                        elif _count_words(response_text) < 10:
+                            logger.info(
+                                "debate: discarding short prefetch for %s (%d words)",
+                                model_display, _count_words(response_text),
+                            )
+                            response_text = ""
+                        else:
+                            logger.info(
+                                "debate: using prefetched response for %s (%d words, audio=%s)",
+                                model_display, _count_words(response_text),
+                                f"{_prepared_audio[1]:.1f}s" if _prepared_audio and _prepared_audio[0] else "none",
+                            )
                     except Exception as exc:
                         logger.warning("debate: prefetch failed for %s: %s", model_display, exc)
                         response_text = ""
@@ -529,12 +505,13 @@ def build_debate_round_executor_node(
 
                     async def _prefetch_llm_and_tts(
                         p=_next_p, q=_next_query,
+                        _rp=round_prompt, _rn=round_num,
                     ) -> tuple[str, tuple[bytes, float] | None]:
                         text = await _call_debate_participant(
                             participant=p,
                             query_with_context=q,
-                            round_prompt=round_prompt,
-                            round_num=round_num,
+                            round_prompt=_rp,
+                            round_num=_rn,
                             domain_plans=domain_plans,
                             state=state,
                             llm=llm,
@@ -555,9 +532,35 @@ def build_debate_round_executor_node(
                             return text, audio
                         return text, None
 
-                    _prefetched[_next_display] = asyncio.create_task(
+                    _pf_task = asyncio.create_task(
                         _prefetch_llm_and_tts()
                     )
+                    # BUG-02: Stash the context snapshot so we can detect
+                    # staleness when the prefetched result is consumed.
+                    _pf_task._prefetch_ctx = _next_ctx  # type: ignore[attr-defined]
+                    _prefetched[_next_display] = _pf_task
+
+                # ─── Non-voice mode: emit participant_text immediately ──
+                # In text-only mode, send the full response as a single
+                # participant_text event so the frontend can render it.
+                if not voice_mode and response_text and not response_text.startswith("["):
+                    try:
+                        await adispatch_custom_event(
+                            "debate_participant_text",
+                            {
+                                "model": model_display,
+                                "model_key": model_key,
+                                "round": round_num,
+                                "text": response_text,
+                                "word_count": word_count,
+                                "audio_duration": 0,
+                                "delay_per_word": 0.04,
+                                "timestamp": time.time(),
+                            },
+                            config=config,
+                        )
+                    except Exception as exc:
+                        logger.debug("debate: SSE participant_text emission failed: %s", exc)
 
                 # ─── Voice mode: synced text + audio streaming ───────
                 # Streams text word-by-word interleaved with audio chunks
@@ -579,7 +582,7 @@ def build_debate_round_executor_node(
                             ),
                             timeout=180,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "debate_voice: synced stream timeout for %s round %d",
                             model_display, round_num,
@@ -606,8 +609,8 @@ def build_debate_round_executor_node(
                         },
                         config=config,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("debate: SSE event emission failed: %s", exc)
 
                 # Also emit as tool result for frontend model cards
                 try:
@@ -632,8 +635,8 @@ def build_debate_round_executor_node(
                         },
                         config=config,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("debate: SSE event emission failed: %s", exc)
 
             # Cancel any unused prefetch tasks at end of round
             for _pf_task in _prefetched.values():
@@ -653,18 +656,19 @@ def build_debate_round_executor_node(
                     },
                     config=config,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("debate: SSE event emission failed: %s", exc)
 
         # ─── Round 4: Parallel Voting ─────────────────────────────
         round_num = 4
+        # BUG-04: Increased truncation from 600→1200 to preserve full arguments
         voting_context_parts = [f"Debattämne: {topic}\n"]
         for rnd in range(1, 4):
             rnd_resp = all_round_responses.get(rnd, {})
             if rnd_resp:
                 voting_context_parts.append(f"\n--- Runda {rnd} ---")
                 for name, resp in rnd_resp.items():
-                    voting_context_parts.append(f"[{name}]: {resp[:600]}")
+                    voting_context_parts.append(f"[{name}]: {resp[:1200]}")
 
         voting_context = "\n".join(voting_context_parts)
         voting_query = f"{DEBATE_ROUND4_VOTING_PROMPT}\n\n{voting_context}"
@@ -683,8 +687,8 @@ def build_debate_round_executor_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("debate: SSE event emission failed: %s", exc)
 
         # Run all votes in parallel
         async def _cast_vote(participant: dict[str, Any]) -> dict[str, Any]:
@@ -716,20 +720,28 @@ def build_debate_round_executor_node(
                             break
 
                     if spec_data:
-                        from types import SimpleNamespace
-                        spec = SimpleNamespace(**spec_data)
+                        from app.agents.new_chat.tools.external_models import ExternalModelSpec
+                        spec = ExternalModelSpec(**spec_data)
                         result = await asyncio.wait_for(
                             _call_external(
                                 spec=spec,
                                 query=vote_prompt,
                                 system_prompt=DEBATE_ROUND4_VOTING_PROMPT,
+                                max_tokens=1000,
                             ),
                             timeout=VOTE_TIMEOUT_SECONDS,
                         )
+                        if result.get("status") == "error":
+                            logger.warning(
+                                "debate: %s vote call error: %s",
+                                model_display, result.get("error", "")[:200],
+                            )
                         raw = result.get("response", "")
                     else:
                         raw = ""
 
+                if raw:
+                    logger.debug("debate: %s raw vote: %s", model_display, raw[:300])
                 vote_obj = _extract_json_from_text(raw)
                 if vote_obj and "voted_for" in vote_obj:
                     vote_obj["voter"] = model_display
@@ -758,7 +770,15 @@ def build_debate_round_executor_node(
                 }
 
         vote_tasks = [_cast_vote(p) for p in participants]
-        vote_results = await asyncio.gather(*vote_tasks, return_exceptions=True)
+        # OPT-09: Overall safety timeout on voting gather
+        try:
+            vote_results = await asyncio.wait_for(
+                asyncio.gather(*vote_tasks, return_exceptions=True),
+                timeout=VOTE_TIMEOUT_SECONDS + 15,
+            )
+        except TimeoutError:
+            logger.error("debate: overall voting timeout exceeded (%ds)", VOTE_TIMEOUT_SECONDS + 15)
+            vote_results = []
 
         for vr in vote_results:
             if isinstance(vr, Exception):
@@ -767,21 +787,30 @@ def build_debate_round_executor_node(
             if isinstance(vr, dict):
                 all_votes.append(vr)
 
+                # BUG-01: Only emit vote_result for votes with a valid voted_for
+                voted_for_value = vr.get("voted_for", "").strip()
+                if not voted_for_value:
+                    logger.debug(
+                        "debate: skipping SSE vote_result for %s (empty voted_for)",
+                        vr.get("voter", "?"),
+                    )
+                    continue
+
                 # Emit vote_result
                 try:
                     await adispatch_custom_event(
                         "debate_vote_result",
                         {
                             "voter": vr.get("voter", ""),
-                            "voted_for": vr.get("voted_for", ""),
+                            "voted_for": voted_for_value,
                             "motivation": vr.get("short_motivation", ""),
                             "bullets": vr.get("three_bullets", []),
                             "timestamp": time.time(),
                         },
                         config=config,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("debate: SSE vote_result emission failed: %s", exc)
 
         all_round_responses[4] = {
             v.get("voter", ""): json.dumps(v, ensure_ascii=False)
@@ -896,8 +925,8 @@ async def _call_oneseek_vote(
                     "short_motivation": parsed.short_motivation,
                     "three_bullets": parsed.three_bullets,
                 }, ensure_ascii=False)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("debate: SSE event emission failed: %s", exc)
         return raw
     except Exception as exc:
         return json.dumps({
@@ -956,13 +985,13 @@ def build_debate_convergence_node(
             motivation = v.get("short_motivation", "")
             context_parts.append(f"  {voter} → {voted_for}: {motivation}")
 
-        # Summary of all rounds
+        # OPT-10: Increased truncation from 400→800 for better convergence analysis
         for rnd in range(1, 4):
             rnd_resp = round_responses.get(rnd, {})
             if rnd_resp:
                 context_parts.append(f"\n--- Runda {rnd} sammanfattning ---")
                 for name, resp in rnd_resp.items():
-                    context_parts.append(f"[{name}]: {resp[:400]}")
+                    context_parts.append(f"[{name}]: {resp[:800]}")
 
         context = "\n".join(context_parts)
 
@@ -1033,8 +1062,8 @@ def build_debate_convergence_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("debate: SSE event emission failed: %s", exc)
 
         return {
             "convergence_status": convergence_obj,
@@ -1146,8 +1175,8 @@ def build_debate_synthesizer_node(
                 },
                 config=config,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("debate: SSE event emission failed: %s", exc)
 
         # Emit debate_summary for frontend persistence (Issue #3)
         try:
@@ -1197,25 +1226,5 @@ def build_debate_synthesizer_node(
     return debate_synthesizer_node
 
 
-def _build_fallback_synthesis(
-    convergence: dict[str, Any],
-    round_responses: dict[int, dict[str, str]],
-    topic: str,
-) -> str:
-    """Build a basic synthesis without LLM as fallback."""
-    winner = convergence.get("winner", "N/A")
-    vote_results = convergence.get("vote_results", {})
-    word_counts = convergence.get("word_counts", {})
-
-    parts = [
-        f"# Debattresultat: {topic}\n",
-        f"## Vinnare: {winner}\n",
-        "## Röstresultat\n",
-    ]
-
-    for model, votes in sorted(vote_results.items(), key=lambda x: -x[1]):
-        parts.append(f"- **{model}**: {votes} röster ({word_counts.get(model, 0)} ord totalt)")
-
-    parts.append(f"\n{convergence.get('merged_summary', '')}")
-
-    return "\n".join(parts)
+# _build_fallback_synthesis now lives in debate_helpers.py
+_build_fallback_synthesis = build_fallback_synthesis

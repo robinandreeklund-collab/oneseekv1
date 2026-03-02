@@ -162,7 +162,9 @@ export interface DebateVoiceSpeakerEvent {
 	round: number;
 	voice: string;
 	text_length: number;
-	estimated_total_chunks: number;
+	/** BUG-07: Synced with backend — was estimated_total_chunks, now total_sentences */
+	total_sentences: number;
+	provider: string;
 	timestamp: number;
 }
 

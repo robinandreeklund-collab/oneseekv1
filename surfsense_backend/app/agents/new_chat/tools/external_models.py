@@ -8,12 +8,15 @@ them as tool calls so the UI can render tool cards consistently.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import litellm
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
 
 from app.agents.new_chat.llm_config import PROVIDER_MAP, load_llm_config_from_yaml
 
@@ -133,9 +136,25 @@ def _build_model_string(config: dict) -> str:
 
 def _resolve_api_base(config: dict) -> str:
     api_base = str(config.get("api_base") or "").strip()
+    provider = str(config.get("provider") or "").upper()
+
+    # LiteLLM's native Anthropic handler already appends /v1/messages,
+    # so passing api_base with a trailing /v1 causes /v1/v1/messages.
+    # Strip it to prevent the duplication.
+    if provider == "ANTHROPIC":
+        if api_base:
+            api_base = api_base.rstrip("/")
+            if api_base.endswith("/v1"):
+                api_base = api_base[:-3]
+            # If the user only set the default Anthropic URL, drop it
+            # entirely — LiteLLM handles it natively.
+            if api_base in ("https://api.anthropic.com", ""):
+                return ""
+            return api_base
+        return ""
+
     if api_base:
         return api_base
-    provider = str(config.get("provider") or "").upper()
     if provider == "OPENAI":
         return "https://api.openai.com/v1"
     if provider == "GOOGLE":
@@ -224,7 +243,28 @@ async def _call_litellm(
     if max_tokens is not None:
         call_params["max_tokens"] = max_tokens
 
+    # Remove api_base from call_params if present — we handle it
+    # explicitly via _resolve_api_base() to avoid double /v1/ issues.
+    call_params.pop("api_base", None)
+
+    provider = str(config.get("provider") or "").upper()
+
+    # For Anthropic, don't pass api_base at all — let LiteLLM's native
+    # Anthropic handler resolve the URL.  Passing ANY api_base causes
+    # LiteLLM to fall back to OpenAI-compat mode → /v1/v1/messages.
+    effective_api_base = None if provider == "ANTHROPIC" else (api_base or None)
+
+    logger.debug(
+        "litellm call: model=%s provider=%s api_base=%s effective_api_base=%s",
+        model_string, provider, api_base, effective_api_base,
+    )
+
     async def _run():
+        # Reset global litellm.api_base to prevent cross-provider
+        # pollution — ChatLiteLLM mutates litellm.api_base globally,
+        # so a previous provider's base URL can leak into this call.
+        litellm.api_base = None
+
         response = await litellm.acompletion(
             model=model_string,
             messages=[
@@ -232,7 +272,7 @@ async def _call_litellm(
                 {"role": "user", "content": query},
             ],
             api_key=api_key,
-            api_base=api_base or None,
+            api_base=effective_api_base,
             **call_params,
         )
         message = response.choices[0].message

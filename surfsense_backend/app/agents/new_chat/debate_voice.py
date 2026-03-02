@@ -31,7 +31,34 @@ from typing import Any
 
 import httpx
 
+from app.agents.new_chat.debate_helpers import resolve_language_instructions
+
 logger = logging.getLogger(__name__)
+
+# ── Shared httpx client for TTS calls (OPT-03) ──────────────────────
+# Reused across all TTS calls in a debate session to avoid creating
+# ~320 new TCP connections (8 participants × 4 rounds × ~10 sentences).
+_shared_tts_client: httpx.AsyncClient | None = None
+
+
+def _get_shared_tts_client() -> httpx.AsyncClient:
+    """Return a shared httpx.AsyncClient for TTS calls (OPT-03)."""
+    global _shared_tts_client
+    if _shared_tts_client is None or _shared_tts_client.is_closed:
+        _shared_tts_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            http2=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _shared_tts_client
+
+
+async def close_shared_tts_client() -> None:
+    """Close the shared TTS client (call at debate end)."""
+    global _shared_tts_client
+    if _shared_tts_client is not None and not _shared_tts_client.is_closed:
+        await _shared_tts_client.aclose()
+        _shared_tts_client = None
 
 # ── Default voice maps ────────────────────────────────────────────────
 
@@ -224,24 +251,29 @@ async def generate_voice_stream_cartesia(
         clamped = max(0.6, min(1.5, speed))
         payload["generation_config"] = {"speed": clamped}
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-        response = await client.post(url, json=payload, headers=headers)
-
-        if response.status_code >= 400:
+    # KQ-08 + OPT-03: Use shared httpx client and stream response
+    client = _get_shared_tts_client()
+    async with client.stream("POST", url, json=payload, headers=headers) as resp:
+        if resp.status_code >= 400:
+            await resp.aread()
             logger.error(
                 "debate_voice: Cartesia TTS error %d: %s",
-                response.status_code, response.text[:300],
+                resp.status_code, resp.text[:300],
             )
             raise httpx.HTTPStatusError(
-                f"Cartesia TTS API error {response.status_code}",
-                request=response.request,
-                response=response,
+                f"Cartesia TTS API error {resp.status_code}",
+                request=resp.request,
+                response=resp,
             )
 
-        # Response is raw PCM binary — split into chunks
-        pcm_data = response.content
-        for i in range(0, len(pcm_data), chunk_bytes):
-            yield pcm_data[i:i + chunk_bytes]
+        buffer = bytearray()
+        async for raw_chunk in resp.aiter_bytes(chunk_size=chunk_bytes):
+            buffer.extend(raw_chunk)
+            while len(buffer) >= chunk_bytes:
+                yield bytes(buffer[:chunk_bytes])
+                buffer = buffer[chunk_bytes:]
+        if buffer:
+            yield bytes(buffer)
 
 
 # ── OpenAI TTS ─────────────────────────────────────────────────────────
@@ -284,8 +316,9 @@ async def generate_voice_stream(
     else:
         payload["speed"] = speed
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-        async with client.stream("POST", url, json=payload, headers=headers) as resp:
+    # OPT-03: Use shared httpx client
+    client = _get_shared_tts_client()
+    async with client.stream("POST", url, json=payload, headers=headers) as resp:
             if resp.status_code >= 400:
                 await resp.aread()
                 logger.error(
@@ -373,15 +406,8 @@ async def _emit_voice_events(
     chunk_index = 0
     provider = voice_settings.get("tts_provider", "cartesia")
 
-    # Resolve per-model language/accent instructions (OpenAI only).
-    lang_instructions = voice_settings.get("language_instructions") or {}
-    if isinstance(lang_instructions, str):
-        instr = lang_instructions.strip()
-    else:
-        instr = (
-            lang_instructions.get(participant_display, "").strip()
-            or lang_instructions.get("__default__", "").strip()
-        )
+    # KQ-03: Use consolidated helper for language instructions
+    instr = resolve_language_instructions(voice_settings, participant_display)
 
     tts_model = voice_settings.get("model") or (DEFAULT_CARTESIA_MODEL if provider == "cartesia" else DEFAULT_TTS_MODEL)
 
@@ -571,14 +597,8 @@ async def prepare_tts_audio(
         participant_display, voice_settings["voice_map"],
     )
 
-    lang_instructions = voice_settings.get("language_instructions") or {}
-    if isinstance(lang_instructions, str):
-        instr = lang_instructions.strip()
-    else:
-        instr = (
-            lang_instructions.get(participant_display, "").strip()
-            or lang_instructions.get("__default__", "").strip()
-        )
+    # KQ-03: Use consolidated helper
+    instr = resolve_language_instructions(voice_settings, participant_display)
 
     try:
         return await _generate_full_audio(
@@ -655,15 +675,8 @@ async def stream_text_and_voice_synced(
         participant_display, voice_settings["voice_map"],
     )
 
-    # Resolve per-model language/accent instructions (OpenAI only)
-    lang_instructions = voice_settings.get("language_instructions") or {}
-    if isinstance(lang_instructions, str):
-        instr = lang_instructions.strip()
-    else:
-        instr = (
-            lang_instructions.get(participant_display, "").strip()
-            or lang_instructions.get("__default__", "").strip()
-        )
+    # KQ-03: Use consolidated helper
+    instr = resolve_language_instructions(voice_settings, participant_display)
 
     words = text.split()
     word_count = len(words)
@@ -680,6 +693,8 @@ async def stream_text_and_voice_synced(
     )
 
     # ── Emit speaker-changed event ──────────────────────────────────
+    # BUG-07: Include total_sentences to match frontend DebateVoiceSpeakerEvent
+    sentences = _split_into_sentences(text)
     await adispatch_custom_event(
         "debate_voice_speaker",
         {
@@ -688,6 +703,7 @@ async def stream_text_and_voice_synced(
             "round": round_num,
             "voice": voice,
             "text_length": len(text),
+            "total_sentences": len(sentences),
             "provider": provider,
             "timestamp": time.time(),
         },
@@ -881,11 +897,6 @@ async def collect_all_audio_for_export(
     if not voice_settings["api_key"]:
         return []
 
-    provider = voice_settings.get("tts_provider", "cartesia")
-
-    # Resolve instructions once (OpenAI only)
-    lang_instr = voice_settings.get("language_instructions") or {}
-
     results: list[tuple[str, int, bytes]] = []
     for round_num in sorted(round_responses.keys()):
         round_data = round_responses[round_num]
@@ -896,13 +907,8 @@ async def collect_all_audio_for_export(
                 continue
             voice = get_voice_for_participant(display, voice_settings["voice_map"])
 
-            if isinstance(lang_instr, str):
-                instr = lang_instr.strip()
-            else:
-                instr = (
-                    lang_instr.get(display, "").strip()
-                    or lang_instr.get("__default__", "").strip()
-                )
+            # KQ-03: Use consolidated helper
+            instr = resolve_language_instructions(voice_settings, display)
 
             sentences = _split_into_sentences(text)
             pcm_parts: list[bytes] = []
