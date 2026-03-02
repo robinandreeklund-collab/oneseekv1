@@ -12,6 +12,8 @@ import {
 	ChevronRight,
 	GitBranch,
 	Mic,
+	FileText,
+	FlaskConical,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -52,6 +54,18 @@ const ADMIN_NAV_ITEMS = [
 		href: "/admin/cache",
 		icon: Database,
 		description: "Rensa och hantera cache",
+	},
+	{
+		title: "Changelog",
+		href: "/admin/changelog",
+		icon: FileText,
+		description: "Hantera changelog-inlägg",
+	},
+	{
+		title: "Dev",
+		href: "/admin/devlog",
+		icon: FlaskConical,
+		description: "Hantera dev-inlägg och tester",
 	},
 ];
 

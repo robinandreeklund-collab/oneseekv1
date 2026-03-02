@@ -1,47 +1,20 @@
-import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/page";
-import { notFound } from "next/navigation";
-import { source } from "@/lib/source";
-import { getMDXComponents } from "@/mdx-components";
-
-export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
-	const params = await props.params;
-	const page = source.getPage(params.slug);
-	if (!page) notFound();
-
-	const MDX = page.data.body;
-
+export default function DocsPage() {
 	return (
-		<DocsPage
-			toc={page.data.toc}
-			full={page.data.full}
-			tableOfContent={{
-				style: "clerk",
-				single: false,
-			}}
-			tableOfContentPopover={{
-				style: "clerk",
-			}}
-		>
-			<DocsTitle>{page.data.title}</DocsTitle>
-			<DocsDescription>{page.data.description}</DocsDescription>
-			<DocsBody>
-				<MDX components={getMDXComponents()} />
-			</DocsBody>
-		</DocsPage>
+		<div className="flex flex-col items-center justify-center min-h-screen px-6">
+			<div className="max-w-lg text-center space-y-4">
+				<h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-400 bg-clip-text text-transparent">
+					Dokumentation
+				</h1>
+				<p className="text-muted-foreground text-lg">
+					Dokumentationen är under uppbyggnad och kommer snart.
+				</p>
+				<a
+					href="/"
+					className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity"
+				>
+					Tillbaka till startsidan
+				</a>
+			</div>
+		</div>
 	);
-}
-
-export async function generateStaticParams() {
-	return source.generateParams();
-}
-
-export async function generateMetadata(props: { params: Promise<{ slug?: string[] }> }) {
-	const params = await props.params;
-	const page = source.getPage(params.slug);
-	if (!page) notFound();
-
-	return {
-		title: page.data.title,
-		description: page.data.description,
-	};
 }

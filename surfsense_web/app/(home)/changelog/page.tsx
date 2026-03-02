@@ -1,37 +1,22 @@
-import { loader } from "fumadocs-core/source";
-import { getLocale, getTranslations } from "next-intl/server";
-import { changelog } from "@/.source/server";
+import { db } from "@/app/db";
+import { postsTable } from "@/app/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { formatDate } from "@/lib/utils";
-import { getMDXComponents } from "@/mdx-components";
+import { getLocale, getTranslations } from "next-intl/server";
 
-const source = loader({
-	baseUrl: "/changelog",
-	source: changelog.toFumadocsSource(),
-});
-
-interface ChangelogData {
-	title: string;
-	date: string;
-	version?: string;
-	tags?: string[];
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	body: React.ComponentType<{ components?: any }>;
-}
-
-interface ChangelogPageItem {
-	url: string;
-	data: ChangelogData;
-}
+export const dynamic = "force-dynamic";
 
 export default async function ChangelogPage() {
 	const locale = await getLocale();
 	const t = await getTranslations("changelog");
-	const allPages = source.getPages() as ChangelogPageItem[];
-	const sortedChangelogs = allPages.sort((a, b) => {
-		const dateA = new Date(a.data.date).getTime();
-		const dateB = new Date(b.data.date).getTime();
-		return dateB - dateA;
-	});
+
+	const posts = await db
+		.select()
+		.from(postsTable)
+		.where(eq(postsTable.type, "changelog"))
+		.orderBy(desc(postsTable.createdAt));
+
+	const publishedPosts = posts.filter((p) => p.published);
 
 	return (
 		<div className="min-h-screen relative pt-20">
@@ -53,68 +38,110 @@ export default async function ChangelogPage() {
 
 			{/* Timeline */}
 			<div className="max-w-5xl mx-auto px-6 lg:px-10 pt-10 pb-20">
-				<div className="relative">
-					{sortedChangelogs.map((changelog) => {
-						const MDX = changelog.data.body;
-						const date = new Date(changelog.data.date);
-						const formattedDate = formatDate(date, locale as "sv");
+				{publishedPosts.length === 0 ? (
+					<p className="text-center text-muted-foreground py-20">
+						Inga changelog-inlägg publicerade ännu.
+					</p>
+				) : (
+					<div className="relative">
+						{publishedPosts.map((post) => {
+							const date = new Date(post.createdAt);
+							const formattedDate = formatDate(date, locale as "sv");
+							const tags = post.tags ? post.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
 
-						return (
-							<div key={changelog.url} className="relative">
-								<div className="flex flex-col md:flex-row gap-y-6">
-									<div className="md:w-48 flex-shrink-0">
-										<div className="md:sticky md:top-24 pb-10">
-											<time className="text-sm font-medium text-muted-foreground block mb-3">
-												{formattedDate}
-											</time>
-
-											{changelog.data.version && (
-												<div className="inline-flex relative z-10 items-center justify-center w-12 h-12 text-foreground border border-border rounded-xl text-sm font-bold bg-card shadow-sm">
-													{changelog.data.version}
-												</div>
-											)}
-										</div>
-									</div>
-
-									{/* Right side - Content */}
-									<div className="flex-1 md:pl-8 relative pb-10">
-										{/* Vertical timeline line */}
-										<div className="hidden md:block absolute top-2 left-0 w-px h-full bg-border">
-											{/* Timeline dot */}
-											<div className="hidden md:block absolute -translate-x-1/2 size-3 bg-primary rounded-full z-10" />
-										</div>
-
-										<div className="space-y-6">
-											<div className="relative z-10 flex flex-col gap-2">
-												<h2 className="text-2xl font-semibold tracking-tight text-balance">
-													{changelog.data.title}
-												</h2>
-
-												{/* Tags */}
-												{changelog.data.tags && changelog.data.tags.length > 0 && (
-													<div className="flex flex-wrap gap-2">
-														{changelog.data.tags.map((tag: string) => (
-															<span
-																key={tag}
-																className="h-6 w-fit px-2.5 text-xs font-medium bg-muted text-muted-foreground rounded-full border flex items-center justify-center"
-															>
-																{tag}
-															</span>
-														))}
-													</div>
-												)}
+							return (
+								<div key={post.id} className="relative">
+									<div className="flex flex-col md:flex-row gap-y-6">
+										<div className="md:w-48 flex-shrink-0">
+											<div className="md:sticky md:top-24 pb-10">
+												<time className="text-sm font-medium text-muted-foreground block mb-3">
+													{formattedDate}
+												</time>
 											</div>
-											<div className="prose dark:prose-invert max-w-none prose-headings:scroll-mt-8 prose-headings:font-semibold prose-a:no-underline prose-headings:tracking-tight prose-headings:text-balance prose-p:tracking-tight prose-p:text-balance prose-img:rounded-xl prose-img:shadow-lg">
-												<MDX components={getMDXComponents()} />
+										</div>
+
+										{/* Right side - Content */}
+										<div className="flex-1 md:pl-8 relative pb-10">
+											{/* Vertical timeline line */}
+											<div className="hidden md:block absolute top-2 left-0 w-px h-full bg-border">
+												{/* Timeline dot */}
+												<div className="hidden md:block absolute -translate-x-1/2 size-3 bg-primary rounded-full z-10" />
+											</div>
+
+											<div className="space-y-6">
+												<div className="relative z-10 flex flex-col gap-2">
+													<h2 className="text-2xl font-semibold tracking-tight text-balance">
+														{post.title}
+													</h2>
+
+													{/* Tags */}
+													{tags.length > 0 && (
+														<div className="flex flex-wrap gap-2">
+															{tags.map((tag) => (
+																<span
+																	key={tag}
+																	className="h-6 w-fit px-2.5 text-xs font-medium bg-muted text-muted-foreground rounded-full border flex items-center justify-center"
+																>
+																	{tag}
+																</span>
+															))}
+														</div>
+													)}
+												</div>
+
+												{post.imageUrl && (
+													<img
+														src={post.imageUrl}
+														alt={post.title}
+														className="rounded-xl shadow-lg max-w-full"
+													/>
+												)}
+
+												<div className="prose dark:prose-invert max-w-none prose-headings:scroll-mt-8 prose-headings:font-semibold prose-a:no-underline prose-headings:tracking-tight prose-headings:text-balance prose-p:tracking-tight prose-p:text-balance prose-img:rounded-xl prose-img:shadow-lg">
+													<MarkdownContent content={post.content} />
+												</div>
 											</div>
 										</div>
 									</div>
 								</div>
-							</div>
-						);
-					})}
-				</div>
+							);
+						})}
+					</div>
+				)}
 			</div>
 		</div>
 	);
+}
+
+function MarkdownContent({ content }: { content: string }) {
+	// Simple markdown to HTML conversion for common patterns
+	const html = content
+		// Code blocks
+		.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
+		// Inline code
+		.replace(/`([^`]+)`/g, "<code>$1</code>")
+		// Images
+		.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />')
+		// Links
+		.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+		// Bold
+		.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+		// Italic
+		.replace(/\*([^*]+)\*/g, "<em>$1</em>")
+		// H3
+		.replace(/^### (.+)$/gm, "<h3>$1</h3>")
+		// H2
+		.replace(/^## (.+)$/gm, "<h2>$1</h2>")
+		// H1
+		.replace(/^# (.+)$/gm, "<h1>$1</h1>")
+		// Unordered lists
+		.replace(/^- (.+)$/gm, "<li>$1</li>")
+		// Wrap consecutive li elements in ul
+		.replace(/((<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>")
+		// Paragraphs (lines not already wrapped)
+		.replace(/^(?!<[hupol]|<li|<pre|<code|<img|<a|<strong|<em)(.+)$/gm, "<p>$1</p>")
+		// Line breaks
+		.replace(/\n\n/g, "");
+
+	return <div dangerouslySetInnerHTML={{ __html: html }} />;
 }

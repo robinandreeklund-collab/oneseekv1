@@ -17,6 +17,24 @@ export function FooterNew() {
 
 				<nav className="flex items-center gap-6">
 					<Link
+						href="/about"
+						className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
+					>
+						Om oss
+					</Link>
+					<Link
+						href="/changelog"
+						className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
+					>
+						{tNav("changelog")}
+					</Link>
+					<Link
+						href="/dev"
+						className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
+					>
+						Dev
+					</Link>
+					<Link
 						href="/docs"
 						className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
 					>

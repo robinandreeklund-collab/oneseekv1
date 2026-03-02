@@ -31,7 +31,7 @@ export function ContactFormGridWithDetails() {
 
 				<div className="mt-10 flex flex-col items-center gap-6">
 					<Link
-						href="https://calendly.com/eric-surfsense/surfsense-meeting"
+						href="mailto:Robin@oneseek.ai"
 						target="_blank"
 						rel="noopener noreferrer"
 						className="flex items-center gap-3 rounded-xl bg-gradient-to-b from-blue-500 to-blue-600 px-6 py-3 text-base font-medium text-white shadow-lg transition duration-200 hover:from-blue-600 hover:to-blue-700"
@@ -47,16 +47,16 @@ export function ContactFormGridWithDetails() {
 					</div>
 
 					<Link
-						href="mailto:eric@surfsense.com"
+						href="mailto:Robin@oneseek.ai"
 						className="flex items-center gap-2 text-base text-neutral-600 transition duration-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-200"
 					>
 						<IconMailFilled className="h-5 w-5" />
-						eric@surfsense.com
+						Robin@oneseek.ai
 					</Link>
 				</div>
 
 				<div className="div relative mt-20 flex w-[600px] flex-shrink-0 items-center justify-center [perspective:800px] [transform-style:preserve-3d]">
-					<Pin className="h-30 w-85 top-0 left-0" t={t} />
+					<Pin className="h-30 w-85 top-[-10%] left-[12%]" t={t} />
 
 					<Image
 						src="/contact/world.svg"
