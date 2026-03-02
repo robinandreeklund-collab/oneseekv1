@@ -2,7 +2,11 @@ import { AgentPipeline } from "@/components/homepage/agent-pipeline";
 import { APIMarquee } from "@/components/homepage/api-marquee";
 import { Capabilities } from "@/components/homepage/capabilities";
 import { CTAHomepage } from "@/components/homepage/cta";
-import { TimeCapsule, PodcastMode, TransparentReasoning } from "@/components/homepage/features-showcase";
+import {
+	TimeCapsule,
+	DebateShowcase,
+	TransparentReasoning,
+} from "@/components/homepage/features-showcase";
 import { HeroSection } from "@/components/homepage/hero-section";
 import { LLMProviders } from "@/components/homepage/llm-providers";
 import { StatsBar } from "@/components/homepage/stats-bar";
@@ -17,8 +21,8 @@ export default function HomePage() {
 			<AgentPipeline />
 			<LLMProviders />
 			<TransparentReasoning />
+			<DebateShowcase />
 			<TimeCapsule />
-			<PodcastMode />
 			<CTAHomepage />
 		</main>
 	);
