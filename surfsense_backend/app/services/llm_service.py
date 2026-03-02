@@ -502,6 +502,9 @@ async def validate_llm_config(
             provider_prefix = provider_map.get(provider, provider.lower())
             model_string = f"{provider_prefix}/{model_name}"
 
+        # Reset global litellm.api_base to prevent cross-provider pollution
+        litellm.api_base = None
+
         # Create ChatLiteLLM instance
         litellm_kwargs = {
             "model": model_string,
@@ -658,6 +661,9 @@ async def get_search_space_llm_instance(
                 )
                 model_string = f"{provider_prefix}/{global_config['model_name']}"
 
+            # Reset global litellm.api_base to prevent cross-provider pollution
+            litellm.api_base = None
+
             # Create ChatLiteLLM instance from global config
             litellm_kwargs = {
                 "model": model_string,
@@ -738,6 +744,9 @@ async def get_search_space_llm_instance(
                 llm_config.provider.value, llm_config.provider.value.lower()
             )
             model_string = f"{provider_prefix}/{llm_config.model_name}"
+
+        # Reset global litellm.api_base to prevent cross-provider pollution
+        litellm.api_base = None
 
         # Create ChatLiteLLM instance
         litellm_kwargs = {

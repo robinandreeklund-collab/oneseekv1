@@ -13,6 +13,7 @@ managing prompt configurations.
 from dataclasses import dataclass
 from pathlib import Path
 
+import litellm
 import yaml
 from langchain_litellm import ChatLiteLLM
 from sqlalchemy import select
@@ -367,6 +368,10 @@ def create_chat_litellm_from_config(llm_config: dict) -> ChatLiteLLM | None:
     Returns:
         ChatLiteLLM instance or None on error
     """
+    # Reset global litellm.api_base — ChatLiteLLM mutates it on every
+    # instantiation, so a previous provider's base URL can leak across calls.
+    litellm.api_base = None
+
     # Build the model string
     if llm_config.get("custom_provider"):
         model_string = f"{llm_config['custom_provider']}/{llm_config['model_name']}"
@@ -421,6 +426,10 @@ def create_chat_litellm_from_agent_config(
     Returns:
         ChatLiteLLM or ChatLiteLLMRouter instance, or None on error
     """
+    # Reset global litellm.api_base — ChatLiteLLM mutates it on every
+    # instantiation, so a previous provider's base URL can leak across calls.
+    litellm.api_base = None
+
     # Handle Auto mode - return ChatLiteLLMRouter
     if agent_config.is_auto_mode:
         if not _ensure_auto_mode_router_initialized():

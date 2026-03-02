@@ -260,6 +260,11 @@ async def _call_litellm(
     )
 
     async def _run():
+        # Reset global litellm.api_base to prevent cross-provider
+        # pollution — ChatLiteLLM mutates litellm.api_base globally,
+        # so a previous provider's base URL can leak into this call.
+        litellm.api_base = None
+
         response = await litellm.acompletion(
             model=model_string,
             messages=[
