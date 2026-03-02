@@ -543,10 +543,50 @@ class ScbService:
     def _normalize_v2_metadata(data: dict[str, Any]) -> dict[str, Any]:
         """Convert v2 metadata format to the internal v1-compatible format.
 
-        v2 metadata uses 'variables' with 'code', 'label', 'values' (list of
-        objects with 'code' and 'label') instead of v1's 'code', 'text',
-        'values' (list of strings), 'valueTexts' (list of strings).
+        The v2 /metadata endpoint returns JSON-stat2 format with:
+        - ``id``: list of dimension names (e.g. ["Region", "Tid", ...])
+        - ``dimension``: dict mapping each name to an object with ``label``
+          and ``category`` (which has ``index`` and ``label`` sub-dicts).
+
+        This method also handles older PxWeb-style responses that use a
+        ``variables`` list with ``code``/``label``/``values`` entries.
         """
+        # --- JSON-stat2 format (v2 /metadata endpoint) ---
+        dim_ids = data.get("id")
+        dimensions = data.get("dimension")
+        if isinstance(dim_ids, list) and isinstance(dimensions, dict):
+            normalized_vars: list[dict[str, Any]] = []
+            for dim_id in dim_ids:
+                dim = dimensions.get(dim_id)
+                if not isinstance(dim, dict):
+                    continue
+                label = str(dim.get("label") or dim_id)
+                category = dim.get("category") or {}
+                index_map = category.get("index") or {}
+                label_map = category.get("label") or {}
+
+                # Sort value codes by their positional index
+                if isinstance(index_map, dict):
+                    sorted_codes = sorted(
+                        index_map.keys(), key=lambda k: index_map[k]
+                    )
+                else:
+                    sorted_codes = list(index_map)
+
+                values = [str(c) for c in sorted_codes]
+                value_texts = [
+                    str(label_map.get(c, c)) for c in sorted_codes
+                ]
+
+                normalized_vars.append({
+                    "code": str(dim_id),
+                    "text": label,
+                    "values": values,
+                    "valueTexts": value_texts,
+                })
+            return {"variables": normalized_vars}
+
+        # --- PxWeb-style format (variables list) ---
         variables = data.get("variables") or []
         if not isinstance(variables, list):
             return data
@@ -555,7 +595,7 @@ class ScbService:
         if variables and "valueTexts" in variables[0]:
             return data
 
-        normalized_vars: list[dict[str, Any]] = []
+        normalized_vars = []
         for var in variables:
             code = str(var.get("code") or "")
             text = str(var.get("label") or var.get("text") or code)

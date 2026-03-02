@@ -298,6 +298,52 @@ def test_build_query_payloads_single():
     assert len(batch_summaries) == len(payloads)
 
 
+def test_build_query_payloads_jsonstat2_metadata():
+    """End-to-end: build_query_payloads with JSON-stat2 metadata from v2 API."""
+    jsonstat2_metadata = {
+        "version": "2.0",
+        "class": "dataset",
+        "id": ["Region", "ContentsCode", "Tid"],
+        "size": [3, 1, 3],
+        "dimension": {
+            "Region": {
+                "label": "region",
+                "category": {
+                    "index": {"00": 0, "01": 1, "1480": 2},
+                    "label": {
+                        "00": "Riket",
+                        "01": "Stockholms län",
+                        "1480": "Göteborgs kommun",
+                    },
+                },
+            },
+            "ContentsCode": {
+                "label": "tabellinnehåll",
+                "category": {
+                    "index": {"BE0101N1": 0},
+                    "label": {"BE0101N1": "Folkmängd"},
+                },
+            },
+            "Tid": {
+                "label": "år",
+                "category": {
+                    "index": {"2022": 0, "2023": 1, "2024": 2},
+                    "label": {"2022": "2022", "2023": "2023", "2024": "2024"},
+                },
+            },
+        },
+    }
+    service = ScbService()
+    # First normalize the metadata (as _get_table_metadata_v2 would)
+    normalized = ScbService._normalize_v2_metadata(jsonstat2_metadata)
+    payloads, summary, warnings, batch_summaries = service.build_query_payloads(
+        normalized, "Folkmängd i Göteborg 2023"
+    )
+    assert len(payloads) >= 1, f"Expected payloads but got none; warnings: {warnings}"
+    assert isinstance(summary, list)
+    assert len(summary) > 0
+
+
 def test_build_query_payload_no_variables():
     service = ScbService()
     payload, summary, warnings = service.build_query_payload({}, "test")
@@ -410,6 +456,61 @@ def test_normalize_v2_metadata():
     region_var = result["variables"][1]
     assert region_var["values"] == ["00", "01"]
     assert region_var["valueTexts"] == ["Riket", "Stockholm"]
+
+
+def test_normalize_v2_metadata_jsonstat2():
+    """v2 /metadata endpoint returns JSON-stat2 format with dimension/id keys."""
+    jsonstat2_metadata = {
+        "version": "2.0",
+        "class": "dataset",
+        "label": "Folkmängd",
+        "id": ["Region", "Kon", "ContentsCode", "Tid"],
+        "size": [3, 2, 1, 2],
+        "dimension": {
+            "Region": {
+                "label": "region",
+                "category": {
+                    "index": {"00": 0, "01": 1, "03": 2},
+                    "label": {"00": "Riket", "01": "Stockholms län", "03": "Uppsala län"},
+                },
+            },
+            "Kon": {
+                "label": "kön",
+                "category": {
+                    "index": {"1": 0, "2": 1},
+                    "label": {"1": "män", "2": "kvinnor"},
+                },
+            },
+            "ContentsCode": {
+                "label": "tabellinnehåll",
+                "category": {
+                    "index": {"BE0101N1": 0},
+                    "label": {"BE0101N1": "Folkmängd"},
+                },
+            },
+            "Tid": {
+                "label": "år",
+                "category": {
+                    "index": {"2022": 0, "2023": 1},
+                    "label": {"2022": "2022", "2023": "2023"},
+                },
+            },
+        },
+    }
+    result = ScbService._normalize_v2_metadata(jsonstat2_metadata)
+
+    assert len(result["variables"]) == 4
+    region_var = result["variables"][0]
+    assert region_var["code"] == "Region"
+    assert region_var["text"] == "region"
+    assert region_var["values"] == ["00", "01", "03"]
+    assert region_var["valueTexts"] == ["Riket", "Stockholms län", "Uppsala län"]
+
+    tid_var = result["variables"][3]
+    assert tid_var["code"] == "Tid"
+    assert tid_var["text"] == "år"
+    assert tid_var["values"] == ["2022", "2023"]
+    assert tid_var["valueTexts"] == ["2022", "2023"]
 
 
 def test_normalize_v2_metadata_already_v1():

@@ -796,6 +796,14 @@ def _selection_cell_count(self, selections):
 
 **Effekt:** Ingen praktisk bugg, men förvirrande logik.
 
+### BUG-7: `_normalize_v2_metadata` hanterade inte JSON-stat2 (P1 — Kritisk) — FIXAD
+
+**Problem:** v2 `/tables/{id}/metadata`-endpointen returnerar JSON-stat2-format med `id` (dimensionslista) och `dimension` (dict med `category.index`/`category.label`), men `_normalize_v2_metadata` letade efter `data.get("variables")` som inte finns i JSON-stat2. Resulterade i tom variabellista → inga payloads → "No valid SCB query payloads could be built." på **alla** frågor.
+
+**Fix:** Uppdaterade `_normalize_v2_metadata` att först kontrollera JSON-stat2-format (`id` + `dimension` keys), extrahera variabler från `dimension`-objektet med korrekt ordning via `category.index`, och konvertera till v1-kompatibelt format.
+
+**Plats:** `scb_service.py:_normalize_v2_metadata`
+
 ### BUG-6: Encoding-problem i API-URL (P3 — Låg) — FIXAD
 
 **Problem:** SCB v1 API-URL:er kan innehålla svenska tecken i tabellnamn. `_build_url()` gör ingen URL-encoding:
