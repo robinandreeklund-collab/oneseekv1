@@ -19,7 +19,7 @@ import {
 	Search,
 	SlidersHorizontal,
 } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import React, { lazy, Suspense, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -48,6 +48,44 @@ const DeployPanel = lazy(() =>
 		default: m.DeployPanel,
 	}))
 );
+
+class EvalPanelErrorBoundary extends React.Component<
+	{ children: React.ReactNode },
+	{ hasError: boolean; message?: string; stack?: string }
+> {
+	constructor(props: { children: React.ReactNode }) {
+		super(props);
+		this.state = { hasError: false, message: undefined, stack: undefined };
+	}
+
+	static getDerivedStateFromError(error: Error) {
+		return { hasError: true, message: error?.message, stack: error?.stack };
+	}
+
+	componentDidCatch(error: Error, info: React.ErrorInfo) {
+		console.error("Eval & Audit panel crashed (dashboard boundary)", error, info);
+	}
+
+	render() {
+		if (this.state.hasError) {
+			return (
+				<Alert className="flex flex-col gap-2">
+					<div className="flex items-center gap-2">
+						<AlertCircle className="h-4 w-4" />
+						<span className="font-medium">Eval &amp; Audit kunde inte laddas</span>
+					</div>
+					<span className="text-sm text-muted-foreground">
+						{this.state.message || "Okänt fel"}
+					</span>
+					{this.state.stack && (
+						<pre className="text-xs whitespace-pre-wrap bg-muted/60 rounded p-2">{this.state.stack}</pre>
+					)}
+				</Alert>
+			);
+		}
+		return this.props.children;
+	}
+}
 
 function PanelFallback() {
 	return (
@@ -127,9 +165,11 @@ export function ToolAdminDashboard() {
 				</TabsContent>
 
 				<TabsContent value="eval" className="mt-6">
-					<Suspense fallback={<PanelFallback />}>
-						<EvalPanel />
-					</Suspense>
+					<EvalPanelErrorBoundary>
+						<Suspense fallback={<PanelFallback />}>
+							<EvalPanel />
+						</Suspense>
+					</EvalPanelErrorBoundary>
 				</TabsContent>
 
 				<TabsContent value="deploy" className="mt-6">
