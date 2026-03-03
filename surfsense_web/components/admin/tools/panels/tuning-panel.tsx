@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -445,6 +446,26 @@ export function TuningPanel() {
 							/>
 							<Label className="text-sm">Live routing aktiverat</Label>
 						</div>
+						<div className="space-y-1">
+							<Label className="text-xs">Live-routing fas</Label>
+							<Select
+								value={draft.live_routing_phase ?? "shadow"}
+								onValueChange={(v) =>
+									update("live_routing_phase", v as ToolRetrievalTuning["live_routing_phase"])
+								}
+							>
+								<SelectTrigger className="h-8 w-48 text-xs">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="shadow">Shadow</SelectItem>
+									<SelectItem value="tool_gate">Tool gate</SelectItem>
+									<SelectItem value="agent_auto">Agent auto</SelectItem>
+									<SelectItem value="adaptive">Adaptive</SelectItem>
+									<SelectItem value="intent_finetune">Intent finetune</SelectItem>
+								</SelectContent>
+							</Select>
+						</div>
 						<div className="flex items-center gap-3">
 							<Switch
 								checked={draft.retrieval_feedback_db_enabled ?? false}
@@ -453,6 +474,9 @@ export function TuningPanel() {
 							<Label className="text-sm">Feedback-databas aktiverad</Label>
 						</div>
 					</div>
+					<p className="text-xs text-muted-foreground">
+						Feedback-databas lagrar retrieval-signaler för adaptiva trösklar; aktiveras via togglen ovan.
+					</p>
 				</CardContent>
 			</Card>
 

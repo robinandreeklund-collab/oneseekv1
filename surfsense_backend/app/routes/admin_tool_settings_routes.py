@@ -3987,6 +3987,7 @@ async def debug_retrieval(
 ):
     """Debug tool retrieval: run the full scoring pipeline for a query and
     return scored candidates with dimension breakdowns."""
+    start_ts = perf_counter()
     _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
         session,
         user,
@@ -4002,6 +4003,7 @@ async def debug_retrieval(
         )
     )
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+    tool_index_by_id = {entry.tool_id: entry for entry in tool_index}
 
     try:
         retrieved_ids, ranked_tools = smart_retrieve_tools_with_breakdown(
@@ -4036,6 +4038,10 @@ async def debug_retrieval(
         if isinstance(retrieval_tuning, dict)
         else 0.45
     )
+    timing_ms = int((perf_counter() - start_ts) * 1000)
+
+    intent_result: dict[str, Any] | None = None
+    agent_candidates: list[dict[str, Any]] = []
 
     tools = []
     for rank, entry in enumerate(ranked_tools):
@@ -4057,9 +4063,34 @@ async def debug_retrieval(
             "rank": rank + 1,
         })
 
+    if ranked_tools:
+        top_tool_id = str(ranked_tools[0].get("tool_id") or "")
+        top_entry = tool_index_by_id.get(top_tool_id)
+        if top_entry:
+            inferred_intent = top_entry.category or (top_entry.namespace[-1] if top_entry.namespace else "")
+            intent_result = {
+                "intent_id": inferred_intent or "okand_intent",
+                "route": "inline",
+                "confidence": 0.68,
+                "graph_complexity": "simple",
+            }
+            inferred_agent = (
+                top_entry.namespace[1]
+                if len(top_entry.namespace) > 1
+                else (top_entry.namespace[0] if top_entry.namespace else "general")
+            )
+            agent_candidates.append(
+                {
+                    "agent_id": inferred_agent or "general",
+                    "score": 0.68,
+                    "auto_selected": True,
+                    "rank": 1,
+                }
+            )
+
     return {
-        "intent": None,
-        "agents": [],
+        "intent": intent_result,
+        "agents": agent_candidates,
         "tools": tools,
         "thresholds": {
             "tool_auto_score": tool_auto_score,
@@ -4067,6 +4098,7 @@ async def debug_retrieval(
             "agent_auto_score": agent_auto_score,
         },
         "query": query,
+        "timing_ms": timing_ms,
     }
 
 

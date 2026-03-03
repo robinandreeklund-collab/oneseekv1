@@ -201,8 +201,8 @@ function AuditSection({ searchSpaceId }: { searchSpaceId: number | undefined }) 
 
 function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 	const [evalType, setEvalType] = useState<EvalType>("tool_selection");
-	const [genMode, _setGenMode] = useState<GenerationMode>("category");
-	const [categoryId, _setCategoryId] = useState("");
+	const [genMode, setGenMode] = useState<GenerationMode>("category");
+	const [categoryId, setCategoryId] = useState("");
 	const [questionCount, setQuestionCount] = useState(12);
 	const [difficulty, setDifficulty] = useState<DifficultyProfile>("blandad");
 	const [evalName, setEvalName] = useState("");
@@ -232,7 +232,9 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 			apiCategories as {
 				providers?: Array<{ provider_key: string; categories?: Array<{ category_id: string }> }>;
 			}
-		)?.providers?.flatMap((p) => p.categories?.map((c) => c.category_id) ?? []) ?? [];
+		)?.providers
+			?.flatMap((p) => p.categories?.map((c) => c.category_id) ?? [])
+			?.filter((catId, index, arr) => arr.indexOf(catId) === index) ?? [];
 
 	// Cleanup on unmount
 	useEffect(() => {
@@ -285,6 +287,11 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 	const generateTests = useCallback(async () => {
 		setIsGenerating(true);
 		try {
+			if (typeof searchSpaceId !== "number") {
+				toast.error("Ingen search space vald");
+				return;
+			}
+
 			const response = await adminToolSettingsApiService.generateEvalLibraryFile({
 				mode: genMode,
 				category_id: categoryId || undefined,
@@ -305,6 +312,11 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 	}, [genMode, categoryId, questionCount, difficulty, searchSpaceId]);
 
 	const runEval = useCallback(async () => {
+		if (typeof searchSpaceId !== "number") {
+			toast.error("Ingen search space vald");
+			return;
+		}
+
 		setIsRunning(true);
 		setJobStatus(null);
 		try {
@@ -318,12 +330,18 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 				response = (await adminToolSettingsApiService.startToolEvaluation({
 					test_cases: testCases,
 					eval_name: evalName || undefined,
+					category_id: categoryId || undefined,
+					difficulty_profile: difficulty,
+					question_count: questionCount,
 					search_space_id: searchSpaceId,
 				})) as Record<string, unknown>;
 			} else {
 				response = (await adminToolSettingsApiService.startToolApiInputEvaluation({
 					test_cases: testCases,
 					eval_name: evalName || undefined,
+					category_id: categoryId || undefined,
+					difficulty_profile: difficulty,
+					question_count: questionCount,
 					search_space_id: searchSpaceId,
 				})) as Record<string, unknown>;
 			}
@@ -333,7 +351,7 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 			setIsRunning(false);
 			toast.error(error instanceof Error ? error.message : "Eval-start misslyckades");
 		}
-	}, [testCasesJson, evalType, evalName, searchSpaceId]);
+	}, [testCasesJson, evalType, evalName, categoryId, difficulty, questionCount, searchSpaceId]);
 
 	// Batch/parallel execution
 	const runBatch = useCallback(async () => {
@@ -487,6 +505,26 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 							placeholder="Valfritt namn"
 							className="h-8 text-xs"
 						/>
+					</div>
+					<div className="space-y-1">
+						<Label className="text-xs">Kategori</Label>
+						<Select value={categoryId} onValueChange={(v) => setCategoryId(v)}>
+							<SelectTrigger className="h-8 text-xs">
+								<SelectValue placeholder="Välj kategori" />
+							</SelectTrigger>
+							<SelectContent>
+								{categories.map((catId) => (
+									<SelectItem key={catId} value={catId}>
+										{catId}
+									</SelectItem>
+								))}
+								{categories.length === 0 && (
+									<SelectItem value="" disabled>
+										Inga kategorier
+									</SelectItem>
+								)}
+							</SelectContent>
+						</Select>
 					</div>
 				</div>
 
@@ -729,6 +767,11 @@ function AutoLoopSection({ searchSpaceId }: { searchSpaceId: number | undefined 
 	}, [jobId, isRunning]);
 
 	const start = useCallback(async () => {
+		if (typeof searchSpaceId !== "number") {
+			toast.error("Ingen search space vald");
+			return;
+		}
+
 		setIsRunning(true);
 		setJobStatus(null);
 		try {
