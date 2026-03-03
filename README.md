@@ -95,6 +95,38 @@ Tekniskt anvands:
 
 Denna PR innehaller loop-fix (P1-P2), multi-query decomposer (P3), subagent mini-graphs med convergence (P4), bigtool subagent loop guard, samt uppgradering av admin-ytan for metadata-kvalitet och kontrollerad live-rollout for routing.
 
+### Admin Tools v2 — Fullstandig omstrukturering
+
+**Status:** Fas 1+2 (backend) KLAR, Fas 3 (frontend) KLAR, Fas 4 (polish) DELVIS KLAR
+
+**Sammanfattning:** `/admin/tools` och `/admin/lifecycle` ar sammanslagena till en enhetlig 3-flik-dashboard:
+
+| Flik | Ansvar | Status |
+|------|--------|--------|
+| **Metadata** | Redigera per-verktyg metadata + retrieval-vikter | ✅ KLAR |
+| **Kalibrering** | Guidat 3-steg: audit → eval → auto-optimering | ✅ KLAR |
+| **Overblick & Lifecycle** | Nyckeltal, trender, lifecycle-tabell, audit trail | ✅ KLAR |
+
+**Backend-forbattringar:**
+- Centraliserad metadata-standard med strikta granser (max 20 keywords, max 10 example_queries, etc.)
+- `validate_suggestion_quality()` — alla LLM-forslag valideras mot arkitektur-regler
+- `enforce_metadata_limits()` pa ALLA LLM-svar (intent, agent, tool)
+- Holdout-validering i auto-loop (forhindrar overfitting)
+- Optimistisk lasning vid metadata-uppdatering (409 VERSION_CONFLICT)
+- Tidsbaserad eval-jobb-stadning (24h expiry)
+- Unified provider lookup (9 if-block → 1 dict)
+- Namespace registry-monster for tool-dispatch
+- `GlobalToolLifecycleAudit` DB-modell for audit trail
+
+**Frontend-forbattringar:**
+- Lazy-loading av flikar (React.lazy + Suspense)
+- `tool-admin-page.tsx` (~95 rader) ersatter `tool-settings-page.tsx` (5283 rader)
+- `metadata-tab.tsx` (~1250 rader), `calibration-tab.tsx` (~1400 rader), `overview-tab.tsx` (~780 rader)
+- Nya shared-komponenter: `suggestion-diff-view.tsx`, `lifecycle-badge.tsx`, `audit-trail.tsx`
+- `/admin/lifecycle` omdirigeras till `/admin/tools` (lifecycle integrerad i Overblick-fliken)
+
+**Fullstandig analys och plan:** Se `docs/eval/admin_tools_v1.md`, `docs/eval/admin_tools_v1_code_audit.md`, `docs/eval/eval_v2.md`
+
 ### 0) Loop-fix + Multi-query decomposer + Subagent Mini-Graphs (P1-P4)
 
 **Loop-fix (P1-P2):**

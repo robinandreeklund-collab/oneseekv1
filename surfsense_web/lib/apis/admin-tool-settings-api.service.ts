@@ -429,6 +429,13 @@ class AdminToolSettingsApiService {
 			}
 		);
 	}
+
+	async getMetadataLimits() {
+		return baseApiService.get(
+			"/api/v1/admin/tool-settings/metadata-limits",
+			undefined
+		);
+	}
 }
 
 export const adminToolSettingsApiService = new AdminToolSettingsApiService();

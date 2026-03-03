@@ -1,7 +1,7 @@
 "use client";
 
-import { ToolSettingsPage } from "@/components/admin/tool-settings-page";
+import { ToolAdminPage } from "@/components/admin/tool-admin-page";
 
 export default function AdminToolsRoute() {
-	return <ToolSettingsPage />;
+	return <ToolAdminPage />;
 }

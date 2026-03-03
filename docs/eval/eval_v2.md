@@ -825,4 +825,106 @@ surfsense_web/
 
 ---
 
+---
+
+## 10. Implementeringsstatus
+
+> Uppdaterad: 2026-03-03
+
+### Fas 1: Grund — KLAR
+
+| # | Uppgift | Status |
+|---|---------|--------|
+| 1.1 | Konsolidera `DEFAULT_TOOL_RETRIEVAL_TUNING` | ✅ `get_default_tuning_as_dict()` i bigtool_store.py |
+| 1.2 | Uppdatera score-trösklar | ✅ Importeras från bigtool_store |
+| 1.3 | Holdout-validering i auto-loop | ✅ Slutvalidering tillagd i admin_tool_settings_routes.py |
+| 1.4 | `enforce_metadata_limits()` på LLM-förslag | ✅ Anropas i `_build_llm_intent/agent_metadata_suggestion` |
+| 1.5 | Nya metadata-gränser (name 80, category 40, etc.) | ✅ Backend + frontend synkade |
+| 1.6 | `validate_suggestion_quality()` | ✅ Ny funktion i bigtool_store.py |
+| 1.7 | Hindra `enabled: false` / category-ändring | ✅ I validate_suggestion_quality |
+| 1.8 | `GET /metadata-limits` endpoint | ✅ Ny endpoint i admin_tool_settings_routes.py |
+| 1.9 | Tidbaserad eval-jobb-städning (24h) | ✅ `_is_expired_job()` + alla 3 prune-funktioner |
+| 1.10 | Optimistisk låsning | ✅ `expected_version_hash` i PUT handler |
+
+### Fas 2: Backend-refaktorering — KLAR (delvis)
+
+| # | Uppgift | Status |
+|---|---------|--------|
+| 2.1 | Refaktorera 9 if-block till `_PROVIDER_DEFINITIONS` | ✅ Unified lookup |
+| 2.2 | Registry-mönster `_NAMESPACE_REGISTRY` | ✅ Prefix-baserad dispatch |
+| 2.3 | Kombinera `smart_retrieve_tools` | ✅ `include_breakdown` parameter |
+| 2.4 | Extrahera gemensam eval-baslogik | ⏳ Ej påbörjad |
+| 2.5 | `prune_low_value_keywords()` | ⏳ Ej påbörjad |
+| 2.6 | Lifecycle audit trail — DB-modell | ✅ `GlobalToolLifecycleAudit` i db.py |
+| 2.7 | Auto-promotion badge | ⏳ Ej påbörjad |
+| 2.8 | Säker fallback med cache | ⏳ Ej påbörjad |
+| 2.9 | BSSS lock-override audit trail | ⏳ Ej påbörjad |
+| 2.10 | Contrast memory eviction | ⏳ Ej påbörjad |
+| 2.11 | Embed cache eviction | ⏳ Ej påbörjad |
+
+### Fas 3: Frontend-omstrukturering — KLAR
+
+| # | Uppgift | Status |
+|---|---------|--------|
+| 3.1 | `tool-admin-page.tsx` orchestrator | ✅ 3-flik med lazy loading |
+| 3.2 | `metadata-tab.tsx` | ✅ ~1250 rader, extraherat |
+| 3.3 | `calibration-tab.tsx` | ✅ Extraherat med guidat 3-steg |
+| 3.4 | `overview-tab.tsx` | ✅ Nyckeltal + trend + lifecycle |
+| 3.5 | `suggestion-diff-view.tsx` | ✅ Diff-vy med checkboxar |
+| 3.6 | `lifecycle-badge.tsx` | ✅ Återanvändbar badge |
+| 3.7 | `getMetadataLimits()` i API-service | ✅ Tillagd |
+| 3.8 | `maxLength` på HTML-inputs | ✅ I metadata-tab.tsx |
+| 3.9 | Nya gränser i frontend Zod-schemas | ✅ `admin-tool-settings.types.ts` |
+| 3.10 | Ta bort `/admin/lifecycle` | ✅ Redirect till /admin/tools |
+| 3.11 | `audit-trail.tsx` komponent | ✅ I shared/ |
+
+### Fas 4: Polish — DELVIS KLAR
+
+| # | Uppgift | Status |
+|---|---------|--------|
+| 4.1 | End-to-end test | ⏳ Kräver deploy |
+| 4.2 | Validera LLM-förslag | ⏳ Kräver backend-tester |
+| 4.3 | Verifiera holdout-validering | ⏳ Kräver backend-tester |
+| 4.4 | Kör calibrate_embedding_thresholds | ⏳ Kräver deploy |
+| 4.5 | Uppdatera CLAUDE.md | ⏳ |
+| 4.6 | Exponential backoff eval-polling | ⏳ |
+| 4.7 | Lazy-loading av flikar | ✅ React.lazy + Suspense i tool-admin-page |
+
+### Sammanfattning
+
+| Fas | Klar | Kvar | Status |
+|-----|------|------|--------|
+| Fas 1 | 10/10 | 0 | ✅ KLAR |
+| Fas 2 | 4/11 | 7 | 🔶 DELVIS |
+| Fas 3 | 11/11 | 0 | ✅ KLAR |
+| Fas 4 | 1/7 | 6 | 🔶 DELVIS |
+
+**Totalt:** 26/39 uppgifter klara (67%)
+
+### Nya filer skapade
+
+```
+surfsense_web/components/admin/
+├── tool-admin-page.tsx              # 3-flik orchestrator (~95 rader)
+├── tabs/
+│   ├── metadata-tab.tsx             # Flik 1: Metadata (~1250 rader)
+│   ├── calibration-tab.tsx          # Flik 2: Kalibrering (~1400 rader)
+│   └── overview-tab.tsx             # Flik 3: Överblick (~780 rader)
+├── shared/
+│   ├── suggestion-diff-view.tsx     # Diff-vy (~140 rader)
+│   ├── lifecycle-badge.tsx          # Badge (~50 rader)
+│   └── audit-trail.tsx              # Audit trail (~130 rader)
+```
+
+### Deprecated filer
+
+```
+surfsense_web/components/admin/
+├── tool-settings-page.tsx           # DEPRECATED → ersatt av tabs/*
+├── tool-lifecycle-page.tsx          # DEPRECATED → ersatt av overview-tab.tsx
+```
+
+---
+
 *Utvecklingsplan skapad 2026-03-03. Baseras på `admin_tools_v1.md` och `admin_tools_v1_code_audit.md`.*
+*Implementeringsstatus uppdaterad 2026-03-03.*
