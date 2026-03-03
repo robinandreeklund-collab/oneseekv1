@@ -17,6 +17,7 @@ from app.agents.new_chat.bigtool_store import (
     build_global_tool_registry,
     build_tool_index,
     clear_tool_caches,
+    get_metadata_limits,
     smart_retrieve_tools_with_breakdown,
 )
 from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
@@ -2152,7 +2153,31 @@ def _list_eval_library_files(
     return items
 
 
+_EVAL_JOB_MAX_AGE_HOURS = 24
+
+
+def _is_expired_job(payload: dict[str, Any]) -> bool:
+    """Check if a finished eval job is older than _EVAL_JOB_MAX_AGE_HOURS."""
+    started_raw = payload.get("started_at") or payload.get("updated_at")
+    if not started_raw:
+        return False
+    try:
+        started = datetime.fromisoformat(str(started_raw))
+        return (datetime.now(UTC) - started).total_seconds() > _EVAL_JOB_MAX_AGE_HOURS * 3600
+    except (ValueError, TypeError):
+        return False
+
+
 async def _prune_eval_jobs() -> None:
+    # v2: Time-based cleanup — remove finished jobs older than 24h
+    expired = [
+        job_id
+        for job_id, payload in _EVAL_JOBS.items()
+        if payload.get("status") in {"completed", "failed"} and _is_expired_job(payload)
+    ]
+    for job_id in expired:
+        _EVAL_JOBS.pop(job_id, None)
+    # Size-based cleanup
     if len(_EVAL_JOBS) <= _MAX_EVAL_JOBS:
         return
     finished = [
@@ -2191,6 +2216,14 @@ def _serialize_eval_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _prune_api_input_eval_jobs() -> None:
+    # v2: Time-based cleanup
+    expired = [
+        job_id
+        for job_id, payload in _API_INPUT_EVAL_JOBS.items()
+        if payload.get("status") in {"completed", "failed"} and _is_expired_job(payload)
+    ]
+    for job_id in expired:
+        _API_INPUT_EVAL_JOBS.pop(job_id, None)
     if len(_API_INPUT_EVAL_JOBS) <= _MAX_API_INPUT_EVAL_JOBS:
         return
     finished = [
@@ -2229,6 +2262,14 @@ def _serialize_api_input_eval_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _prune_auto_loop_jobs() -> None:
+    # v2: Time-based cleanup
+    expired = [
+        job_id
+        for job_id, payload in _AUTO_LOOP_JOBS.items()
+        if payload.get("status") in {"completed", "failed"} and _is_expired_job(payload)
+    ]
+    for job_id in expired:
+        _AUTO_LOOP_JOBS.pop(job_id, None)
     if len(_AUTO_LOOP_JOBS) <= _MAX_AUTO_LOOP_JOBS:
         return
     finished = [
@@ -3931,6 +3972,12 @@ async def _apply_tool_metadata_updates(
     )
 
 
+@router.get("/tool-settings/metadata-limits")
+async def get_tool_settings_metadata_limits():
+    """Return global metadata limit values (public config)."""
+    return get_metadata_limits()
+
+
 @router.get(
     "/tool-settings",
     response_model=ToolSettingsResponse,
@@ -3989,6 +4036,42 @@ async def update_tool_settings_metadata_catalog(
         user,
         requested_search_space_id=search_space_id,
     )
+
+    # v2: Optimistic locking — reject if metadata changed since client last fetched
+    if payload.expected_version_hash:
+        connector_service_check = ConnectorService(
+            session,
+            search_space_id=resolved_search_space_id,
+            user_id=str(user.id),
+        )
+        deps_check = {
+            "search_space_id": resolved_search_space_id,
+            "db_session": session,
+            "connector_service": connector_service_check,
+            "user_id": str(user.id),
+            "thread_id": 0,
+        }
+        check_registry = await build_global_tool_registry(
+            dependencies=deps_check,
+            include_mcp_tools=False,
+            respect_lifecycle=False,
+        )
+        check_index = build_tool_index(check_registry)
+        current_hash = compute_metadata_version_hash(check_index)
+        if current_hash != payload.expected_version_hash:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "VERSION_CONFLICT",
+                    "message": (
+                        "Metadata har ändrats sedan du hämtade den. "
+                        "Ladda om sidan och försök igen."
+                    ),
+                    "current_version_hash": current_hash,
+                    "expected_version_hash": payload.expected_version_hash,
+                },
+            )
+
     defaults_by_tool: dict[str, dict[str, Any]] = {}
     default_intent_definitions: dict[str, dict[str, Any]] = {}
     default_agent_metadata: dict[str, dict[str, Any]] = {}
@@ -6720,6 +6803,53 @@ async def _run_tool_auto_loop_job_background(
 
             if best_result is None:
                 raise RuntimeError("Auto-loop completed without a valid evaluation result")
+
+            # v2: Re-run holdout suite against BEST state for independent validation
+            if holdout_enabled and generated_holdout_tests and best_metadata_state:
+                try:
+                    final_holdout_payload = ToolEvaluationRequest(
+                        eval_name=(
+                            f"{holdout_suite_payload.get('eval_name') or 'auto-loop-holdout'} "
+                            f"· final-validation"
+                        ),
+                        target_success_rate=target_success_rate,
+                        search_space_id=resolved_search_space_id,
+                        retrieval_limit=max(1, min(int(payload.retrieval_limit or 5), 15)),
+                        use_llm_supervisor_review=bool(payload.use_llm_supervisor_review),
+                        tests=generated_holdout_tests,
+                        metadata_patch=list(best_metadata_state.values()),
+                        retrieval_tuning_override=(
+                            ToolRetrievalTuning(**best_retrieval_state)
+                            if isinstance(best_retrieval_state, dict)
+                            else None
+                        ),
+                    )
+                    final_holdout_run = await _execute_tool_evaluation(
+                        job_session,
+                        job_user,
+                        payload=final_holdout_payload,
+                        resolved_search_space_id=resolved_search_space_id,
+                        prompt_patch=best_prompt_state,
+                        progress_callback=None,
+                    )
+                    final_holdout_metrics = (
+                        final_holdout_run.get("metrics")
+                        if isinstance(final_holdout_run.get("metrics"), dict)
+                        else {}
+                    )
+                    best_holdout_result = final_holdout_run
+                    overfit_delta = best_success_rate - (
+                        _to_float(final_holdout_metrics.get("success_rate")) or 0.0
+                    )
+                    logger.info(
+                        "Auto-loop final holdout validation: holdout=%.2f%%, "
+                        "eval=%.2f%%, overfit_delta=%.2f%%",
+                        (_to_float(final_holdout_metrics.get("success_rate")) or 0.0) * 100,
+                        best_success_rate * 100,
+                        overfit_delta * 100,
+                    )
+                except Exception:
+                    logger.warning("Final holdout validation failed — using best iteration result")
 
             ordered_metadata_patch = [
                 best_metadata_state[tool_id].model_dump()
