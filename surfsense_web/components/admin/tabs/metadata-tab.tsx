@@ -682,43 +682,6 @@ export function MetadataTab() {
 									</div>
 								</div>
 								<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-								<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-									<div className="space-y-1">
-										<Label>Intent top-K</Label>
-										<Input
-											type="number"
-											step="1"
-											min={2}
-											max={8}
-											value={
-												draftRetrievalTuning.intent_candidate_top_k ?? 3
-											}
-											onChange={(e) =>
-												updateRetrievalTuningField(
-													"intent_candidate_top_k",
-													Number.parseInt(e.target.value || "3", 10)
-												)
-											}
-										/>
-									</div>
-									<div className="space-y-1">
-										<Label>Agent top-K</Label>
-										<Input
-											type="number"
-											step="1"
-											min={2}
-											max={8}
-											value={
-												draftRetrievalTuning.agent_candidate_top_k ?? 3
-											}
-											onChange={(e) =>
-												updateRetrievalTuningField(
-													"agent_candidate_top_k",
-													Number.parseInt(e.target.value || "3", 10)
-												)
-											}
-										/>
-									</div>
 									<div className="space-y-1">
 										<Label>Agent margin</Label>
 										<Input
