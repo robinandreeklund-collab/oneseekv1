@@ -3978,6 +3978,98 @@ async def get_tool_settings_metadata_limits():
     return get_metadata_limits()
 
 
+@router.get("/tool-settings/debug-retrieval")
+async def debug_retrieval(
+    query: str,
+    search_space_id: int | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Debug tool retrieval: run the full scoring pipeline for a query and
+    return scored candidates with dimension breakdowns."""
+    _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
+        session,
+        user,
+        requested_search_space_id=search_space_id,
+    )
+
+    _tool_registry, tool_index, _persisted, _effective = (
+        await _build_tool_registry_and_index_for_search_space(
+            session,
+            user,
+            search_space_id=resolved_search_space_id,
+            metadata_patch=None,
+        )
+    )
+    retrieval_tuning = await get_global_tool_retrieval_tuning(session)
+
+    try:
+        retrieved_ids, ranked_tools = smart_retrieve_tools_with_breakdown(
+            query,
+            tool_index=tool_index,
+            primary_namespaces=[("tools",)],
+            fallback_namespaces=[],
+            limit=20,
+            trace_key=None,
+            tuning=retrieval_tuning,
+        )
+    except Exception as exc:
+        logger.exception("Debug retrieval failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Debug retrieval failed: {exc!s}",
+        ) from exc
+
+    # Build tool candidates with scoring
+    tool_auto_score = float(
+        (retrieval_tuning or {}).get("tool_auto_select_threshold", 0.45)
+        if isinstance(retrieval_tuning, dict)
+        else 0.45
+    )
+    tool_auto_margin = float(
+        (retrieval_tuning or {}).get("tool_auto_select_margin", 0.20)
+        if isinstance(retrieval_tuning, dict)
+        else 0.20
+    )
+    agent_auto_score = float(
+        (retrieval_tuning or {}).get("agent_auto_select_threshold", 0.45)
+        if isinstance(retrieval_tuning, dict)
+        else 0.45
+    )
+
+    tools = []
+    for rank, entry in enumerate(ranked_tools):
+        score = float(entry.get("weighted_total", entry.get("total_score", 0)))
+        scoring = entry.get("breakdown", {})
+        tools.append({
+            "tool_id": entry.get("tool_id", ""),
+            "score": round(score, 4),
+            "auto_selected": score >= tool_auto_score,
+            "scoring": {
+                "name_match": round(float(scoring.get("name_match", 0)), 4),
+                "keyword": round(float(scoring.get("keyword", 0)), 4),
+                "description_token": round(float(scoring.get("description_token", 0)), 4),
+                "example_query": round(float(scoring.get("example_query", 0)), 4),
+                "embedding": round(float(scoring.get("embedding", 0)), 4),
+                "namespace_boost": round(float(scoring.get("namespace_boost", 0)), 4),
+                "total": round(score, 4),
+            },
+            "rank": rank + 1,
+        })
+
+    return {
+        "intent": None,
+        "agents": [],
+        "tools": tools,
+        "thresholds": {
+            "tool_auto_score": tool_auto_score,
+            "tool_auto_margin": tool_auto_margin,
+            "agent_auto_score": agent_auto_score,
+        },
+        "query": query,
+    }
+
+
 @router.get(
     "/tool-settings",
     response_model=ToolSettingsResponse,

@@ -436,6 +436,21 @@ class AdminToolSettingsApiService {
 			undefined
 		);
 	}
+
+	async debugRetrieval(request: {
+		query: string;
+		search_space_id?: number;
+	}) {
+		const params = new URLSearchParams();
+		params.set("query", request.query);
+		if (typeof request.search_space_id === "number") {
+			params.set("search_space_id", String(request.search_space_id));
+		}
+		return baseApiService.get(
+			`/api/v1/admin/tool-settings/debug-retrieval?${params.toString()}`,
+			undefined
+		);
+	}
 }
 
 export const adminToolSettingsApiService = new AdminToolSettingsApiService();
