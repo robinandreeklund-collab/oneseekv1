@@ -10,7 +10,7 @@
 #
 # All Environment Variables are Optional:
 #   - SECRET_KEY: JWT secret key (auto-generated and persisted if not set)
-#   - EMBEDDING_MODEL: Embedding model to use (default: sentence-transformers/all-MiniLM-L6-v2)
+#   - EMBEDDING_MODEL: Embedding model to use (default: KBLab/sentence-bert-swedish-cased)
 #   - ETL_SERVICE: Document parsing service - DOCLING, UNSTRUCTURED, or LLAMACLOUD (default: DOCLING)
 #   - TTS_SERVICE: Text-to-speech service for podcasts (default: local/kokoro)
 #   - STT_SERVICE: Speech-to-text service with model size (default: local/base)
@@ -38,7 +38,7 @@ services:
       - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
       
       # AI/ML Configuration
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-KBLab/sentence-bert-swedish-cased}
       - RERANKERS_ENABLED=${RERANKERS_ENABLED:-FALSE}
       - RERANKERS_MODEL_NAME=${RERANKERS_MODEL_NAME:-}
       - RERANKERS_MODEL_TYPE=${RERANKERS_MODEL_TYPE:-}

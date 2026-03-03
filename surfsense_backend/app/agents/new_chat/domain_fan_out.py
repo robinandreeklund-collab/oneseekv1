@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.tools import BaseTool
@@ -178,17 +178,17 @@ _TRAFIKVERKET_CATEGORY_TRIGGERS: dict[str, set[str]] = {
 SCB_CATEGORIES = (
     FanOutCategory(
         name="befolkning",
-        tool_ids=("scb_befolkning",),
+        tool_ids=("scb_befolkning", "scb_befolkning_folkmangd", "scb_befolkning_invandring"),
         priority=0,
     ),
     FanOutCategory(
         name="arbetsmarknad",
-        tool_ids=("scb_arbetsmarknad",),
+        tool_ids=("scb_arbetsmarknad", "scb_arbetsmarknad_arbetsloshet", "scb_arbetsmarknad_lonestruktur"),
         priority=1,
     ),
     FanOutCategory(
         name="priser",
-        tool_ids=("scb_priser_konsumtion",),
+        tool_ids=("scb_priser_konsumtion", "scb_priser_kpi"),
         priority=2,
     ),
     FanOutCategory(
@@ -198,23 +198,41 @@ SCB_CATEGORIES = (
     ),
     FanOutCategory(
         name="naringsliv",
-        tool_ids=("scb_naringsverksamhet",),
+        tool_ids=("scb_naringsverksamhet", "scb_naringsliv_foretag"),
         priority=4,
     ),
     FanOutCategory(
         name="miljo",
-        tool_ids=("scb_miljo",),
+        tool_ids=("scb_miljo", "scb_miljo_utslapp"),
         priority=5,
+    ),
+    FanOutCategory(
+        name="boende",
+        tool_ids=("scb_boende_byggande",),
+        priority=6,
+    ),
+    FanOutCategory(
+        name="nationalrakenskaper",
+        tool_ids=("scb_nationalrakenskaper", "scb_nationalrakenskaper_bnp_kvartal"),
+        priority=7,
+    ),
+    FanOutCategory(
+        name="handel",
+        tool_ids=("scb_handel", "scb_handel_detaljhandel"),
+        priority=8,
     ),
 )
 
 _SCB_CATEGORY_TRIGGERS: dict[str, set[str]] = {
-    "befolkning": {"befolkning", "invånare", "folkmängd", "invandring", "utvandring", "födda", "döda"},
-    "arbetsmarknad": {"arbetsmarknad", "arbetslöshet", "sysselsättning", "lön", "löner", "jobb"},
+    "befolkning": {"befolkning", "invånare", "folkmängd", "invandring", "utvandring", "födda", "döda", "mortalitet"},
+    "arbetsmarknad": {"arbetsmarknad", "arbetslöshet", "sysselsättning", "lön", "löner", "jobb", "lönestruktur", "yrke"},
     "priser": {"pris", "priser", "inflation", "kpi", "konsument"},
     "utbildning": {"utbildning", "skola", "gymnasium", "högskola", "universitet"},
     "naringsliv": {"företag", "foretag", "näringsliv", "omsättning", "nyföretagande"},
     "miljo": {"miljö", "miljo", "utsläpp", "utslapp", "energi", "klimat"},
+    "boende": {"boende", "bostad", "bostäder", "bygglov", "nybyggnation", "hyra"},
+    "nationalrakenskaper": {"bnp", "tillväxt", "makro", "nationalräkenskaper", "investering", "kvartal"},
+    "handel": {"handel", "detaljhandel", "export", "import", "butik", "e-handel", "dagligvaruhandel"},
 }
 
 
@@ -302,9 +320,7 @@ def select_categories(
             selected.append(cat)
         elif config.selective:
             # Check if any trigger word appears in query
-            if cat_triggers & query_words:
-                selected.append(cat)
-            elif any(trigger in query_lower for trigger in cat_triggers):
+            if cat_triggers & query_words or any(trigger in query_lower for trigger in cat_triggers):
                 selected.append(cat)
         else:
             # Non-selective: include all
@@ -403,7 +419,7 @@ async def execute_domain_fan_out(
                 content=content,
                 elapsed_ms=elapsed,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed = (time.monotonic() - t0) * 1000
             return FanOutResult(
                 tool_id=tool_id,

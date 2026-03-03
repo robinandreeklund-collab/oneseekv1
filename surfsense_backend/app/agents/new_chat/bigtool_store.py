@@ -2,43 +2,45 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from langgraph.store.memory import InMemoryStore
 
-from app.agents.new_chat.statistics_agent import (
-    SCB_TOOL_DEFINITIONS,
-    build_scb_tool_registry,
-)
 from app.agents.new_chat.kolada_tools import (
     KOLADA_TOOL_DEFINITIONS,
     build_kolada_tool_registry,
-)
-from app.agents.new_chat.skolverket_tools import (
-    SKOLVERKET_TOOL_DEFINITIONS,
-    build_skolverket_tool_registry,
 )
 from app.agents.new_chat.marketplace_tools import (
     MARKETPLACE_TOOL_DEFINITIONS,
     build_marketplace_tool_registry,
 )
+from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.sandbox_runtime import sandbox_config_from_runtime_flags
+from app.agents.new_chat.skolverket_tools import (
+    SKOLVERKET_TOOL_DEFINITIONS,
+    build_skolverket_tool_registry,
+)
+from app.agents.new_chat.statistics_agent import (
+    SCB_TOOL_DEFINITIONS,
+    build_scb_tool_registry,
+)
+from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
-from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
-from app.services.reranker_service import RerankerService
-from app.services.cache_control import is_cache_disabled
-from app.agents.new_chat.retrieval_feedback import get_global_retrieval_feedback_store
-from app.agents.new_chat.sandbox_runtime import sandbox_config_from_runtime_flags
 from app.agents.new_chat.tools.registry import (
     build_tools,
     build_tools_async,
     get_default_enabled_tools,
 )
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+from app.services.cache_control import is_cache_disabled
+from app.services.reranker_service import RerankerService
+from app.utils.text import normalize_text as _normalize_text, tokenize as _tokenize
 
 _SKOLVERKET_DEFINITION_BY_ID = {
     definition.tool_id: definition for definition in SKOLVERKET_TOOL_DEFINITIONS
@@ -579,21 +581,6 @@ def enforce_metadata_limits(payload: dict[str, Any]) -> dict[str, Any]:
             out[field] = val[:limit].rstrip()
 
     return out
-
-
-def _normalize_text(text: str) -> str:
-    lowered = (text or "").lower()
-    cleaned = (
-        lowered.replace("å", "a")
-        .replace("ä", "a")
-        .replace("ö", "o")
-    )
-    return "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in cleaned).strip()
-
-
-def _tokenize(text: str) -> list[str]:
-    normalized = _normalize_text(text)
-    return [token for token in normalized.split() if token]
 
 
 def _namespace_for_scb_tool(tool_id: str) -> tuple[str, ...]:
@@ -1547,7 +1534,7 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     dot = 0.0
     norm_left = 0.0
     norm_right = 0.0
-    for a, b in zip(left, right):
+    for a, b in zip(left, right, strict=False):
         dot += a * b
         norm_left += a * a
         norm_right += b * b

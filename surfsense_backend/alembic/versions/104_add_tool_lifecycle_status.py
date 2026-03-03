@@ -19,14 +19,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Create enum type for tool lifecycle status
-    tool_lifecycle_status = sa.Enum(
-        'review', 
-        'live', 
-        name='toollifecyclestatus'
+    # Create enum type for tool lifecycle status (idempotent)
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'toollifecyclestatus') THEN
+                CREATE TYPE toollifecyclestatus AS ENUM ('review', 'live');
+            END IF;
+        END$$;
+        """
     )
-    tool_lifecycle_status.create(op.get_bind(), checkfirst=True)
-    
+
     # Create global_tool_lifecycle_status table
     op.create_table(
         "global_tool_lifecycle_status",
@@ -40,7 +44,7 @@ def upgrade() -> None:
         sa.Column("tool_id", sa.String(length=160), nullable=False),
         sa.Column(
             "status",
-            sa.Enum('review', 'live', name='toollifecyclestatus'),
+            postgresql.ENUM('review', 'live', name='toollifecyclestatus', create_type=False),
             nullable=False,
             server_default='review',
         ),

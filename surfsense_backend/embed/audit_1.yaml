@@ -1,0 +1,467 @@
+======================================================================
+  CALIBRATION REPORT — KBLab/sentence-bert-swedish-cased
+  Dimension: 768   Tools: 215   Probes: 49   Time: 1.1s
+======================================================================
+
+SCORE DISTRIBUTIONS
+----------------------------------------------------------------------
+  Semantic cosine (raw):
+    mean=0.1870  median=0.1694  stdev=0.1474
+    min=-0.1432  p10=0.0145  p25=0.0755  p75=0.2766  p90=0.3822  max=0.8485
+
+  Structural cosine (raw):
+    mean=0.1073  median=0.1064  stdev=0.0898
+    min=-0.0760  p10=-0.0028  p25=0.0446  p75=0.1582  p90=0.2287  max=0.4024
+
+  Embedding weighted (sem*2.8 + struct*1.2):
+    mean=0.6525  median=0.5967  stdev=0.4757
+    min=-0.4921  p10=0.0942  p25=0.2979  p75=0.9549  p90=1.2730  max=2.6965
+
+  Pre-rerank score (all tools):
+    mean=0.6824  median=0.6078  stdev=0.5325
+    min=-0.4921  p10=0.1010  p25=0.3065  p75=0.9775  p90=1.3166  max=8.1064
+
+  Top-1 pre-rerank score:
+    mean=2.9967  median=2.8350  stdev=1.1472
+    min=1.1219  p10=1.5312  p25=2.2548  p75=3.6438  p90=4.0613  max=8.1064
+
+  Top-2 pre-rerank score:
+    mean=2.2894  median=2.3191  stdev=0.7350
+    min=0.7546  p10=1.3111  p25=1.7724  p75=2.7376  p90=3.2421  max=3.6154
+
+  Margin (top1 - top2):
+    mean=0.7074  median=0.4430  stdev=1.0203
+    min=0.0008  p10=0.0623  p25=0.1338  p75=0.8769  p90=1.5615  max=6.6501
+
+CURRENT vs SUGGESTED THRESHOLDS
+----------------------------------------------------------------------
+  Parameter                              Current  Suggested      Delta
+  ─────────────────────────────────── ────────── ────────── ──────────
+  tool_auto_score_threshold                 0.60       3.32      +2.72 ◀
+  tool_auto_margin_threshold                0.25       0.28      +0.03
+  agent_auto_score_threshold                0.55       2.83      +2.28 ◀
+  agent_auto_margin_threshold               0.18       0.21      +0.03
+
+  Tool auto-select rate:  32/49 (65%)
+  Agent auto-select rate: 36/49 (74%)
+  ✓  Tool auto-select rate is within target range (30-50%)
+
+INTRA-NAMESPACE SIMILARITY (BSSS relevance)
+----------------------------------------------------------------------
+  Namespace                  Pairs     Mean      Max   >.85   >.90
+  ───────────────────────── ────── ──────── ──────── ────── ──────
+  tools/action                  21   0.2611   0.4781      0      0
+  tools/bolag                  153   0.6078   0.9174      3      1
+  tools/code                    21   0.7065   0.8940      2      0
+  tools/compare                 21   0.7452   0.8215      0      0
+  tools/general                  6   0.2556   0.4787      0      0
+  tools/knowledge              780   0.4620   0.9489      8      3
+  tools/marketplace             36   0.5666   0.7996      0      0
+  tools/politik                231   0.7034   0.9700     21      8
+  tools/statistics            2211   0.5300   0.9756     45     26
+  tools/trafik                 153   0.6689   0.9350     17      3
+  tools/weather                105   0.6284   0.9560      9      1
+
+  ⚠  BSSS: 7 namespace(s) have tool pairs above 0.85 threshold
+  Recommendation: LOWER threshold
+
+PER-PROBE RESULTS (top 5 per query)
+----------------------------------------------------------------------
+
+  [weather] Hur blir vädret i Stockholm imorgon?
+    top1=smhi_vaderprognoser_metfcst  score=1.9867  margin=0.2143 [AGENT-AUTO]
+      1. smhi_vaderprognoser_metfcst              score=1.9867  sem=0.5950  struct=0.2396  lex=0.0333
+      2. smhi_vaderprognoser_snow1g               score=1.7724  sem=0.5303  struct=0.2396  lex=0.0000
+      3. smhi_vaderobservationer_metobs           score=1.6965  sem=0.5032  struct=0.2396  lex=0.0000
+      4. trafikverket_vader_temperatur            score=1.6691  sem=0.4934  struct=0.2396  lex=0.0000
+      5. smhi_weather                             score=1.5720  sem=0.4588  struct=0.2396  lex=0.0000
+
+  [weather] Vad är temperaturen i Göteborg just nu?
+    top1=trafikverket_vader_temperatur  score=2.1234  margin=0.0340
+      1. trafikverket_vader_temperatur            score=2.1234  sem=0.5317  struct=0.1718  lex=0.4286
+      2. smhi_vaderprognoser_metfcst              score=2.0894  sem=0.4940  struct=0.1718  lex=0.5000
+      3. smhi_hydrologi_pthbv                     score=1.7061  sem=0.3571  struct=0.1718  lex=0.5000
+      4. smhi_vaderobservationer_metobs           score=1.6586  sem=0.5187  struct=0.1718  lex=0.0000
+      5. smhi_solstralning_strang                 score=1.6401  sem=0.5121  struct=0.1718  lex=0.0000
+
+  [weather] Kommer det regna i Malmö på fredag?
+    top1=smhi_vaderprognoser_metfcst  score=1.4610  margin=0.1049
+      1. smhi_vaderprognoser_metfcst              score=1.4610  sem=0.4660  struct=0.1301  lex=0.0000
+      2. trafikverket_prognos_trafik              score=1.3561  sem=0.2994  struct=0.0149  lex=0.5000
+      3. smhi_vaderprognoser_snow1g               score=1.3268  sem=0.4181  struct=0.1301  lex=0.0000
+      4. smhi_vaderobservationer_metobs           score=1.1990  sem=0.3724  struct=0.1301  lex=0.0000
+      5. smhi_weather                             score=1.1921  sem=0.3521  struct=0.1301  lex=0.0500
+
+  [weather] Visa väderprognos för Uppsala kommande vecka
+    top1=smhi_vaderprognoser_metfcst  score=4.1965  margin=1.0348 [TOOL-AUTO]
+      1. smhi_vaderprognoser_metfcst              score=4.1965  sem=0.7906  struct=0.4024  lex=1.5000
+      2. trafikverket_vader_halka                 score=3.1617  sem=0.4975  struct=0.4024  lex=1.2857
+      3. trafikverket_vader_vind                  score=3.0951  sem=0.5554  struct=0.4024  lex=1.0571
+      4. trafikverket_vader_temperatur            score=2.9784  sem=0.5851  struct=0.4024  lex=0.8571
+      5. trafikverket_prognos_trafik              score=2.7654  sem=0.5421  struct=0.2063  lex=1.0000
+
+  [weather] Blåser det mycket i Visby idag?
+    top1=trafikverket_vader_halka  score=1.4428  margin=0.1290
+      1. trafikverket_vader_halka                 score=1.4428  sem=0.3120  struct=0.1171  lex=0.4286
+      2. smhi_vaderobservationer_metobs           score=1.3138  sem=0.4190  struct=0.1171  lex=0.0000
+      3. trafikverket_vader_vind                  score=1.2957  sem=0.4126  struct=0.1171  lex=0.0000
+      4. smhi_vaderprognoser_metfcst              score=1.2743  sem=0.4049  struct=0.1171  lex=0.0000
+      5. smhi_vaderanalyser_mesan2g               score=1.1692  sem=0.3674  struct=0.1171  lex=0.0000
+
+  [weather] Snöprognos för Kiruna
+    top1=smhi_vaderprognoser_snow1g  score=3.7803  margin=1.0485 [TOOL-AUTO]
+      1. smhi_vaderprognoser_snow1g               score=3.7803  sem=0.7879  struct=0.3119  lex=1.2000
+      2. smhi_vaderprognoser_metfcst              score=2.7318  sem=0.6634  struct=0.3119  lex=0.5000
+      3. trafikverket_vader_halka                 score=2.4029  sem=0.5714  struct=0.3119  lex=0.4286
+      4. smhi_weather                             score=2.0023  sem=0.5636  struct=0.3119  lex=0.0500
+      5. trafikverket_vader_temperatur            score=1.9885  sem=0.5765  struct=0.3119  lex=0.0000
+
+  [weather] UV-index i Lund idag
+    top1=smhi_solstralning_strang  score=2.6151  margin=1.1446 [TOOL-AUTO]
+      1. smhi_solstralning_strang                 score=2.6151  sem=0.7188  struct=0.1670  lex=0.4020
+      2. smhi_vaderobservationer_metobs           score=1.4705  sem=0.4536  struct=0.1670  lex=0.0000
+      3. scb_miljo_utslapp                        score=1.4616  sem=0.4794  struct=0.0994  lex=0.0000
+      4. smhi_vaderanalyser_mesan2g               score=1.4173  sem=0.4346  struct=0.1670  lex=0.0000
+      5. trafikverket_vader_temperatur            score=1.4041  sem=0.4299  struct=0.1670  lex=0.0000
+
+  [weather] Pollenprognos Stockholm
+    top1=smhi_vaderprognoser_metfcst  score=2.7488  margin=0.5781 [TOOL-AUTO]
+      1. smhi_vaderprognoser_metfcst              score=2.7488  sem=0.6554  struct=0.3168  lex=0.5333
+      2. trafikverket_prognos_trafik              score=2.1707  sem=0.5156  struct=0.1891  lex=0.5000
+      3. smhi_vaderobservationer_metobs           score=2.0541  sem=0.5978  struct=0.3168  lex=0.0000
+      4. smhi_vaderanalyser_mesan2g               score=2.0300  sem=0.5892  struct=0.3168  lex=0.0000
+      5. smhi_vaderprognoser_snow1g               score=1.9654  sem=0.5662  struct=0.3168  lex=0.0000
+
+  [traffic] Finns det trafikstörningar på E4 just nu?
+    top1=trafikverket_trafikinfo_storningar  score=2.6308  margin=0.5668 [TOOL-AUTO]
+      1. trafikverket_trafikinfo_storningar       score=2.6308  sem=0.5444  struct=0.2402  lex=0.8182
+      2. trafikverket_prognos_trafik              score=2.0640  sem=0.4556  struct=0.2402  lex=0.5000
+      3. trafikverket_vag_avstangningar           score=2.0444  sem=0.4741  struct=0.2402  lex=0.4286
+      4. trafikverket_trafikinfo_koer             score=1.9014  sem=0.5047  struct=0.2402  lex=0.2000
+      5. trafikverket_vag_status                  score=1.6126  sem=0.4730  struct=0.2402  lex=0.0000
+
+  [traffic] Vilka vägarbeten pågår i Stockholms län?
+    top1=trafikverket_trafikinfo_vagarbeten  score=4.0535  margin=0.8769 [TOOL-AUTO]
+      1. trafikverket_trafikinfo_vagarbeten       score=4.0535  sem=0.7544  struct=0.2287  lex=1.6667
+      2. trafikverket_prognos_vag                 score=3.1766  sem=0.6793  struct=0.2287  lex=1.0000
+      3. trafikverket_vag_underhall               score=2.6891  sem=0.6838  struct=0.2287  lex=0.5000
+      4. trafikverket_vag_avstangningar           score=2.5314  sem=0.6530  struct=0.2287  lex=0.4286
+      5. riksdag_ledamoter_valkrets               score=2.4446  sem=0.3723  struct=0.1685  lex=1.2000
+
+  [traffic] Hur ser trafikläget ut på Öresundsbron?
+    top1=trafikverket_trafikinfo_koer  score=2.4718  margin=0.1889 [AGENT-AUTO]
+      1. trafikverket_trafikinfo_koer             score=2.4718  sem=0.5736  struct=0.2422  lex=0.5750
+      2. trafikverket_prognos_trafik              score=2.2829  sem=0.5330  struct=0.2422  lex=0.5000
+      3. trafikverket_vag_status                  score=2.2362  sem=0.5418  struct=0.2422  lex=0.4286
+      4. trafikverket_vag_avstangningar           score=2.2005  sem=0.5290  struct=0.2422  lex=0.4286
+      5. scb_transporter                          score=2.0433  sem=0.4767  struct=0.0905  lex=0.6000
+
+  [traffic] Visa aktuella tågförseningar till Göteborg
+    top1=trafikverket_tag_forseningar  score=4.2533  margin=0.6379 [TOOL-AUTO]
+      1. trafikverket_tag_forseningar             score=4.2533  sem=0.7880  struct=0.2891  lex=1.7000
+      2. trafikverket_prognos_tag                 score=3.6154  sem=0.7081  struct=0.2891  lex=1.2857
+      3. trafikverket_tag_tidtabell               score=3.0355  sem=0.8072  struct=0.2891  lex=0.4286
+      4. trafikverket_tag_installda               score=3.0326  sem=0.7806  struct=0.2891  lex=0.5000
+      5. trafikverket_tag_stationer               score=2.2715  sem=0.6874  struct=0.2891  lex=0.0000
+
+  [traffic] Är det halka på vägarna i Norrbotten?
+    top1=trafikverket_vader_halka  score=2.5710  margin=0.2519 [TOOL-AUTO]
+      1. trafikverket_vader_halka                 score=2.5710  sem=0.6661  struct=0.1120  lex=0.5714
+      2. trafikverket_prognos_vag                 score=2.3191  sem=0.4348  struct=0.0848  lex=1.0000
+      3. trafikverket_trafikinfo_olyckor          score=1.8590  sem=0.4341  struct=0.0848  lex=0.5417
+      4. trafikverket_vag_underhall               score=1.7908  sem=0.4247  struct=0.0848  lex=0.5000
+      5. trafikverket_vag_avstangningar           score=1.7276  sem=0.4276  struct=0.0848  lex=0.4286
+
+  [traffic] Trafikolyckor i Skåne idag
+    top1=trafikverket_trafikinfo_olyckor  score=3.4288  margin=0.8023 [TOOL-AUTO]
+      1. trafikverket_trafikinfo_olyckor          score=3.4288  sem=0.8000  struct=0.2963  lex=0.8333
+      2. trafikverket_prognos_trafik              score=2.6265  sem=0.4539  struct=0.2963  lex=1.0000
+      3. trafikverket_vag_avstangningar           score=2.5057  sem=0.6148  struct=0.2963  lex=0.4286
+      4. trafikverket_trafikinfo_koer             score=2.5000  sem=0.6320  struct=0.2963  lex=0.3750
+      5. trafikverket_trafikinfo_storningar       score=2.3725  sem=0.6807  struct=0.2963  lex=0.1111
+
+  [statistics] Hur många invånare har Stockholms kommun?
+    top1=kolada_sammanfattning  score=2.1446  margin=0.0376
+      1. kolada_sammanfattning                    score=2.1446  sem=0.6213  struct=0.0597  lex=0.3333
+      2. riksdag_ledamoter_valkrets               score=2.1070  sem=0.5058  struct=0.0757  lex=0.6000
+      3. scb_befolkning                           score=1.8918  sem=0.6500  struct=0.0597  lex=0.0000
+      4. scb_befolkning_folkmangd                 score=1.8583  sem=0.6381  struct=0.0597  lex=0.0000
+      5. riksdag_dokument_eu                      score=1.7429  sem=0.3222  struct=0.0757  lex=0.7500
+
+  [statistics] Visa befolkningsstatistik för Malmö
+    top1=scb_befolkning_folkmangd  score=3.1907  margin=0.0642
+      1. scb_befolkning_folkmangd                 score=3.1907  sem=0.8209  struct=0.2436  lex=0.6000
+      2. scb_befolkning                           score=3.1265  sem=0.8485  struct=0.2436  lex=0.4583
+      3. scb_befolkning_dodsfall                  score=2.5042  sem=0.7899  struct=0.2436  lex=0.0000
+      4. scb_befolkning_fodda                     score=2.4214  sem=0.7604  struct=0.2436  lex=0.0000
+      5. kolada_sammanfattning                    score=2.3710  sem=0.7214  struct=0.2436  lex=0.0588
+
+  [statistics] Vad är medelinkomsten i Göteborg?
+    top1=scb_arbetsmarknad_lon  score=2.7760  margin=0.3667 [TOOL-AUTO]
+      1. scb_arbetsmarknad_lon                    score=2.7760  sem=0.6748  struct=0.1138  lex=0.7500
+      2. scb_hushall                              score=2.4093  sem=0.5974  struct=0.1138  lex=0.6000
+      3. scb_offentlig_ekonomi                    score=2.1714  sem=0.5124  struct=0.1138  lex=0.6000
+      4. scb_energi                               score=1.8475  sem=0.3968  struct=0.1138  lex=0.6000
+      5. riksdag_dokument_eu                      score=1.7690  sem=0.2703  struct=0.0994  lex=0.8929
+
+  [statistics] Hur stor är arbetslösheten i Sverige?
+    top1=scb_arbetsmarknad_arbetsloshet  score=4.2317  margin=1.4941 [TOOL-AUTO]
+      1. scb_arbetsmarknad_arbetsloshet           score=4.2317  sem=0.7522  struct=0.1046  lex=2.0000
+      2. scb_arbetsmarknad                        score=2.7376  sem=0.7186  struct=0.1046  lex=0.6000
+      3. kolada_arbetsmarknad                     score=2.7338  sem=0.7173  struct=0.1046  lex=0.6000
+      4. scb_arbetsmarknad_sysselsattning         score=2.0772  sem=0.6970  struct=0.1046  lex=0.0000
+      5. scb_arbetsmarknad_lon                    score=1.8485  sem=0.6154  struct=0.1046  lex=0.0000
+
+  [statistics] SCB statistik om bostadsbyggande
+    top1=scb_boende_byggande  score=4.0926  margin=0.6944 [TOOL-AUTO]
+      1. scb_boende_byggande                      score=4.0926  sem=0.8261  struct=0.2746  lex=1.4500
+      2. scb_boende_bygglov                       score=3.3982  sem=0.7388  struct=0.2746  lex=1.0000
+      3. kolada_boende                            score=3.0098  sem=0.7625  struct=0.2746  lex=0.5455
+      4. scb_hushall                              score=2.6474  sem=0.7385  struct=0.2746  lex=0.2500
+      5. scb_boende_bestand                       score=2.6140  sem=0.8159  struct=0.2746  lex=0.0000
+
+  [statistics] Hur många födda barn 2024 i Uppsala?
+    top1=scb_befolkning_fodda  score=3.9525  margin=1.6184 [TOOL-AUTO]
+      1. scb_befolkning_fodda                     score=3.9525  sem=0.7102  struct=0.1088  lex=1.8333
+      2. scb_befolkning                           score=2.3341  sem=0.6530  struct=0.1088  lex=0.3750
+      3. kolada_forskola                          score=2.0483  sem=0.5361  struct=0.1088  lex=0.4167
+      4. kolada_barn_unga                         score=1.9654  sem=0.5281  struct=0.1088  lex=0.3561
+      5. scb_befolkning_folkmangd                 score=1.9035  sem=0.6332  struct=0.1088  lex=0.0000
+
+  [statistics] BNP-tillväxt senaste kvartalet
+    top1=scb_nationalrakenskaper_bnp_kvartal  score=3.6347  margin=0.3278 [TOOL-AUTO]
+      1. scb_nationalrakenskaper_bnp_kvartal      score=3.6347  sem=0.7037  struct=0.1766  lex=1.4524
+      2. scb_nationalrakenskaper                  score=3.3069  sem=0.6053  struct=0.1766  lex=1.4000
+      3. scb_priser_konsumtion                    score=1.4710  sem=0.4497  struct=0.1766  lex=0.0000
+      4. scb_naringsliv_omsattning                score=1.4685  sem=0.4488  struct=0.1766  lex=0.0000
+      5. scb_priser_inflation                     score=1.4460  sem=0.4407  struct=0.1766  lex=0.0000
+
+  [statistics] Hushållens skuldsättning enligt SCB
+    top1=scb_hushall  score=2.7011  margin=0.6091 [TOOL-AUTO]
+      1. scb_hushall                              score=2.7011  sem=0.6328  struct=0.1356  lex=0.7667
+      2. riksdag_dokument_ds                      score=2.0920  sem=0.3249  struct=0.1520  lex=1.0000
+      3. scb_finansmarknad                        score=1.9428  sem=0.6000  struct=0.1356  lex=0.1000
+      4. scb_levnadsforhallanden                  score=1.6729  sem=0.4997  struct=0.1356  lex=0.1111
+      5. scb_offentlig_ekonomi                    score=1.5779  sem=0.4757  struct=0.1356  lex=0.0833
+
+  [kolada] Kolada nyckeltal för hemtjänst i Linköpings kommun
+    top1=kolada_aldreomsorg  score=3.6970  margin=0.4876 [TOOL-AUTO]
+      1. kolada_aldreomsorg                       score=3.6970  sem=0.8484  struct=0.2540  lex=1.0167
+      2. kolada_sammanfattning                    score=3.2094  sem=0.6172  struct=0.2540  lex=1.1765
+      3. kolada_halsa                             score=2.9572  sem=0.7687  struct=0.2540  lex=0.5000
+      4. kolada_lss                               score=2.9027  sem=0.7794  struct=0.2540  lex=0.4156
+      5. scb_amnesovergripande                    score=2.7699  sem=0.6066  struct=0.2540  lex=0.7667
+
+  [kolada] Hur stor andel elever når gymnasiebehörighet i Malmö?
+    top1=kolada_gymnasieskola  score=3.3577  margin=0.5010 [TOOL-AUTO]
+      1. kolada_gymnasieskola                     score=3.3577  sem=0.7118  struct=0.1371  lex=1.2000
+      2. kolada_grundskola                        score=2.8567  sem=0.6401  struct=0.1371  lex=0.9000
+      3. scb_utbildning_gymnasie                  score=2.5697  sem=0.5911  struct=0.1371  lex=0.7500
+      4. scb_utbildning                           score=2.2065  sem=0.7293  struct=0.1371  lex=0.0000
+      5. get_program_statistics                   score=1.9440  sem=0.3677  struct=0.1371  lex=0.7500
+
+  [kolada] Jämför äldreomsorg mellan Stockholm och Göteborg
+    top1=kolada_aldreomsorg  score=2.7064  margin=0.3749 [TOOL-AUTO]
+      1. kolada_aldreomsorg                       score=2.7064  sem=0.7210  struct=0.0452  lex=0.6333
+      2. scb_socialtjanst                         score=2.3315  sem=0.5633  struct=0.0452  lex=0.7000
+      3. scb_energi                               score=1.9752  sem=0.4271  struct=0.0452  lex=0.7250
+      4. bolagsverket_sok_region                  score=1.9559  sem=0.3741  struct=0.0427  lex=0.8571
+      5. kolada_halsa                             score=1.9289  sem=0.6397  struct=0.0452  lex=0.0833
+
+  [kolada] Kostnad per elev i grundskolan i Umeå
+    top1=kolada_grundskola  score=3.0714  margin=0.5448 [TOOL-AUTO]
+      1. kolada_grundskola                        score=3.0714  sem=0.7115  struct=0.1494  lex=0.9000
+      2. scb_utbildning                           score=2.5266  sem=0.6240  struct=0.1494  lex=0.6000
+      3. kolada_gymnasieskola                     score=2.4602  sem=0.7074  struct=0.1494  lex=0.3000
+      4. kolada_forskola                          score=2.1524  sem=0.7047  struct=0.1494  lex=0.0000
+      5. kolada_ekonomi                           score=1.9369  sem=0.5087  struct=0.1494  lex=0.3333
+
+  [kolada] Kommunens skattesats i Luleå
+    top1=kolada_ekonomi  score=2.5758  margin=0.1149
+      1. kolada_ekonomi                           score=2.5758  sem=0.7153  struct=0.1302  lex=0.4167
+      2. scb_offentlig_ekonomi                    score=2.4609  sem=0.6088  struct=0.1302  lex=0.6000
+      3. riksdag_dokument_eu                      score=1.9996  sem=0.3145  struct=0.1885  lex=0.8929
+      4. kolada_sammanfattning                    score=1.8750  sem=0.4948  struct=0.1302  lex=0.3333
+      5. scb_hushall                              score=1.5812  sem=0.5089  struct=0.1302  lex=0.0000
+
+  [riksdagen] Senaste riksdagsbesluten om migration
+    top1=riksdag_dokument_rskr  score=2.2548  margin=0.0667
+      1. riksdag_dokument_rskr                    score=2.2548  sem=0.3868  struct=0.1432  lex=1.0000
+      2. scb_befolkning_forandringar              score=2.1881  sem=0.5814  struct=0.0502  lex=0.5000
+      3. riksdag_dokument_eu                      score=1.8145  sem=0.5867  struct=0.1432  lex=0.0000
+      4. riksdag_dokument                         score=1.7604  sem=0.3530  struct=0.1432  lex=0.6000
+      5. scb_befolkning_invandring                score=1.6796  sem=0.5784  struct=0.0502  lex=0.0000
+
+  [riksdagen] Visa motioner om klimatpolitik
+    top1=riksdag_dokument_motion  score=3.8274  margin=1.5473 [TOOL-AUTO]
+      1. riksdag_dokument_motion                  score=3.8274  sem=0.6167  struct=0.2921  lex=1.7500
+      2. scb_miljo_utslapp                        score=2.2801  sem=0.4914  struct=0.1285  lex=0.7500
+      3. riksdag_dokument                         score=2.1765  sem=0.6521  struct=0.2921  lex=0.0000
+      4. scb_miljo                                score=2.1167  sem=0.4866  struct=0.1285  lex=0.6000
+      5. riksdag_dokument_dir                     score=2.0469  sem=0.6058  struct=0.2921  lex=0.0000
+
+  [riksdagen] Vilka propositioner har lagts fram i år?
+    top1=riksdag_dokument_proposition  score=4.0463  margin=1.3990 [TOOL-AUTO]
+      1. riksdag_dokument_proposition             score=4.0463  sem=0.6856  struct=0.3833  lex=1.6667
+      2. riksdag_dokument_fraga                   score=2.6473  sem=0.5133  struct=0.3833  lex=0.7500
+      3. riksdag_dokument_motion                  score=2.3345  sem=0.6695  struct=0.3833  lex=0.0000
+      4. riksdag_dokument_betankande              score=2.1846  sem=0.6160  struct=0.3833  lex=0.0000
+      5. riksdag_anforanden                       score=2.1798  sem=0.5547  struct=0.3833  lex=0.1667
+
+  [riksdagen] Voteringsresultat om skatteförslag
+    top1=riksdag_voteringar_resultat  score=2.8350  margin=0.1113
+      1. riksdag_voteringar_resultat              score=2.8350  sem=0.6210  struct=0.2884  lex=0.7500
+      2. riksdag_voteringar                       score=2.7237  sem=0.5813  struct=0.2884  lex=0.7500
+      3. riksdag_dokument_motion                  score=2.3456  sem=0.4463  struct=0.2884  lex=0.7500
+      4. riksdag_dokument_proposition             score=2.3050  sem=0.4318  struct=0.2884  lex=0.7500
+      5. scb_offentlig_ekonomi                    score=1.8801  sem=0.3596  struct=0.1582  lex=0.6833
+
+  [riksdagen] Interpellationer till finansministern
+    top1=riksdag_dokument_interpellation  score=3.7598  margin=1.8000 [TOOL-AUTO]
+      1. riksdag_dokument_interpellation          score=3.7598  sem=0.6099  struct=0.2750  lex=1.7222
+      2. riksdag_dokument_rskr                    score=1.9598  sem=0.5106  struct=0.2750  lex=0.2000
+      3. riksdag_anforanden_fragestund            score=1.8686  sem=0.5495  struct=0.2750  lex=0.0000
+      4. riksdag_dokument_proposition             score=1.7724  sem=0.4556  struct=0.2750  lex=0.1667
+      5. riksdag_dokument_ds                      score=1.7698  sem=0.5142  struct=0.2750  lex=0.0000
+
+  [maps] Visa karta över restauranger nära Stureplan
+    top1=geoapify_static_map  score=2.0869  margin=0.0545
+      1. geoapify_static_map                      score=2.0869  sem=0.5327  struct=0.2167  lex=0.3352
+      2. bolagsverket_sok_region                  score=2.0324  sem=0.3660  struct=0.1253  lex=0.8571
+      3. marketplace_regions                      score=2.0219  sem=0.4397  struct=0.1589  lex=0.6000
+      4. write_todos                              score=1.3519  sem=0.1815  struct=0.0781  lex=0.7500
+      5. get_geographical_areas_v4                score=1.1616  sem=0.3814  struct=0.0781  lex=0.0000
+
+  [maps] Hitta närmaste apotek i Lund
+    top1=kolada_halsa  score=1.1219  margin=0.0008
+      1. kolada_halsa                             score=1.1219  sem=0.4110  struct=-0.0241  lex=0.0000
+      2. bolagsverket_sok_region                  score=1.1211  sem=0.4006  struct=-0.0005  lex=0.0000
+      3. bolagsverket_info_adress                 score=1.0634  sem=0.3800  struct=-0.0005  lex=0.0000
+      4. scb_halsa_sjukvard                       score=1.0605  sem=0.3891  struct=-0.0241  lex=0.0000
+      5. jobad_links_search                       score=1.0155  sem=0.3823  struct=-0.0457  lex=0.0000
+
+  [maps] Var ligger Liseberg på kartan?
+    top1=geoapify_static_map  score=1.9498  margin=0.6166 [TOOL-AUTO]
+      1. geoapify_static_map                      score=1.9498  sem=0.5134  struct=0.1997  lex=0.2727
+      2. trafikverket_vader_halka                 score=1.3332  sem=0.2762  struct=0.1093  lex=0.4286
+      3. trafikverket_tag_stationer               score=1.2546  sem=0.4012  struct=0.1094  lex=0.0000
+      4. marketplace_regions                      score=1.2164  sem=0.3990  struct=0.0826  lex=0.0000
+      5. trafikverket_vader_stationer             score=1.2091  sem=0.3850  struct=0.1093  lex=0.0000
+
+  [marketplace] Sök begagnade cyklar på Blocket i Stockholm
+    top1=marketplace_blocket_search  score=2.8174  margin=0.1338
+      1. marketplace_blocket_search               score=2.8174  sem=0.5283  struct=0.0545  lex=1.2727
+      2. bolagsverket_sok_orgnr                   score=2.6836  sem=0.2395  struct=0.0108  lex=2.0000
+      3. bolagsverket_sok_namn                    score=2.6698  sem=0.3417  struct=0.0108  lex=1.7000
+      4. marketplace_blocket_mc                   score=2.2458  sem=0.6716  struct=0.0545  lex=0.3000
+      5. bolagsverket_sok_region                  score=2.1556  sem=0.3877  struct=0.0108  lex=1.0571
+
+  [marketplace] Visa billigaste bilar på Blocket under 50000 kr
+    top1=marketplace_blocket_cars  score=2.9994  margin=1.0634 [TOOL-AUTO]
+      1. marketplace_blocket_cars                 score=2.9994  sem=0.6305  struct=0.0867  lex=1.1299
+      2. marketplace_blocket_search               score=1.9360  sem=0.4107  struct=0.0867  lex=0.6818
+      3. marketplace_compare_prices               score=1.8795  sem=0.3873  struct=0.0867  lex=0.6909
+      4. marketplace_blocket_mc                   score=1.5499  sem=0.4449  struct=0.0867  lex=0.2000
+      5. marketplace_blocket_boats                score=1.4151  sem=0.3968  struct=0.0867  lex=0.2000
+
+  [marketplace] Tradera auktioner för samlarfrimärken
+    top1=marketplace_tradera_search  score=3.3984  margin=1.8515 [TOOL-AUTO]
+      1. marketplace_tradera_search               score=3.3984  sem=0.6656  struct=0.1319  lex=1.3765
+      2. marketplace_unified_search               score=1.5469  sem=0.4539  struct=0.1319  lex=0.1176
+      3. marketplace_blocket_search               score=1.2924  sem=0.3726  struct=0.1319  lex=0.0909
+      4. marketplace_categories                   score=1.2576  sem=0.3416  struct=0.1319  lex=0.1429
+      5. marketplace_compare_prices               score=1.2050  sem=0.3089  struct=0.1319  lex=0.1818
+
+  [marketplace] Jämför priser på iPhone 15
+    top1=marketplace_compare_prices  score=8.1064  margin=6.6501 [TOOL-AUTO]
+      1. marketplace_compare_prices               score=8.1064  sem=0.5935  struct=0.0524  lex=6.3818
+      2. scb_priser_konsumtion                    score=1.4563  sem=0.2451  struct=0.0166  lex=0.7500
+      3. marketplace_unified_search               score=0.9412  sem=0.2927  struct=0.0524  lex=0.0588
+      4. marketplace_blocket_cars                 score=0.7303  sem=0.2059  struct=0.0524  lex=0.0909
+      5. scb_priser_inflation                     score=0.7165  sem=0.2487  struct=0.0166  lex=0.0000
+
+  [bolagsverket] Visa information om företaget Volvo AB
+    top1=bolagsverket_info_basic  score=3.5110  margin=0.1230
+      1. bolagsverket_info_basic                  score=3.5110  sem=0.6356  struct=0.3238  lex=1.3429
+      2. bolagsverket_sok_namn                    score=3.3880  sem=0.6426  struct=0.3238  lex=1.2000
+      3. scb_naringsliv_foretag                   score=2.5026  sem=0.4677  struct=0.1609  lex=1.0000
+      4. bolagsverket_info_adress                 score=2.3810  sem=0.7116  struct=0.3238  lex=0.0000
+      5. scb_naringsverksamhet                    score=2.3524  sem=0.5569  struct=0.1609  lex=0.6000
+
+  [bolagsverket] Sök bolagsregistret efter restauranger i Malmö
+    top1=bolagsverket_sok_orgnr  score=3.6438  margin=0.2076 [AGENT-AUTO]
+      1. bolagsverket_sok_orgnr                   score=3.6438  sem=0.5977  struct=0.1836  lex=1.7500
+      2. bolagsverket_sok_namn                    score=3.4362  sem=0.6307  struct=0.1836  lex=1.4500
+      3. bolagsverket_sok_status                  score=3.3143  sem=0.6458  struct=0.1836  lex=1.2857
+      4. bolagsverket_sok_region                  score=3.2774  sem=0.6428  struct=0.1836  lex=1.2571
+      5. bolagsverket_sok_bransch                 score=3.0484  sem=0.4624  struct=0.1836  lex=1.5333
+
+  [bolagsverket] Vilka styrelseledamöter har Ericsson?
+    top1=bolagsverket_styrelse_ledning  score=3.3686  margin=0.4430 [TOOL-AUTO]
+      1. bolagsverket_styrelse_ledning            score=3.3686  sem=0.5889  struct=0.1830  lex=1.5000
+      2. riksdag_ledamoter                        score=2.9256  sem=0.4419  struct=0.1569  lex=1.5000
+      3. riksdag_dokument_motion                  score=2.5731  sem=0.3160  struct=0.1569  lex=1.5000
+      4. bolagsverket_styrelse_agarstruktur       score=1.6703  sem=0.5181  struct=0.1830  lex=0.0000
+      5. bolagsverket_styrelse_firmatecknare      score=1.5831  sem=0.4870  struct=0.1830  lex=0.0000
+
+  [general] Berätta om de senaste nyheterna
+    top1=search_tavily  score=1.5323  margin=0.7777 [TOOL-AUTO]
+      1. search_tavily                            score=1.5323  sem=0.3368  struct=-0.0089  lex=0.6000
+      2. riksdag_dokumentstatus                   score=0.7546  sem=0.2515  struct=0.0420  lex=0.0000
+      3. trafikverket_kameror_snapshot            score=0.7496  sem=0.1835  struct=0.0775  lex=0.1429
+      4. search_adult_education                   score=0.6903  sem=0.0361  struct=-0.0089  lex=0.6000
+      5. riksdag_dokument_betankande              score=0.6732  sem=0.2224  struct=0.0420  lex=0.0000
+
+  [general] Sammanfatta den här webbsidan
+    top1=reflect_on_progress  score=2.7480  margin=0.2701 [TOOL-AUTO]
+      1. reflect_on_progress                      score=2.7480  sem=0.4816  struct=0.3329  lex=1.0000
+      2. scrape_webpage                           score=2.4779  sem=0.4745  struct=0.3329  lex=0.7500
+      3. search_tavily                            score=2.3476  sem=0.4815  struct=0.3329  lex=0.6000
+      4. link_preview                             score=1.7045  sem=0.4661  struct=0.3329  lex=0.0000
+      5. get_api_info                             score=1.6572  sem=0.4492  struct=0.3329  lex=0.0000
+
+  [general] Spara detta som en anteckning
+    top1=save_memory  score=1.5266  margin=0.2265 [AGENT-AUTO]
+      1. save_memory                              score=1.5266  sem=0.4773  struct=0.1585  lex=0.0000
+      2. recall_memory                            score=1.3001  sem=0.3964  struct=0.1585  lex=0.0000
+      3. sandbox_write_file                       score=1.1504  sem=0.3430  struct=0.1585  lex=0.0000
+      4. write_todos                              score=1.0651  sem=0.3125  struct=0.1585  lex=0.0000
+      5. reflect_on_progress                      score=0.9775  sem=0.2812  struct=0.1585  lex=0.0000
+
+  [general] Sök i min kunskapsbas efter projektplaner
+    top1=bolagsverket_sok_region  score=3.5359  margin=0.3100 [TOOL-AUTO]
+      1. bolagsverket_sok_region                  score=3.5359  sem=0.3592  struct=0.3465  lex=2.1143
+      2. bolagsverket_sok_bransch                 score=3.2259  sem=0.4560  struct=0.3465  lex=1.5333
+      3. bolagsverket_sok_orgnr                   score=3.1972  sem=0.3684  struct=0.3465  lex=1.7500
+      4. bolagsverket_sok_namn                    score=3.1315  sem=0.4521  struct=0.3465  lex=1.4500
+      5. write_todos                              score=2.7194  sem=0.5652  struct=0.3223  lex=0.7500
+
+  [general] Vad heter Sveriges statsminister?
+    top1=riksdag_dokument_interpellation  score=1.7951  margin=0.2506 [TOOL-AUTO]
+      1. riksdag_dokument_interpellation          score=1.7951  sem=0.3394  struct=0.0789  lex=0.7500
+      2. riksdag_ledamoter_valkrets               score=1.5445  sem=0.5178  struct=0.0789  lex=0.0000
+      3. riksdag_ledamoter                        score=1.5223  sem=0.5099  struct=0.0789  lex=0.0000
+      4. riksdag_ledamoter_parti                  score=1.3555  sem=0.4503  struct=0.0789  lex=0.0000
+      5. riksdag_dokument_ds                      score=1.2937  sem=0.4282  struct=0.0789  lex=0.0000
+
+  [general] Hjälp mig skriva ett mejl
+    top1=get_subject_details  score=1.1456  margin=0.0300
+      1. get_subject_details                      score=1.1456  sem=0.3413  struct=0.1583  lex=0.0000
+      2. sandbox_write_file                       score=1.1156  sem=0.3306  struct=0.1583  lex=0.0000
+      3. bolagsverket_sok_orgnr                   score=1.0705  sem=0.3002  struct=0.1916  lex=0.0000
+      4. bolagsverket_info_adress                 score=1.0272  sem=0.2847  struct=0.1916  lex=0.0000
+      5. write_todos                              score=1.0266  sem=0.2988  struct=0.1583  lex=0.0000
+
+  [general] Generera en podcast om AI
+    top1=generate_podcast  score=2.9333  margin=1.8784 [TOOL-AUTO]
+      1. generate_podcast                         score=2.9333  sem=0.6604  struct=0.1594  lex=0.8929
+      2. riksdag_anforanden_fragestund            score=1.0549  sem=0.2785  struct=0.2292  lex=0.0000
+      3. get_api_info                             score=1.0301  sem=0.2996  struct=0.1594  lex=0.0000
+      4. call_qwen                                score=1.0164  sem=0.2947  struct=0.1594  lex=0.0000
+      5. search_education_events                  score=1.0079  sem=0.2917  struct=0.1594  lex=0.0000
+
+======================================================================
+Done.
+
+
+python scripts/calibrate_embedding_thresholds.py
