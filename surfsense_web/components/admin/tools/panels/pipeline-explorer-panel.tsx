@@ -8,7 +8,7 @@
  */
 
 import { useAtomValue } from "jotai";
-import { ArrowRight, CheckCircle2, Loader2, Minus, Play, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2, Minus, Play, Search, XCircle } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
