@@ -20,6 +20,7 @@ from app.agents.new_chat.bigtool_store import (
     get_vector_recall_top_k,
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
+    validate_suggestion_quality,
 )
 from app.services.agent_metadata_service import normalize_agent_metadata_payload
 from app.services.intent_definition_service import normalize_intent_definition_payload
@@ -2338,6 +2339,12 @@ async def _build_llm_intent_metadata_suggestion(
             "geographic_scope": _normalize_text(parsed.get("geographic_scope")) or _normalize_text(current.get("geographic_scope")),
             "excludes": _safe_string_list(parsed.get("excludes")) or _safe_string_list(current.get("excludes")),
         }
+        # v2: enforce limits + quality validation on all LLM output
+        proposed = enforce_metadata_limits(proposed)
+        validated = validate_suggestion_quality(proposed, current, layer="intent")
+        if validated is None:
+            return None
+        proposed = validated
         rationale = _normalize_text(parsed.get("rationale")) or (
             "LLM-forslag for intent-metadata baserat pa granskade retrieval-fall."
         )
@@ -2415,6 +2422,12 @@ async def _build_llm_agent_metadata_suggestion(
             "geographic_scope": _normalize_text(parsed.get("geographic_scope")) or _normalize_text(current.get("geographic_scope")),
             "excludes": _safe_string_list(parsed.get("excludes")) or _safe_string_list(current.get("excludes")),
         }
+        # v2: enforce limits + quality validation on all LLM output
+        proposed = enforce_metadata_limits(proposed)
+        validated = validate_suggestion_quality(proposed, current, layer="agent")
+        if validated is None:
+            return None
+        proposed = validated
         rationale = _normalize_text(parsed.get("rationale")) or (
             "LLM-forslag for agent-metadata baserat pa granskade retrieval-fall."
         )

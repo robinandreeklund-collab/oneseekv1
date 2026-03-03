@@ -8,7 +8,6 @@ import {
 	MessageSquare,
 	Database,
 	Wrench,
-	ToggleLeft,
 	ChevronRight,
 	GitBranch,
 	Mic,
@@ -23,7 +22,7 @@ const ADMIN_NAV_ITEMS = [
 		title: "Flow Overview",
 		href: "/admin/flow",
 		icon: GitBranch,
-		description: "Visuell vy av intent \u2192 agent \u2192 tool",
+		description: "Visuell vy av intent → agent → tool",
 	},
 	{
 		title: "Agent Prompts",
@@ -32,22 +31,16 @@ const ADMIN_NAV_ITEMS = [
 		description: "Konfigurera agent system prompts",
 	},
 	{
-		title: "Tool Settings",
+		title: "Verktyg",
 		href: "/admin/tools",
 		icon: Wrench,
-		description: "Hantera verktygsmetadata och inst\u00e4llningar",
-	},
-	{
-		title: "Tool Lifecycle",
-		href: "/admin/lifecycle",
-		icon: ToggleLeft,
-		description: "Hantera tool lifecycle och gating",
+		description: "Metadata, kalibrering och lifecycle",
 	},
 	{
 		title: "Debatt",
 		href: "/admin/debate",
 		icon: Mic,
-		description: "Debattl\u00e4ge och r\u00f6stdebatt (TTS)",
+		description: "Debattläge och röstdebatt (TTS)",
 	},
 	{
 		title: "Cache Management",

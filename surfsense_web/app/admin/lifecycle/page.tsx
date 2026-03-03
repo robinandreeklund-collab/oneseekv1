@@ -1,7 +1,5 @@
-"use client";
-
-import { ToolLifecyclePage } from "@/components/admin/tool-lifecycle-page";
+import { redirect } from "next/navigation";
 
 export default function LifecyclePage() {
-	return <ToolLifecyclePage />;
+	redirect("/admin/tools");
 }

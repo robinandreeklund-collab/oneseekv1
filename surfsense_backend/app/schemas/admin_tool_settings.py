@@ -285,6 +285,7 @@ class MetadataCatalogUpdateRequest(BaseModel):
     intents: list[IntentMetadataUpdateItem] = Field(default_factory=list)
     allow_lock_override: bool = False
     lock_override_reason: str | None = None
+    expected_version_hash: str | None = None  # v2: optimistic locking
 
 
 class MetadataCatalogSafeRenameSuggestionRequest(BaseModel):

@@ -24,6 +24,7 @@ from app.agents.new_chat.bigtool_store import (
     get_vector_recall_top_k,
     normalize_retrieval_tuning,
     smart_retrieve_tools_with_breakdown,
+    validate_suggestion_quality,
 )
 from app.agents.new_chat.dispatcher import dispatch_route_with_trace
 from app.agents.new_chat.hybrid_state import (

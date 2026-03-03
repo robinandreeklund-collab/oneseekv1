@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -461,6 +461,42 @@ class ToolRetrievalTuning:
 
 
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
+
+
+def get_default_tuning_as_dict() -> dict[str, Any]:
+    """Return the canonical default tuning values as a plain dict.
+
+    This is the **single source of truth** for default retrieval-tuning
+    parameters.  ``tool_retrieval_tuning_service`` imports this instead of
+    maintaining its own copy.
+    """
+    return {
+        "name_match_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.name_match_weight,
+        "keyword_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.keyword_weight,
+        "description_token_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.description_token_weight,
+        "example_query_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.example_query_weight,
+        "namespace_boost": DEFAULT_TOOL_RETRIEVAL_TUNING.namespace_boost,
+        "embedding_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.embedding_weight,
+        "semantic_embedding_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.semantic_embedding_weight,
+        "structural_embedding_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.structural_embedding_weight,
+        "rerank_candidates": DEFAULT_TOOL_RETRIEVAL_TUNING.rerank_candidates,
+        "retrieval_feedback_db_enabled": DEFAULT_TOOL_RETRIEVAL_TUNING.retrieval_feedback_db_enabled,
+        "live_routing_enabled": DEFAULT_TOOL_RETRIEVAL_TUNING.live_routing_enabled,
+        "live_routing_phase": DEFAULT_TOOL_RETRIEVAL_TUNING.live_routing_phase,
+        "intent_candidate_top_k": DEFAULT_TOOL_RETRIEVAL_TUNING.intent_candidate_top_k,
+        "agent_candidate_top_k": DEFAULT_TOOL_RETRIEVAL_TUNING.agent_candidate_top_k,
+        "tool_candidate_top_k": DEFAULT_TOOL_RETRIEVAL_TUNING.tool_candidate_top_k,
+        "intent_lexical_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.intent_lexical_weight,
+        "intent_embedding_weight": DEFAULT_TOOL_RETRIEVAL_TUNING.intent_embedding_weight,
+        "agent_auto_margin_threshold": DEFAULT_TOOL_RETRIEVAL_TUNING.agent_auto_margin_threshold,
+        "agent_auto_score_threshold": DEFAULT_TOOL_RETRIEVAL_TUNING.agent_auto_score_threshold,
+        "tool_auto_margin_threshold": DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_margin_threshold,
+        "tool_auto_score_threshold": DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_score_threshold,
+        "adaptive_threshold_delta": DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_threshold_delta,
+        "adaptive_min_samples": DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_min_samples,
+    }
+
+
 _TOOL_EMBED_CACHE: dict[tuple[str, str], tuple[str, list[float]]] = {}
 _TOOL_RERANK_TRACE: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _VECTOR_RECALL_TOP_K = 5
@@ -473,17 +509,24 @@ _VECTOR_RECALL_TOP_K = 5
 # audit probes, evaluation fallback) MUST honour these limits so that no tool
 # gains an unfair scoring advantage by having more keywords or a longer
 # description than its neighbours.
+METADATA_MAX_NAME_CHARS: int = 80
+METADATA_MAX_CATEGORY_CHARS: int = 40
 METADATA_MAX_DESCRIPTION_CHARS: int = 300
 METADATA_MAX_KEYWORDS: int = 20
 METADATA_MAX_EXAMPLE_QUERIES: int = 10
 METADATA_MAX_EXCLUDES: int = 15
 METADATA_MAX_KEYWORD_CHARS: int = 40
 METADATA_MAX_EXAMPLE_QUERY_CHARS: int = 120
+METADATA_MAX_EXCLUDE_ITEM_CHARS: int = 60
 METADATA_MAX_MAIN_IDENTIFIER_CHARS: int = 80
 METADATA_MAX_CORE_ACTIVITY_CHARS: int = 120
 METADATA_MAX_UNIQUE_SCOPE_CHARS: int = 120
 METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS: int = 80
 METADATA_MAX_EMBEDDING_TEXT_CHARS: int = 800
+METADATA_MAX_BASE_PATH_CHARS: int = 200
+METADATA_MAX_TOOL_ID_CHARS: int = 160
+METADATA_MIN_KEYWORDS: int = 3
+METADATA_MIN_EXAMPLE_QUERIES: int = 2
 _LIVE_ROUTING_PHASES = {
     "shadow",
     "tool_gate",
@@ -528,6 +571,16 @@ def enforce_metadata_limits(payload: dict[str, Any]) -> dict[str, Any]:
     """
     out = dict(payload)
 
+    # Name
+    name = out.get("name")
+    if isinstance(name, str) and len(name) > METADATA_MAX_NAME_CHARS:
+        out["name"] = name[:METADATA_MAX_NAME_CHARS].rstrip()
+
+    # Category
+    cat = out.get("category")
+    if isinstance(cat, str) and len(cat) > METADATA_MAX_CATEGORY_CHARS:
+        out["category"] = cat[:METADATA_MAX_CATEGORY_CHARS].rstrip()
+
     # Description
     desc = str(out.get("description") or "").strip()
     if len(desc) > METADATA_MAX_DESCRIPTION_CHARS:
@@ -540,34 +593,55 @@ def enforce_metadata_limits(payload: dict[str, Any]) -> dict[str, Any]:
             desc = cut.rstrip()
     out["description"] = desc
 
-    # Keywords
+    # Keywords — deduplicate (case-insensitive), drop 1-char items, cap count
     raw_kw = out.get("keywords")
     if isinstance(raw_kw, list):
+        seen_lower: set[str] = set()
         clamped: list[str] = []
         for kw in raw_kw:
             item = str(kw).strip()[:METADATA_MAX_KEYWORD_CHARS]
-            if item:
-                clamped.append(item)
+            if len(item) < 2:
+                continue
+            low = item.lower()
+            if low in seen_lower:
+                continue
+            seen_lower.add(low)
+            clamped.append(item)
             if len(clamped) >= METADATA_MAX_KEYWORDS:
                 break
         out["keywords"] = clamped
 
-    # Example queries
+    # Example queries — deduplicate (case-insensitive)
     raw_eq = out.get("example_queries")
     if isinstance(raw_eq, list):
+        seen_eq: set[str] = set()
         clamped_eq: list[str] = []
         for eq in raw_eq:
             item = str(eq).strip()[:METADATA_MAX_EXAMPLE_QUERY_CHARS]
-            if item:
-                clamped_eq.append(item)
+            if not item:
+                continue
+            low = item.lower()
+            if low in seen_eq:
+                continue
+            seen_eq.add(low)
+            clamped_eq.append(item)
             if len(clamped_eq) >= METADATA_MAX_EXAMPLE_QUERIES:
                 break
         out["example_queries"] = clamped_eq
 
-    # Excludes
+    # Excludes — per-item char limit
     raw_ex = out.get("excludes")
     if isinstance(raw_ex, (list, tuple)):
-        out["excludes"] = [str(e).strip() for e in raw_ex if str(e).strip()][:METADATA_MAX_EXCLUDES]
+        out["excludes"] = [
+            str(e).strip()[:METADATA_MAX_EXCLUDE_ITEM_CHARS]
+            for e in raw_ex
+            if str(e).strip()
+        ][:METADATA_MAX_EXCLUDES]
+
+    # Base path
+    bp = out.get("base_path")
+    if isinstance(bp, str) and len(bp) > METADATA_MAX_BASE_PATH_CHARS:
+        out["base_path"] = bp[:METADATA_MAX_BASE_PATH_CHARS]
 
     # Identity fields
     for field, limit in (
@@ -581,6 +655,105 @@ def enforce_metadata_limits(payload: dict[str, Any]) -> dict[str, Any]:
             out[field] = val[:limit].rstrip()
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Blocklist of generic keywords that add no retrieval signal
+# ---------------------------------------------------------------------------
+_GENERIC_KEYWORDS_BLOCKLIST: frozenset[str] = frozenset(
+    {
+        "data",
+        "information",
+        "resultat",
+        "visa",
+        "hämta",
+        "sök",
+        "svar",
+        "fråga",
+        "hjälp",
+        "analys",
+        "rapport",
+        "statistik",
+    }
+)
+
+
+def validate_suggestion_quality(
+    proposed: dict[str, Any],
+    current: dict[str, Any],
+    layer: str = "tool",
+) -> dict[str, Any] | None:
+    """Validate an LLM-generated metadata suggestion against quality rules.
+
+    Returns the cleaned suggestion dict, or ``None`` if the suggestion is
+    rejected entirely (no meaningful change or architecture violation).
+
+    Rules applied:
+    1. ``enforce_metadata_limits`` — hard caps.
+    2. Keywords: no generics from blocklist, no 1-char, no duplicates.
+    3. ``enabled`` may NEVER be set to ``False`` by the LLM.
+    4. ``category`` may not change unless the suggestion explicitly provides it
+       AND the layer is ``"tool"``.
+    5. At least one field must actually differ from *current*.
+    """
+    if not proposed or not isinstance(proposed, dict):
+        return None
+
+    # 1. Enforce hard limits
+    cleaned = enforce_metadata_limits(proposed)
+
+    # 2. Filter generic keywords
+    kws = cleaned.get("keywords")
+    if isinstance(kws, list):
+        cleaned["keywords"] = [
+            kw for kw in kws if kw.lower() not in _GENERIC_KEYWORDS_BLOCKLIST
+        ]
+
+    # 3. LLM may NEVER disable an intent/agent/tool
+    if cleaned.get("enabled") is False:
+        cleaned["enabled"] = current.get("enabled", True)
+
+    # 4. Protect category from accidental LLM changes
+    if layer != "tool" and "category" in cleaned and "category" in current:
+        cleaned["category"] = current["category"]
+
+    # 5. Net-change check — at least one field must differ
+    fields_to_compare = {"description", "keywords", "example_queries", "excludes",
+                         "main_identifier", "core_activity", "unique_scope",
+                         "geographic_scope"}
+    has_change = False
+    for f in fields_to_compare:
+        if f in cleaned and cleaned.get(f) != current.get(f):
+            has_change = True
+            break
+    if not has_change:
+        return None
+
+    return cleaned
+
+
+def get_metadata_limits() -> dict[str, int]:
+    """Return all metadata limits as a dict — used by the admin API."""
+    return {
+        "max_tool_id_chars": METADATA_MAX_TOOL_ID_CHARS,
+        "max_name_chars": METADATA_MAX_NAME_CHARS,
+        "max_category_chars": METADATA_MAX_CATEGORY_CHARS,
+        "max_description_chars": METADATA_MAX_DESCRIPTION_CHARS,
+        "max_keywords": METADATA_MAX_KEYWORDS,
+        "min_keywords": METADATA_MIN_KEYWORDS,
+        "max_keyword_chars": METADATA_MAX_KEYWORD_CHARS,
+        "max_example_queries": METADATA_MAX_EXAMPLE_QUERIES,
+        "min_example_queries": METADATA_MIN_EXAMPLE_QUERIES,
+        "max_example_query_chars": METADATA_MAX_EXAMPLE_QUERY_CHARS,
+        "max_excludes": METADATA_MAX_EXCLUDES,
+        "max_exclude_item_chars": METADATA_MAX_EXCLUDE_ITEM_CHARS,
+        "max_main_identifier_chars": METADATA_MAX_MAIN_IDENTIFIER_CHARS,
+        "max_core_activity_chars": METADATA_MAX_CORE_ACTIVITY_CHARS,
+        "max_unique_scope_chars": METADATA_MAX_UNIQUE_SCOPE_CHARS,
+        "max_geographic_scope_chars": METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS,
+        "max_embedding_text_chars": METADATA_MAX_EMBEDDING_TEXT_CHARS,
+        "max_base_path_chars": METADATA_MAX_BASE_PATH_CHARS,
+    }
 
 
 def _namespace_for_scb_tool(tool_id: str) -> tuple[str, ...]:
@@ -676,21 +849,29 @@ def _namespace_for_weather_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "weather")
 
 
+# v2: Registry-pattern for namespace dispatch — adding a new provider
+# only requires appending to _NAMESPACE_REGISTRY.
+_NAMESPACE_REGISTRY: list[
+    tuple[str, Callable[[str], tuple[str, ...]]]
+] = [
+    ("smhi_", _namespace_for_weather_tool),
+    ("trafikverket_vader_", _namespace_for_weather_tool),
+    ("scb_", _namespace_for_scb_tool),
+    ("kolada_", _namespace_for_kolada_tool),
+    ("bolagsverket_", _namespace_for_bolagsverket_tool),
+    ("trafikverket_", _namespace_for_trafikverket_tool),
+    ("geoapify_", _namespace_for_geoapify_tool),
+]
+
+
 def namespace_for_tool(tool_id: str) -> tuple[str, ...]:
-    if _is_weather_tool(tool_id):
-        return _namespace_for_weather_tool(tool_id)
-    if tool_id.startswith("scb_"):
-        return _namespace_for_scb_tool(tool_id)
-    if tool_id.startswith("kolada_"):
-        return _namespace_for_kolada_tool(tool_id)
+    # Skolverket uses a set-based lookup (no prefix)
     if tool_id in _SKOLVERKET_TOOL_IDS:
         return _namespace_for_skolverket_tool(tool_id)
-    if tool_id.startswith("bolagsverket_"):
-        return _namespace_for_bolagsverket_tool(tool_id)
-    if tool_id.startswith("trafikverket_"):
-        return _namespace_for_trafikverket_tool(tool_id)
-    if tool_id.startswith("geoapify_"):
-        return _namespace_for_geoapify_tool(tool_id)
+    # Prefix-based registry
+    for prefix, builder in _NAMESPACE_REGISTRY:
+        if tool_id.startswith(prefix):
+            return builder(tool_id)
     return TOOL_NAMESPACE_OVERRIDES.get(tool_id, ("tools", "general"))
 
 
@@ -1869,8 +2050,14 @@ def smart_retrieve_tools(
     limit: int = 2,
     trace_key: str | None = None,
     tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
-) -> list[str]:
-    tool_ids, _ranked = _run_smart_retrieval(
+    include_breakdown: bool = False,
+) -> list[str] | tuple[list[str], list[dict[str, Any]]]:
+    """Retrieve tool IDs, optionally with score breakdown.
+
+    v2: replaces both ``smart_retrieve_tools`` and ``smart_retrieve_tools_with_breakdown``
+    with a single function and an ``include_breakdown`` flag.
+    """
+    tool_ids, ranked = _run_smart_retrieval(
         query,
         tool_index=tool_index,
         primary_namespaces=primary_namespaces,
@@ -1879,9 +2066,12 @@ def smart_retrieve_tools(
         trace_key=trace_key,
         tuning=tuning,
     )
+    if include_breakdown:
+        return tool_ids, ranked
     return tool_ids
 
 
+# Backwards-compatible alias — kept for existing callers.
 def smart_retrieve_tools_with_breakdown(
     query: str,
     *,
@@ -1892,7 +2082,7 @@ def smart_retrieve_tools_with_breakdown(
     trace_key: str | None = None,
     tuning: ToolRetrievalTuning | dict[str, Any] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    return _run_smart_retrieval(
+    result = smart_retrieve_tools(
         query,
         tool_index=tool_index,
         primary_namespaces=primary_namespaces,
@@ -1900,7 +2090,9 @@ def smart_retrieve_tools_with_breakdown(
         limit=limit,
         trace_key=trace_key,
         tuning=tuning,
+        include_breakdown=True,
     )
+    return result  # type: ignore[return-value]
 
 
 def make_smart_retriever(
@@ -2014,27 +2206,25 @@ def build_tool_index(
     *,
     metadata_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[ToolIndexEntry]:
-    scb_by_id = {definition.tool_id: definition for definition in SCB_TOOL_DEFINITIONS}
-    kolada_by_id = {definition.tool_id: definition for definition in KOLADA_TOOL_DEFINITIONS}
-    skolverket_by_id = {
-        definition.tool_id: definition for definition in SKOLVERKET_TOOL_DEFINITIONS
-    }
-    bolagsverket_by_id = {
-        definition.tool_id: definition for definition in BOLAGSVERKET_TOOL_DEFINITIONS
-    }
-    trafikverket_by_id = {
-        definition.tool_id: definition for definition in TRAFIKVERKET_TOOL_DEFINITIONS
-    }
-    smhi_by_id = {definition.tool_id: definition for definition in SMHI_TOOL_DEFINITIONS}
-    geoapify_by_id = {
-        definition.tool_id: definition for definition in GEOAPIFY_TOOL_DEFINITIONS
-    }
-    riksdagen_by_id = {
-        definition.tool_id: definition for definition in RIKSDAGEN_TOOL_DEFINITIONS
-    }
-    marketplace_by_id = {
-        definition.tool_id: definition for definition in MARKETPLACE_TOOL_DEFINITIONS
-    }
+    # v2: Unified provider definition lookup — single source for all providers
+    _PROVIDER_DEFINITIONS: list[tuple[list[Any], str, str | None]] = [
+        # (definitions_list, default_category, base_path_attr_override)
+        (SCB_TOOL_DEFINITIONS, "statistics", None),
+        (KOLADA_TOOL_DEFINITIONS, "statistics", "operating_area"),
+        (SKOLVERKET_TOOL_DEFINITIONS, None, "__skolverket__"),  # special handling
+        (BOLAGSVERKET_TOOL_DEFINITIONS, None, None),
+        (TRAFIKVERKET_TOOL_DEFINITIONS, None, None),
+        (SMHI_TOOL_DEFINITIONS, None, None),
+        (GEOAPIFY_TOOL_DEFINITIONS, None, None),
+        (RIKSDAGEN_TOOL_DEFINITIONS, None, "__none__"),  # no base_path
+        (MARKETPLACE_TOOL_DEFINITIONS, None, "__none__"),  # no base_path
+    ]
+    # Build unified lookup: tool_id → (definition, default_category, base_path_override)
+    _unified_defs: dict[str, tuple[Any, str | None, str | None]] = {}
+    for defs_list, default_cat, bp_override in _PROVIDER_DEFINITIONS:
+        for defn in defs_list:
+            _unified_defs[defn.tool_id] = (defn, default_cat, bp_override)
+
     entries: list[ToolIndexEntry] = []
 
     for tool_id, tool in tool_registry.items():
@@ -2046,70 +2236,24 @@ def build_tool_index(
         base_path: str | None = None
         name = getattr(tool, "name", tool_id)
         metadata = _tool_metadata(tool)
-        if tool_id in scb_by_id:
-            definition = scb_by_id[tool_id]
+
+        # v2: Single lookup replaces 9 if-blocks
+        if tool_id in _unified_defs:
+            definition, default_cat, bp_override = _unified_defs[tool_id]
             description = definition.description
             keywords = list(definition.keywords)
             example_queries = list(definition.example_queries)
-            category = "statistics"
-            base_path = definition.base_path
-        if tool_id in kolada_by_id:
-            definition = kolada_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = "statistics"
-            # Use operating_area as base_path for Kolada tools, default to empty string if None
-            base_path = definition.operating_area if definition.operating_area else ""
-        if tool_id in skolverket_by_id:
-            definition = skolverket_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = str(definition.category or "knowledge")
-            base_path = "https://api.skolverket.se"
-        if tool_id in bolagsverket_by_id:
-            definition = bolagsverket_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = definition.category
-            base_path = definition.base_path
-        if tool_id in trafikverket_by_id:
-            definition = trafikverket_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = definition.category
-            base_path = definition.base_path
-        if tool_id in smhi_by_id:
-            definition = smhi_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = definition.category
-            base_path = definition.base_path
-        if tool_id in geoapify_by_id:
-            definition = geoapify_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = definition.category
-            base_path = definition.base_path
-        if tool_id in riksdagen_by_id:
-            definition = riksdagen_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = definition.category
-            base_path = None  # Riksdagen tools don't use base_path
-        if tool_id in marketplace_by_id:
-            definition = marketplace_by_id[tool_id]
-            description = definition.description
-            keywords = list(definition.keywords)
-            example_queries = list(definition.example_queries)
-            category = definition.category
-            base_path = None  # Marketplace tools don't use base_path
+            category = default_cat or str(getattr(definition, "category", None) or category)
+            if bp_override == "__none__":
+                base_path = None
+            elif bp_override == "__skolverket__":
+                category = str(getattr(definition, "category", None) or "knowledge")
+                base_path = "https://api.skolverket.se"
+            elif bp_override:
+                base_path = getattr(definition, bp_override, "") or ""
+            else:
+                base_path = getattr(definition, "base_path", None)
+
         if _is_weather_tool(tool_id) and not tool_id.startswith("smhi_"):
             # Keep weather tools grouped together across providers.
             category = "weather"

@@ -5,44 +5,17 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.agents.new_chat.bigtool_store import (
+    _LIVE_ROUTING_PHASES,
+    get_default_tuning_as_dict,
+)
 from app.db import GlobalToolRetrievalTuning, GlobalToolRetrievalTuningHistory
 from app.services.metadata_separation_service import (
     normalize_metadata_separation_lock_registry,
 )
 
-DEFAULT_TOOL_RETRIEVAL_TUNING: dict[str, Any] = {
-    "name_match_weight": 5.0,
-    "keyword_weight": 3.0,
-    "description_token_weight": 1.0,
-    "example_query_weight": 2.0,
-    "namespace_boost": 3.0,
-    "embedding_weight": 4.0,
-    "semantic_embedding_weight": 2.8,
-    "structural_embedding_weight": 1.2,
-    "rerank_candidates": 24,
-    "retrieval_feedback_db_enabled": False,
-    "live_routing_enabled": False,
-    "live_routing_phase": "shadow",
-    "intent_candidate_top_k": 3,
-    "agent_candidate_top_k": 3,
-    "tool_candidate_top_k": 5,
-    "intent_lexical_weight": 1.0,
-    "intent_embedding_weight": 1.0,
-    "agent_auto_margin_threshold": 0.18,
-    "agent_auto_score_threshold": 0.55,
-    "tool_auto_margin_threshold": 0.25,
-    "tool_auto_score_threshold": 0.60,
-    "adaptive_threshold_delta": 0.08,
-    "adaptive_min_samples": 8,
-}
-
-_LIVE_ROUTING_PHASES = {
-    "shadow",
-    "tool_gate",
-    "agent_auto",
-    "adaptive",
-    "intent_finetune",
-}
+# Single source of truth — imported from bigtool_store.py
+DEFAULT_TOOL_RETRIEVAL_TUNING: dict[str, Any] = get_default_tuning_as_dict()
 
 _TUNING_DEFAULT_KEY = "default"
 _METADATA_SEPARATION_LOCK_REGISTRY_KEY = "metadata_separation_lock_registry"

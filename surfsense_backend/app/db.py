@@ -1477,6 +1477,22 @@ class GlobalToolLifecycleStatus(BaseModel, TimestampMixin):
     notes = Column(Text, nullable=True)
 
 
+class GlobalToolLifecycleAudit(BaseModel, TimestampMixin):
+    """v2: Immutable audit trail for lifecycle status changes."""
+    __tablename__ = "global_tool_lifecycle_audit"
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    old_status = Column(String(10), nullable=True)  # NULL for first entry
+    new_status = Column(String(10), nullable=False)
+    success_rate = Column(Float, nullable=True)
+    trigger = Column(String(20), nullable=False)  # manual | eval_sync | rollback | bulk_promote
+    reason = Column(Text, nullable=True)
+    changed_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    changed_by = relationship("User")
+
+
 class AgentComboCache(BaseModel, TimestampMixin):
     __tablename__ = "agent_combo_cache"
     __table_args__ = (

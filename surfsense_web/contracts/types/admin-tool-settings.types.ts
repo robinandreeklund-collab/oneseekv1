@@ -3,16 +3,23 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 // Central metadata field limits — must stay in sync with bigtool_store.py
 // ---------------------------------------------------------------------------
+export const METADATA_MAX_NAME_CHARS = 80;
+export const METADATA_MAX_CATEGORY_CHARS = 40;
 export const METADATA_MAX_DESCRIPTION_CHARS = 300;
 export const METADATA_MAX_KEYWORDS = 20;
+export const METADATA_MIN_KEYWORDS = 3;
 export const METADATA_MAX_EXAMPLE_QUERIES = 10;
+export const METADATA_MIN_EXAMPLE_QUERIES = 2;
 export const METADATA_MAX_EXCLUDES = 15;
+export const METADATA_MAX_EXCLUDE_ITEM_CHARS = 60;
 export const METADATA_MAX_KEYWORD_CHARS = 40;
 export const METADATA_MAX_EXAMPLE_QUERY_CHARS = 120;
 export const METADATA_MAX_MAIN_IDENTIFIER_CHARS = 80;
 export const METADATA_MAX_CORE_ACTIVITY_CHARS = 120;
 export const METADATA_MAX_UNIQUE_SCOPE_CHARS = 120;
 export const METADATA_MAX_GEOGRAPHIC_SCOPE_CHARS = 80;
+export const METADATA_MAX_BASE_PATH_CHARS = 200;
+export const METADATA_MAX_TOOL_ID_CHARS = 160;
 
 export const toolMetadataItem = z.object({
 	tool_id: z.string(),
