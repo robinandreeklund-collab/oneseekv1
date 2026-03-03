@@ -20,6 +20,7 @@ import {
 	SlidersHorizontal,
 } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
+import { useToolCatalog } from "@/components/admin/tools/hooks/use-tool-catalog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -59,6 +60,8 @@ function PanelFallback() {
 
 export function ToolAdminDashboard() {
 	const [activePanel, setActivePanel] = useState("explorer");
+	// Prefetch shared data at dashboard level so all lazy-loaded panels share the cache
+	useToolCatalog();
 
 	return (
 		<div className="space-y-6">

@@ -172,9 +172,9 @@ function AuditSection({ searchSpaceId }: { searchSpaceId: number | undefined }) 
 										}>
 									)
 										.slice(0, 5)
-										.map((pair, i) => (
+										.map((pair) => (
 											<div
-												key={`collision-${i}`}
+												key={`collision-${pair.predicted}-${pair.expected}`}
 												className="flex items-center justify-between text-xs border rounded px-2 py-1"
 											>
 												<span className="font-mono">
@@ -201,8 +201,8 @@ function AuditSection({ searchSpaceId }: { searchSpaceId: number | undefined }) 
 
 function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 	const [evalType, setEvalType] = useState<EvalType>("tool_selection");
-	const [genMode, _setGenMode] = useState<GenerationMode>("category");
-	const [categoryId, _setCategoryId] = useState("");
+	const genMode: GenerationMode = "category";
+	const categoryId = "";
 	const [questionCount, setQuestionCount] = useState(12);
 	const [difficulty, setDifficulty] = useState<DifficultyProfile>("blandad");
 	const [evalName, setEvalName] = useState("");
@@ -220,6 +220,7 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 	const [isBatchRunning, setIsBatchRunning] = useState(false);
 
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const mountedRef = useRef(true);
 
 	const { data: apiCategories } = useQuery({
 		queryKey: ["admin-tool-api-categories", searchSpaceId],
@@ -236,7 +237,9 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 
 	// Cleanup on unmount
 	useEffect(() => {
+		mountedRef.current = true;
 		return () => {
+			mountedRef.current = false;
 			if (pollRef.current) clearInterval(pollRef.current);
 		};
 	}, []);
@@ -357,7 +360,9 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 		const runOne = async (job: BatchJob): Promise<BatchJob> => {
 			try {
 				job.status = "running";
-				setBatchJobs((prev) => prev.map((j) => (j.id === job.id ? { ...job } : j)));
+				if (mountedRef.current) {
+					setBatchJobs((prev) => prev.map((j) => (j.id === job.id ? { ...job } : j)));
+				}
 
 				const response = (await adminToolSettingsApiService.startToolEvaluation({
 					eval_name: `batch-${job.categoryId}`,
@@ -369,10 +374,12 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 
 				job.jobId = response.job_id as string;
 
-				// Poll until done
+				// Poll until done — abort if component unmounts
 				let done = false;
-				while (!done) {
+				while (!done && mountedRef.current) {
 					await new Promise((r) => setTimeout(r, 3000));
+					if (!mountedRef.current) break;
+
 					const status = (await adminToolSettingsApiService.getToolEvaluationStatus(
 						job.jobId as string
 					)) as Record<string, unknown>;
@@ -383,16 +390,18 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 						done = true;
 					} else if (status.status === "failed") {
 						job.status = "failed";
-						job.error = (status.error as string) || "Okänt fel";
+						job.error = (status.error as string) || "Ok\u00e4nt fel";
 						done = true;
 					}
 				}
 			} catch (error) {
 				job.status = "failed";
-				job.error = error instanceof Error ? error.message : "Okänt fel";
+				job.error = error instanceof Error ? error.message : "Ok\u00e4nt fel";
 			}
 
-			setBatchJobs((prev) => prev.map((j) => (j.id === job.id ? { ...job } : j)));
+			if (mountedRef.current) {
+				setBatchJobs((prev) => prev.map((j) => (j.id === job.id ? { ...job } : j)));
+			}
 			return job;
 		};
 
@@ -831,12 +840,12 @@ function AutoLoopSection({ searchSpaceId }: { searchSpaceId: number | undefined 
 						</div>
 						{iterations.length > 0 && (
 							<div className="space-y-1 max-h-48 overflow-auto">
-								{iterations.map((iter, i) => (
+								{iterations.map((iter, iterIndex) => (
 									<div
-										key={`iter-${i}`}
+										key={`iter-${iterIndex + 1}-${String(iter.success_rate ?? "")}`}
 										className="flex items-center justify-between rounded border px-3 py-1.5 text-xs"
 									>
-										<span>Iteration {i + 1}</span>
+										<span>Iteration {iterIndex + 1}</span>
 										<div className="flex items-center gap-2">
 											<span className="tabular-nums">
 												{formatPercent(iter.success_rate as number)}

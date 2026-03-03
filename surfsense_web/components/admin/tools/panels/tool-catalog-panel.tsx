@@ -81,7 +81,6 @@ function isToolChanged(draft: ToolMetadataUpdateItem, original: ToolMetadataItem
 // ---------------------------------------------------------------------------
 
 function ToolEditor({
-	tool,
 	draft,
 	hasChanges,
 	isSaving,
@@ -89,7 +88,6 @@ function ToolEditor({
 	onSave,
 	onReset,
 }: {
-	tool: ToolWithLifecycle;
 	draft: ToolMetadataUpdateItem;
 	hasChanges: boolean;
 	isSaving: boolean;
@@ -178,16 +176,16 @@ function ToolEditor({
 					Nyckelord ({draft.keywords.length}/20)
 				</Label>
 				<div className="flex flex-wrap items-center gap-1.5">
-					{draft.keywords.map((kw, i) => (
+					{draft.keywords.map((kw, kwIdx) => (
 						<Badge
-							key={`kw-${draft.tool_id}-${i}`}
+							key={`kw-${draft.tool_id}-${kwIdx}-${kw}`}
 							variant="secondary"
 							className="gap-0.5 text-xs py-0.5"
 						>
 							{kw}
 							<button
 								type="button"
-								onClick={() => onUpdate({ keywords: draft.keywords.filter((_, idx) => idx !== i) })}
+								onClick={() => onUpdate({ keywords: draft.keywords.filter((_, idx) => idx !== kwIdx) })}
 								className="ml-0.5 hover:text-destructive"
 							>
 								<X className="h-2.5 w-2.5" />
@@ -232,13 +230,13 @@ function ToolEditor({
 				</div>
 				{showExamples && (
 					<div className="space-y-1.5 pl-1">
-						{draft.example_queries.map((eq, i) => (
-							<div key={`eq-${draft.tool_id}-${i}`} className="flex items-center gap-1">
+						{draft.example_queries.map((eq, eqIdx) => (
+							<div key={`eq-${draft.tool_id}-${eqIdx}-${eq.slice(0, 30)}`} className="flex items-center gap-1">
 								<span className="flex-1 text-xs bg-muted px-2 py-1 rounded truncate">{eq}</span>
 								<Button
 									onClick={() =>
 										onUpdate({
-											example_queries: draft.example_queries.filter((_, idx) => idx !== i),
+											example_queries: draft.example_queries.filter((_, idx) => idx !== eqIdx),
 										})
 									}
 									size="sm"
@@ -416,7 +414,6 @@ function DomainGroupCard({
 								<CollapsibleContent>
 									<div className="ml-3 border-l-2 border-muted pl-3">
 										<ToolEditor
-											tool={tool}
 											draft={draft}
 											hasChanges={hasChanges}
 											isSaving={savingToolId === tool.tool_id}

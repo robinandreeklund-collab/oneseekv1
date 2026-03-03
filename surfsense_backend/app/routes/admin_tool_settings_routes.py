@@ -3987,6 +3987,7 @@ async def debug_retrieval(
 ):
     """Debug tool retrieval: run the full scoring pipeline for a query and
     return scored candidates with dimension breakdowns."""
+    await _require_admin(session, user)
     _owned_ids, resolved_search_space_id = await _resolve_search_space_id(
         session,
         user,
@@ -4003,6 +4004,8 @@ async def debug_retrieval(
     )
     retrieval_tuning = await get_global_tool_retrieval_tuning(session)
 
+    import time as _time
+    _t0 = _time.monotonic()
     try:
         retrieved_ids, ranked_tools = smart_retrieve_tools_with_breakdown(
             query,
@@ -4019,6 +4022,7 @@ async def debug_retrieval(
             status_code=500,
             detail=f"Debug retrieval failed: {exc!s}",
         ) from exc
+    _timing_ms = round((_time.monotonic() - _t0) * 1000, 1)
 
     # Build tool candidates with scoring
     tool_auto_score = float(
@@ -4035,6 +4039,11 @@ async def debug_retrieval(
         (retrieval_tuning or {}).get("agent_auto_select_threshold", 0.45)
         if isinstance(retrieval_tuning, dict)
         else 0.45
+    )
+    agent_auto_margin = float(
+        (retrieval_tuning or {}).get("agent_auto_select_margin", 0.18)
+        if isinstance(retrieval_tuning, dict)
+        else 0.18
     )
 
     tools = []
@@ -4065,7 +4074,9 @@ async def debug_retrieval(
             "tool_auto_score": tool_auto_score,
             "tool_auto_margin": tool_auto_margin,
             "agent_auto_score": agent_auto_score,
+            "agent_auto_margin": agent_auto_margin,
         },
+        "timing_ms": _timing_ms,
         "query": query,
     }
 

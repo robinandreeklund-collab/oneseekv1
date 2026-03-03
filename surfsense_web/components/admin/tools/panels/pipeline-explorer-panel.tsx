@@ -156,9 +156,9 @@ export function PipelineExplorerPanel() {
 	const [query, setQuery] = useState("");
 	const [isRunning, setIsRunning] = useState(false);
 	const [result, setResult] = useState<DebugRetrievalResult | null>(null);
-	const [history, setHistory] = useState<Array<{ query: string; result: DebugRetrievalResult }>>(
-		[]
-	);
+	const [history, setHistory] = useState<
+		Array<{ query: string; result: DebugRetrievalResult; ts: number }>
+	>([]);
 
 	const runDebug = useCallback(async () => {
 		if (!query.trim() || !currentUser) return;
@@ -175,7 +175,7 @@ export function PipelineExplorerPanel() {
 			if (response) {
 				setResult(response as DebugRetrievalResult);
 				setHistory((prev) => [
-					{ query: query.trim(), result: response as DebugRetrievalResult },
+					{ query: query.trim(), result: response as DebugRetrievalResult, ts: Date.now() },
 					...prev.slice(0, 9),
 				]);
 			} else {
@@ -191,7 +191,6 @@ export function PipelineExplorerPanel() {
 	}, [query, currentUser, searchSpaceId]);
 
 	const topAgent = result?.agents?.[0] ?? null;
-	const _topTool = result?.tools?.[0] ?? null;
 
 	return (
 		<div className="space-y-6">
@@ -239,40 +238,44 @@ export function PipelineExplorerPanel() {
 			{/* Pipeline flow visualization */}
 			{result && (
 				<>
-					{/* 3-step pipeline cards */}
-					<div className="grid gap-4 md:grid-cols-3">
-						<PipelineStep
-							step={1}
-							label="Intent"
-							value={result.intent?.intent_id ?? null}
-							confidence={result.intent?.confidence ?? null}
-							detail={
-								result.intent
-									? `Route: ${result.intent.route} · Complexity: ${result.intent.graph_complexity}`
-									: undefined
-							}
-							isActive={result.intent != null}
-						/>
-						<div className="hidden md:flex items-center justify-center">
-							<ArrowRight className="h-5 w-5 text-muted-foreground" />
-						</div>
-						<PipelineStep
-							step={2}
-							label="Agent"
-							value={topAgent?.agent_id ?? null}
-							confidence={topAgent?.score ?? null}
-							detail={
-								topAgent
-									? `${result.agents.length} kandidater · ${topAgent.auto_selected ? "Auto-vald" : "LLM-rankad"}`
-									: undefined
-							}
-							isActive={topAgent != null}
-						/>
-					</div>
+					{/* Intent & Agent steps — only shown when backend populates them */}
+					{(result.intent != null || topAgent != null) && (
+						<>
+							<div className="grid gap-4 md:grid-cols-3">
+								<PipelineStep
+									step={1}
+									label="Intent"
+									value={result.intent?.intent_id ?? null}
+									confidence={result.intent?.confidence ?? null}
+									detail={
+										result.intent
+											? `Route: ${result.intent.route} · Complexity: ${result.intent.graph_complexity}`
+											: undefined
+									}
+									isActive={result.intent != null}
+								/>
+								<div className="hidden md:flex items-center justify-center">
+									<ArrowRight className="h-5 w-5 text-muted-foreground" />
+								</div>
+								<PipelineStep
+									step={2}
+									label="Agent"
+									value={topAgent?.agent_id ?? null}
+									confidence={topAgent?.score ?? null}
+									detail={
+										topAgent
+											? `${result.agents.length} kandidater · ${topAgent.auto_selected ? "Auto-vald" : "LLM-rankad"}`
+											: undefined
+									}
+									isActive={topAgent != null}
+								/>
+							</div>
 
-					<div className="flex items-center justify-center">
-						<ArrowRight className="h-5 w-5 text-muted-foreground rotate-90" />
-					</div>
+							<div className="flex items-center justify-center">
+								<ArrowRight className="h-5 w-5 text-muted-foreground rotate-90" />
+							</div>
+						</>
+					)}
 
 					{/* Tool scoring breakdown */}
 					<Card>
@@ -386,10 +389,10 @@ export function PipelineExplorerPanel() {
 					</CardHeader>
 					<CardContent>
 						<div className="space-y-2">
-							{history.map((item, index) => (
+							{history.map((item) => (
 								<button
 									type="button"
-									key={`${item.query}-${index}`}
+									key={`history-${item.ts}`}
 									className="w-full text-left rounded border p-3 hover:bg-muted/50 transition-colors"
 									onClick={() => {
 										setQuery(item.query);

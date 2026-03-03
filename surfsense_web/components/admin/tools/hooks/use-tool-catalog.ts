@@ -121,12 +121,12 @@ function buildDomainGroups(
 // Main hook
 // ---------------------------------------------------------------------------
 
-export function useToolCatalog(searchSpaceId?: number) {
+export function useToolCatalog() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 
 	const settingsQuery = useQuery({
-		queryKey: ["admin-tool-settings", searchSpaceId],
-		queryFn: () => adminToolSettingsApiService.getToolSettings(searchSpaceId),
+		queryKey: ["admin-tool-settings"],
+		queryFn: () => adminToolSettingsApiService.getToolSettings(),
 		enabled: !!currentUser,
 		staleTime: 30_000,
 	});
@@ -139,15 +139,14 @@ export function useToolCatalog(searchSpaceId?: number) {
 	});
 
 	const catalogQuery = useQuery({
-		queryKey: ["admin-metadata-catalog", searchSpaceId ?? settingsQuery.data?.search_space_id],
+		queryKey: ["admin-metadata-catalog", settingsQuery.data?.search_space_id],
 		queryFn: () =>
 			adminToolSettingsApiService.getMetadataCatalog(
-				searchSpaceId ?? settingsQuery.data?.search_space_id
+				settingsQuery.data?.search_space_id
 			),
 		enabled:
 			!!currentUser &&
-			(typeof searchSpaceId === "number" ||
-				typeof settingsQuery.data?.search_space_id === "number"),
+			typeof settingsQuery.data?.search_space_id === "number",
 		staleTime: 30_000,
 	});
 
@@ -177,7 +176,6 @@ export function useToolCatalog(searchSpaceId?: number) {
 	);
 
 	const retrievalTuning = settingsQuery.data?.retrieval_tuning ?? null;
-	const effectiveSearchSpaceId = searchSpaceId ?? settingsQuery.data?.search_space_id;
 
 	return {
 		domainGroups,
@@ -185,7 +183,7 @@ export function useToolCatalog(searchSpaceId?: number) {
 		lifecycleMap,
 		lifecycleData: lifecycleQuery.data,
 		retrievalTuning,
-		searchSpaceId: effectiveSearchSpaceId,
+		searchSpaceId: settingsQuery.data?.search_space_id,
 		catalogData: catalogQuery.data,
 		metadataVersionHash: settingsQuery.data?.metadata_version_hash,
 		latestEvaluation: settingsQuery.data?.latest_evaluation,

@@ -24,7 +24,7 @@ import {
 	TrendingDown,
 	TrendingUp,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import { AuditTrail, type AuditTrailEntry } from "@/components/admin/shared/audit-trail";
@@ -56,21 +56,7 @@ import type { ToolLifecycleStatusResponse } from "@/contracts/types/admin-tool-l
 import type { ToolEvaluationStageHistoryResponse } from "@/contracts/types/admin-tool-settings.types";
 import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatPercent(value: number | null | undefined): string {
-	if (value == null || Number.isNaN(value)) return "-";
-	return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatSignedPercent(value: number | null | undefined): string {
-	if (value == null || Number.isNaN(value)) return "-";
-	const sign = value > 0 ? "+" : "";
-	return `${sign}${(value * 100).toFixed(1)}%`;
-}
+import { formatPercent, formatSignedPercent } from "@/components/admin/tools/hooks/use-tool-catalog";
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -104,7 +90,13 @@ function MetricCard({
 }
 
 /** Trend bars — mini bar chart for eval history. */
-function TrendBars({ points, label }: { points: Array<Record<string, unknown>>; label: string }) {
+function TrendBars({
+	points,
+	label,
+}: {
+	points: Array<{ run_at: string; eval_name?: string | null; success_rate: number }>;
+	label: string;
+}) {
 	if (points.length === 0) {
 		return <p className="text-xs text-muted-foreground">Ingen historik.</p>;
 	}
@@ -112,18 +104,14 @@ function TrendBars({ points, label }: { points: Array<Record<string, unknown>>; 
 		<div className="space-y-1">
 			<p className="text-xs text-muted-foreground">{label}</p>
 			<div className="flex items-end gap-0.5 h-16 rounded border bg-muted/30 p-1.5">
-				{points.map((point, index) => {
-					const raw = point.success_rate;
-					const numeric = typeof raw === "number" ? raw : 0;
-					const normalized = Math.max(0.04, Math.min(1, numeric));
-					const runAt = String(point.run_at ?? "");
-					const evalName = String(point.eval_name ?? "");
-					const title = `${evalName || "Eval"} \u2022 ${
-						runAt ? new Date(runAt).toLocaleString("sv-SE") : "ok\u00e4nd tid"
-					} \u2022 ${formatPercent(numeric)}`;
+				{points.map((point) => {
+					const normalized = Math.max(0.04, Math.min(1, point.success_rate));
+					const title = `${point.eval_name || "Eval"} \u2022 ${
+						point.run_at ? new Date(point.run_at).toLocaleString("sv-SE") : "ok\u00e4nd tid"
+					} \u2022 ${formatPercent(point.success_rate)}`;
 					return (
 						<div
-							key={`${label}-${index}-${runAt}`}
+							key={`${label}-${point.run_at}-${point.eval_name ?? ""}`}
 							className="flex-1 min-w-[4px] rounded-sm bg-primary/80 hover:bg-primary transition-colors"
 							style={{ height: `${Math.round(normalized * 100)}%` }}
 							title={title}
@@ -158,11 +146,16 @@ function StageHistorySection({
 		(series) => series.category_id === effectiveCategory
 	);
 
-	useEffect(() => {
+	// Sync parent state when the effective category differs (e.g. first render)
+	// Using a layout-safe callback avoids the fragile useEffect + setState pattern.
+	const prevEffective = useRef(effectiveCategory);
+	if (prevEffective.current !== effectiveCategory) {
+		prevEffective.current = effectiveCategory;
 		if (effectiveCategory && effectiveCategory !== selectedCategory) {
-			onSelectCategory(effectiveCategory);
+			// Defer to avoid setState-during-render warning
+			queueMicrotask(() => onSelectCategory(effectiveCategory));
 		}
-	}, [effectiveCategory, selectedCategory, onSelectCategory]);
+	}
 
 	return (
 		<div className="space-y-3">
@@ -219,8 +212,8 @@ function StageHistorySection({
 							{[...(history?.items ?? [])]
 								.reverse()
 								.slice(0, 20)
-								.map((item, index) => (
-									<TableRow key={`${item.run_at}-${index}`}>
+								.map((item) => (
+									<TableRow key={`${item.run_at}-${item.eval_name ?? ""}-${item.stage}`}>
 										<TableCell className="text-xs py-1">
 											{new Date(item.run_at).toLocaleString("sv-SE")}
 										</TableCell>
@@ -257,6 +250,7 @@ export function DeployPanel() {
 	const [rollbackTool, setRollbackTool] = useState<ToolLifecycleStatusResponse | null>(null);
 	const [rollbackNotes, setRollbackNotes] = useState("");
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
+	const [bulkPromoteOpen, setBulkPromoteOpen] = useState(false);
 	const [statsTab, setStatsTab] = useState("agent");
 	const [agentHistoryCategory, setAgentHistoryCategory] = useState("");
 	const [toolHistoryCategory, setToolHistoryCategory] = useState("");
@@ -330,26 +324,21 @@ export function DeployPanel() {
 		queryClient.invalidateQueries({ queryKey: ["admin-tool-lifecycle"] });
 	}, [refetchLifecycle, queryClient]);
 
-	const _canToggle = (tool: ToolLifecycleStatusResponse): boolean => {
+	const canToggle = (tool: ToolLifecycleStatusResponse): boolean => {
 		if (tool.status === "live") return true;
 		if (tool.success_rate === null) return false;
 		return tool.success_rate >= tool.required_success_rate;
 	};
 
 	const toggleToolStatus = async (tool: ToolLifecycleStatusResponse) => {
-		const newStatus = tool.status === "live" ? "review" : "live";
-
-		if (
-			newStatus === "live" &&
-			tool.success_rate !== null &&
-			tool.success_rate < tool.required_success_rate
-		) {
+		if (!canToggle(tool)) {
 			toast.error(
-				`Verktyget n\u00e5r inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`
+				`Verktyget n\u00e5r inte kraven (${tool.success_rate !== null ? `${(tool.success_rate * 100).toFixed(1)}%` : "N/A"} < ${(tool.required_success_rate * 100).toFixed(0)}%)`
 			);
 			return;
 		}
 
+		const newStatus = tool.status === "live" ? "review" : "live";
 		try {
 			setActionLoading(tool.tool_id);
 			await adminToolLifecycleApiService.updateToolStatus(tool.tool_id, {
@@ -388,14 +377,6 @@ export function DeployPanel() {
 	};
 
 	const bulkPromoteToLive = async () => {
-		if (
-			!confirm(
-				`Befordra ALLA ${lifecycleData?.review_count || 0} review-verktyg till LIVE?\n\nDetta kringg\u00e5r tr\u00f6skelv\u00e4rden och \u00e4r avsett f\u00f6r initial migrering.`
-			)
-		) {
-			return;
-		}
-
 		try {
 			setActionLoading("__bulk__");
 			const result = await adminToolLifecycleApiService.bulkPromoteToLive();
@@ -407,6 +388,7 @@ export function DeployPanel() {
 			toast.error(error instanceof Error ? error.message : "Bulk-befordran misslyckades");
 		} finally {
 			setActionLoading(null);
+			setBulkPromoteOpen(false);
 		}
 	};
 
@@ -446,8 +428,25 @@ export function DeployPanel() {
 		return "blocked";
 	};
 
-	// Audit trail — placeholder; will be populated when backend supports it
-	const [auditEntries] = useState<AuditTrailEntry[]>([]);
+	// Derive audit entries from lifecycle data — each tool's most recent change
+	const auditEntries = useMemo<AuditTrailEntry[]>(() => {
+		if (!lifecycleData?.tools) return [];
+		return lifecycleData.tools
+			.filter((tool) => tool.changed_at)
+			.map((tool, idx) => ({
+				id: idx + 1,
+				tool_id: tool.tool_id,
+				old_status: null,
+				new_status: tool.status,
+				success_rate: tool.success_rate ?? null,
+				trigger: "manual",
+				reason: tool.notes ?? null,
+				changed_by_email: tool.changed_by_id ?? null,
+				created_at: tool.changed_at,
+			}))
+			.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+			.slice(0, 50);
+	}, [lifecycleData?.tools]);
 
 	// ---- Render ----
 
@@ -573,7 +572,7 @@ export function DeployPanel() {
 						</Button>
 						{lifecycleData && lifecycleData.review_count > 0 && (
 							<Button
-								onClick={bulkPromoteToLive}
+								onClick={() => setBulkPromoteOpen(true)}
 								variant="outline"
 								size="sm"
 								className="gap-1 text-xs h-8"
@@ -830,6 +829,36 @@ export function DeployPanel() {
 								</>
 							) : (
 								"Bekr\u00e4fta Rollback"
+							)}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			{/* ---- Bulk Promote Dialog ---- */}
+			<AlertDialog open={bulkPromoteOpen} onOpenChange={setBulkPromoteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Bulk-befordran till LIVE</AlertDialogTitle>
+						<AlertDialogDescription>
+							Befordra ALLA {lifecycleData?.review_count ?? 0} review-verktyg till
+							LIVE? Detta kringg\u00e5r tr\u00f6skelv\u00e4rden och \u00e4r avsett f\u00f6r initial
+							migrering.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Avbryt</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={bulkPromoteToLive}
+							disabled={actionLoading !== null}
+						>
+							{actionLoading === "__bulk__" ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin mr-2" />
+									Befordrar...
+								</>
+							) : (
+								"Bekr\u00e4fta"
 							)}
 						</AlertDialogAction>
 					</AlertDialogFooter>
