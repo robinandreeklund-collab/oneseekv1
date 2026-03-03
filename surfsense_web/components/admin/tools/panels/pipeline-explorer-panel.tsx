@@ -238,44 +238,40 @@ export function PipelineExplorerPanel() {
 			{/* Pipeline flow visualization */}
 			{result && (
 				<>
-					{/* Intent & Agent steps — only shown when backend populates them */}
-					{(result.intent != null || topAgent != null) && (
-						<>
-							<div className="grid gap-4 md:grid-cols-3">
-								<PipelineStep
-									step={1}
-									label="Intent"
-									value={result.intent?.intent_id ?? null}
-									confidence={result.intent?.confidence ?? null}
-									detail={
-										result.intent
-											? `Route: ${result.intent.route} · Complexity: ${result.intent.graph_complexity}`
-											: undefined
-									}
-									isActive={result.intent != null}
-								/>
-								<div className="hidden md:flex items-center justify-center">
-									<ArrowRight className="h-5 w-5 text-muted-foreground" />
-								</div>
-								<PipelineStep
-									step={2}
-									label="Agent"
-									value={topAgent?.agent_id ?? null}
-									confidence={topAgent?.score ?? null}
-									detail={
-										topAgent
-											? `${result.agents.length} kandidater · ${topAgent.auto_selected ? "Auto-vald" : "LLM-rankad"}`
-											: undefined
-									}
-									isActive={topAgent != null}
-								/>
-							</div>
+					{/* 3-step pipeline cards: Intent → Agent → Tool */}
+					<div className="grid gap-4 md:grid-cols-3">
+						<PipelineStep
+							step={1}
+							label="Intent"
+							value={result.intent?.intent_id ?? null}
+							confidence={result.intent?.confidence ?? null}
+							detail={
+								result.intent
+									? `Route: ${result.intent.route} · Complexity: ${result.intent.graph_complexity}`
+									: undefined
+							}
+							isActive={result.intent != null}
+						/>
+						<div className="hidden md:flex items-center justify-center">
+							<ArrowRight className="h-5 w-5 text-muted-foreground" />
+						</div>
+						<PipelineStep
+							step={2}
+							label="Agent"
+							value={topAgent?.agent_id ?? null}
+							confidence={topAgent?.score ?? null}
+							detail={
+								topAgent
+									? `${result.agents.length} kandidater · ${topAgent.auto_selected ? "Auto-vald" : "LLM-rankad"}`
+									: undefined
+							}
+							isActive={topAgent != null}
+						/>
+					</div>
 
-							<div className="flex items-center justify-center">
-								<ArrowRight className="h-5 w-5 text-muted-foreground rotate-90" />
-							</div>
-						</>
-					)}
+					<div className="flex items-center justify-center">
+						<ArrowRight className="h-5 w-5 text-muted-foreground rotate-90" />
+					</div>
 
 					{/* Tool scoring breakdown */}
 					<Card>
