@@ -1,8 +1,24 @@
 # Admin Tools Dashboard – Full Review (v3 five-panel layout)
 
+## System intent
+- Admin Tools is the control plane for routing: defines/edits tool metadata, tunes retrieval weights, audits correctness, runs evals, and promotes tools (review→live) used by the Hybrid Supervisor (intent → agent → tool).
+- Correctness requirements: deterministic lifecycle gating, reproducible eval results, transparent scoring and auditability, safe rollout phases for live routing.
+
+## Method
+- Read frontends (`pipeline-explorer-panel.tsx`, `tool-catalog-panel.tsx`, `tuning-panel.tsx`, `eval-panel.tsx`, `deploy-panel.tsx`).
+- Read backing routes under `/api/v1/admin/tool-settings/*` (debug-retrieval, eval, auto-loop, metadata audit, retrieval tuning, lifecycle).
+- Cross-check lifecycle, retrieval, and eval flows with supervisor registry and lifecycle services.
+
 ## Scope
 - Components reviewed: `pipeline-explorer-panel.tsx`, `tool-catalog-panel.tsx`, `tuning-panel.tsx`, `eval-panel.tsx`, `deploy-panel.tsx`.
 - Backing APIs: `/api/v1/admin/tool-settings/*` including `debug-retrieval`, eval/auto-loop, metadata audit, retrieval tuning.
+
+## Data/state dependencies to keep in mind
+- `search_space_id` must be set for most admin actions; UI sometimes allows null and silently no-ops.
+- Lifecycle gating (`respect_lifecycle=True`) filters tools to LIVE only; debug endpoints bypass this today.
+- Retrieval tuning object drives thresholds, rerank candidates, live routing phase, and adaptive feedback flags.
+- Metadata catalog uses optimistic locking via `expected_version_hash`; missing hash yields 409.
+- Audit/eval share tool registry and metadata overrides; stale caches can hide new tools until `clear_tool_caches()` or reload.
 
 ## Findings
 1) **Pipeline Explorer**
@@ -45,7 +61,21 @@
    - Display current lifecycle mode (`respect_lifecycle` on/off) and counts (LIVE vs REVIEW).
    - Prompt to run bulk-promote when review_count > 0 and lifecycle recently initialized.
 
+## Backend endpoints worth validating regularly
+- Retrieval: `debug-retrieval`, `tool-settings` (effective metadata + tuning), `tool-settings/metadata-catalog`.
+- Eval: `tool-settings/eval-library/*`, `tool-settings/eval-history`, `tool-settings/eval`, `tool-settings/api-input-eval`.
+- Auto-loop: `tool-settings/auto-loop` (start/status) plus `_sync_eval_to_lifecycle` side effects.
+- Lifecycle: `/admin/tool-lifecycle/*` (list/promote/bulk-promote) and `respect_lifecycle` flags in registries.
+- Audit: `tool-settings/metadata-audit` (run/suggestion/reset/stability locks).
+
+## Acceptance checks (manual)
+- Run `debug-retrieval` on a known weather query; verify intent/agent/tool align with live routing and namespace path matches tool_id.
+- In Catalog, edit metadata with a stale version hash to confirm 409 is surfaced; ensure duplicate categories still render uniquely.
+- Switch tuning phase from shadow→tool_gate and verify thresholds are applied in subsequent retrieval calls.
+- Start eval with category + difficulty; ensure batch mode completes >1 category and displays success rates; auto-loop iteration deltas visible.
+- Lifecycle tab shows LIVE/REVIEW counts and offers bulk promote when review_count > 0.
+
 ## Next Steps
 - Prioritize fixing `debug_retrieval` to reflect true pipeline decisions.
 - Patch UI keys for duplicated categories and show audit collisions.
-- Add minimal visibility for auto-loop applied changes and lifecycle mode.***
+- Add minimal visibility for auto-loop applied changes and lifecycle mode.
