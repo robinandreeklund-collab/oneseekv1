@@ -104,7 +104,7 @@ function HistoryTrendBars({
 	label: string;
 }) {
 	if (points.length === 0) {
-		return <p className="text-xs text-muted-foreground">Ingen historik \u00e4nnu.</p>;
+		return <p className="text-xs text-muted-foreground">Ingen historik ännu.</p>;
 	}
 	return (
 		<div className="space-y-2">
@@ -116,9 +116,9 @@ function HistoryTrendBars({
 					const normalized = Math.max(0.04, Math.min(1, numeric));
 					const runAt = String(point.run_at ?? "");
 					const evalName = String(point.eval_name ?? "");
-					const title = `${evalName || "Eval"} \u2022 ${
-						runAt ? new Date(runAt).toLocaleString("sv-SE") : "ok\u00e4nd tid"
-					} \u2022 ${formatPercent(numeric)}`;
+					const title = `${evalName || "Eval"} • ${
+						runAt ? new Date(runAt).toLocaleString("sv-SE") : "okänd tid"
+					} • ${formatPercent(numeric)}`;
 					return (
 						<div
 							key={`${valueKey}-${index}-${runAt}`}
@@ -202,7 +202,7 @@ function StageHistorySection({
 							</p>
 						</div>
 						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">K\u00f6rningar</p>
+							<p className="text-xs text-muted-foreground">Körningar</p>
 							<p className="text-sm font-medium">{history?.items?.length ?? 0}</p>
 						</div>
 					</div>
@@ -210,7 +210,7 @@ function StageHistorySection({
 					<HistoryTrendBars
 						points={history?.items ?? []}
 						valueKey="success_rate"
-						label="\u00d6vergripande success rate \u00f6ver tid"
+						label="Övergripande success rate över tid"
 					/>
 
 					{categoryOptions.length > 0 && (
@@ -248,7 +248,7 @@ function StageHistorySection({
 
 					{(history?.items ?? []).length > 0 && (
 						<div className="space-y-2">
-							<p className="text-sm font-medium">Historiska k\u00f6rningar</p>
+							<p className="text-sm font-medium">Historiska körningar</p>
 							<div className="max-h-48 overflow-auto space-y-1">
 								{[...(history?.items ?? [])]
 									.reverse()
@@ -259,11 +259,11 @@ function StageHistorySection({
 											className="rounded border p-2 text-xs space-y-0.5"
 										>
 											<p className="font-medium">
-												{item.eval_name || "Utan namn"} \u00b7{" "}
+												{item.eval_name || "Utan namn"} ·{" "}
 												{new Date(item.run_at).toLocaleString("sv-SE")}
 											</p>
 											<p className="text-muted-foreground">
-												Success: {formatPercent(item.success_rate)} \u00b7{" "}
+												Success: {formatPercent(item.success_rate)} ·{" "}
 												Tester: {item.passed_tests}/{item.total_tests}
 											</p>
 										</div>
@@ -415,7 +415,7 @@ export function OverviewTab() {
 			tool.success_rate < tool.required_success_rate
 		) {
 			toast.error(
-				`Verktyget n\u00e5r inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`,
+				`Verktyget når inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`,
 			);
 			return;
 		}
@@ -424,7 +424,7 @@ export function OverviewTab() {
 			setActionLoading(tool.tool_id);
 			await adminToolLifecycleApiService.updateToolStatus(tool.tool_id, {
 				status: newStatus,
-				notes: `Status \u00e4ndrad till ${newStatus}`,
+				notes: `Status ändrad till ${newStatus}`,
 			});
 			toast.success(`${tool.tool_id} satt till ${newStatus}`);
 			await fetchLifecycleData();
@@ -442,7 +442,7 @@ export function OverviewTab() {
 
 	const performRollback = async () => {
 		if (!rollbackTool || !rollbackNotes.trim()) {
-			toast.error("Ange en anledning f\u00f6r rollback");
+			toast.error("Ange en anledning för rollback");
 			return;
 		}
 
@@ -451,7 +451,7 @@ export function OverviewTab() {
 			await adminToolLifecycleApiService.rollbackTool(rollbackTool.tool_id, {
 				notes: rollbackNotes,
 			});
-			toast.success(`Rollback genomf\u00f6rd: ${rollbackTool.tool_id}`);
+			toast.success(`Rollback genomförd: ${rollbackTool.tool_id}`);
 			setRollbackTool(null);
 			setRollbackNotes("");
 			await fetchLifecycleData();
@@ -468,7 +468,7 @@ export function OverviewTab() {
 	const bulkPromoteToLive = async () => {
 		if (
 			!confirm(
-				`Befordra ALLA ${lifecycleData?.review_count || 0} review-verktyg till LIVE?\n\nDetta kringg\u00e5r tr\u00f6skelv\u00e4rden och \u00e4r avsett f\u00f6r initial migrering.`,
+				`Befordra ALLA ${lifecycleData?.review_count || 0} review-verktyg till LIVE?\n\nDetta kringgår tröskelvärden och är avsett för initial migrering.`,
 			)
 		) {
 			return;
@@ -509,10 +509,10 @@ export function OverviewTab() {
 	};
 
 	const getTooltipText = (tool: ToolLifecycleStatus): string => {
-		if (tool.status === "live") return "S\u00e4tt till review";
-		if (tool.success_rate === null) return "Ingen eval-data tillg\u00e4nglig";
+		if (tool.status === "live") return "Sätt till review";
+		if (tool.success_rate === null) return "Ingen eval-data tillgänglig";
 		if (tool.success_rate < tool.required_success_rate) {
-			return `Success rate f\u00f6r l\u00e5g: ${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%`;
+			return `Success rate för låg: ${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%`;
 		}
 		return "Befordra till live";
 	};
@@ -536,7 +536,7 @@ export function OverviewTab() {
 							<p
 								className={`text-xs ${agentDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
 							>
-								{formatSignedPercent(agentDelta)} vs f\u00f6reg\u00e5ende
+								{formatSignedPercent(agentDelta)} vs föregående
 							</p>
 						)}
 					</CardContent>
@@ -555,7 +555,7 @@ export function OverviewTab() {
 							<p
 								className={`text-xs ${toolDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
 							>
-								{formatSignedPercent(toolDelta)} vs f\u00f6reg\u00e5ende
+								{formatSignedPercent(toolDelta)} vs föregående
 							</p>
 						)}
 					</CardContent>
@@ -574,7 +574,7 @@ export function OverviewTab() {
 							<p
 								className={`text-xs ${apiInputDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
 							>
-								{formatSignedPercent(apiInputDelta)} vs f\u00f6reg\u00e5ende
+								{formatSignedPercent(apiInputDelta)} vs föregående
 							</p>
 						)}
 					</CardContent>
@@ -598,7 +598,7 @@ export function OverviewTab() {
 						<p className="text-xs text-muted-foreground">
 							Live / Total
 							{lifecycleData && lifecycleData.review_count > 0
-								? ` \u00b7 ${lifecycleData.review_count} under review`
+								? ` · ${lifecycleData.review_count} under review`
 								: ""}
 						</p>
 					</CardContent>
@@ -609,7 +609,7 @@ export function OverviewTab() {
 			{toolSettings?.latest_evaluation && (
 				<Card>
 					<CardHeader>
-						<CardTitle className="text-base">Senaste eval-k\u00f6rning</CardTitle>
+						<CardTitle className="text-base">Senaste eval-körning</CardTitle>
 					</CardHeader>
 					<CardContent className="grid gap-3 md:grid-cols-4 text-sm">
 						<div className="rounded border p-3">
@@ -621,7 +621,7 @@ export function OverviewTab() {
 							</p>
 						</div>
 						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Antal fr\u00e5gor</p>
+							<p className="text-xs text-muted-foreground">Antal frågor</p>
 							<p className="font-medium">
 								{toolSettings.latest_evaluation.total_tests}
 							</p>
@@ -664,7 +664,7 @@ export function OverviewTab() {
 						<TabsContent value="agent">
 							<StageHistorySection
 								title="Historik: Agentval"
-								description="Utveckling \u00f6ver tid f\u00f6r agent_accuracy och success rate, uppdelat per kategori."
+								description="Utveckling över tid för agent_accuracy och success rate, uppdelat per kategori."
 								history={agentEvalHistory}
 								selectedCategory={agentHistoryCategory}
 								onSelectCategory={setAgentHistoryCategory}
@@ -674,7 +674,7 @@ export function OverviewTab() {
 						<TabsContent value="tool">
 							<StageHistorySection
 								title="Historik: Toolval"
-								description="Utveckling \u00f6ver tid f\u00f6r tool_accuracy och success rate, uppdelat per kategori."
+								description="Utveckling över tid för tool_accuracy och success rate, uppdelat per kategori."
 								history={toolEvalHistory}
 								selectedCategory={toolHistoryCategory}
 								onSelectCategory={setToolHistoryCategory}
@@ -684,7 +684,7 @@ export function OverviewTab() {
 						<TabsContent value="api_input">
 							<StageHistorySection
 								title="Historik: API Input"
-								description="Utveckling \u00f6ver tid f\u00f6r api_input och success rate, uppdelat per kategori."
+								description="Utveckling över tid för api_input och success rate, uppdelat per kategori."
 								history={apiInputEvalHistory}
 								selectedCategory={apiInputHistoryCategory}
 								onSelectCategory={setApiInputHistoryCategory}
@@ -699,8 +699,8 @@ export function OverviewTab() {
 				<CardHeader>
 					<CardTitle>Lifecycle-status per verktyg</CardTitle>
 					<CardDescription>
-						Hantera review/live-status. Verktyg i review exkluderas fr\u00e5n produktion
-						i faser med tool_gate eller h\u00f6gre.
+						Hantera review/live-status. Verktyg i review exkluderas från produktion
+						i faser med tool_gate eller högre.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -708,7 +708,7 @@ export function OverviewTab() {
 						<div className="flex items-center gap-2 flex-1">
 							<Search className="h-4 w-4 text-muted-foreground" />
 							<Input
-								placeholder="S\u00f6k tool ID..."
+								placeholder="Sök tool ID..."
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
 								className="max-w-sm"
@@ -739,11 +739,11 @@ export function OverviewTab() {
 									<TableHead>Tool ID</TableHead>
 									<TableHead>Status</TableHead>
 									<TableHead>Success Rate</TableHead>
-									<TableHead>Tr\u00f6skelv\u00e4rde</TableHead>
+									<TableHead>Tröskelvärde</TableHead>
 									<TableHead>Senaste eval</TableHead>
-									<TableHead>\u00c4ndrad</TableHead>
+									<TableHead>Ändrad</TableHead>
 									<TableHead className="text-right">
-										\u00c5tg\u00e4rder
+										Åtgärder
 									</TableHead>
 								</TableRow>
 							</TableHeader>
@@ -756,7 +756,7 @@ export function OverviewTab() {
 										>
 											{searchQuery
 												? "Inga verktyg hittades"
-												: "Inga verktyg tillg\u00e4ngliga"}
+												: "Inga verktyg tillgängliga"}
 										</TableCell>
 									</TableRow>
 								) : (
@@ -802,7 +802,7 @@ export function OverviewTab() {
 												)}
 											</TableCell>
 											<TableCell>
-												\u2265
+												≥
 												{(
 													tool.required_success_rate * 100
 												).toFixed(0)}
@@ -921,17 +921,17 @@ export function OverviewTab() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Emergency Rollback</AlertDialogTitle>
 						<AlertDialogDescription>
-							S\u00e4tt tillbaka{" "}
+							Sätt tillbaka{" "}
 							<span className="font-mono font-semibold">
 								{rollbackTool?.tool_id}
 							</span>{" "}
-							till review-status. Detta tar omedelbart bort verktyget fr\u00e5n
+							till review-status. Detta tar omedelbart bort verktyget från
 							produktion.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<div className="py-4">
 						<label className="text-sm font-medium mb-2 block">
-							Anledning (kr\u00e4vs):
+							Anledning (krävs):
 						</label>
 						<Input
 							placeholder="T.ex. Verktyg orsakar fel i produktion"
@@ -959,7 +959,7 @@ export function OverviewTab() {
 									Rollback...
 								</>
 							) : (
-								"Bekr\u00e4fta Rollback"
+								"Bekräfta Rollback"
 							)}
 						</AlertDialogAction>
 					</AlertDialogFooter>

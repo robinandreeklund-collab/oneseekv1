@@ -22,7 +22,7 @@ const ADMIN_NAV_ITEMS = [
 		title: "Flow Overview",
 		href: "/admin/flow",
 		icon: GitBranch,
-		description: "Visuell vy av intent \u2192 agent \u2192 tool",
+		description: "Visuell vy av intent → agent → tool",
 	},
 	{
 		title: "Agent Prompts",
@@ -40,7 +40,7 @@ const ADMIN_NAV_ITEMS = [
 		title: "Debatt",
 		href: "/admin/debate",
 		icon: Mic,
-		description: "Debattl\u00e4ge och r\u00f6stdebatt (TTS)",
+		description: "Debattläge och röstdebatt (TTS)",
 	},
 	{
 		title: "Cache Management",

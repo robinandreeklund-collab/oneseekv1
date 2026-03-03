@@ -89,7 +89,7 @@ export function SuggestionDiffView({
 					onCheckedChange={(checked) => onToggleAll(!!checked)}
 				/>
 				<span className="text-sm font-medium">
-					{suggestions.length} f\u00f6rslag ({selectedIds.size} valda)
+					{suggestions.length} förslag ({selectedIds.size} valda)
 				</span>
 			</div>
 

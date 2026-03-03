@@ -62,8 +62,8 @@ function triggerVariant(
 }
 
 function statusArrow(oldStatus: string | null, newStatus: string): string {
-	if (!oldStatus) return `\u2192 ${newStatus}`;
-	return `${oldStatus} \u2192 ${newStatus}`;
+	if (!oldStatus) return `→ ${newStatus}`;
+	return `${oldStatus} → ${newStatus}`;
 }
 
 export function AuditTrail({ entries, isLoading }: AuditTrailProps) {
@@ -83,13 +83,13 @@ export function AuditTrail({ entries, isLoading }: AuditTrailProps) {
 			<CardHeader>
 				<CardTitle>Audit Trail</CardTitle>
 				<CardDescription>
-					Historik \u00f6ver lifecycle-\u00e4ndringar \u2014 vem, vad, n\u00e4r.
+					Historik över lifecycle-ändringar — vem, vad, när.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
 				{entries.length === 0 ? (
 					<p className="text-sm text-muted-foreground">
-						Ingen historik \u00e4nnu. \u00c4ndringar loggas automatiskt.
+						Ingen historik ännu. Ändringar loggas automatiskt.
 					</p>
 				) : (
 					<div className="space-y-2 max-h-96 overflow-auto">

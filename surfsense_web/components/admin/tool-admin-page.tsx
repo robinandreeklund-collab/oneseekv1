@@ -53,7 +53,7 @@ export function ToolAdminPage() {
 					Verktygsadministration
 				</h1>
 				<p className="text-muted-foreground mt-1">
-					Metadata, kalibrering och lifecycle f\u00f6r alla verktyg.
+					Metadata, kalibrering och lifecycle för alla verktyg.
 				</p>
 			</div>
 
@@ -61,8 +61,8 @@ export function ToolAdminPage() {
 				<AlertCircle className="h-4 w-4" />
 				<AlertDescription>
 					<strong>Metadata</strong> styr verklig tool_retrieval.{" "}
-					<strong>Kalibrering</strong> k\u00f6r audit, eval och optimering i dry-run.{" "}
-					<strong>\u00d6verblick</strong> visar status, trender och lifecycle.
+					<strong>Kalibrering</strong> kör audit, eval och optimering i dry-run.{" "}
+					<strong>Överblick</strong> visar status, trender och lifecycle.
 				</AlertDescription>
 			</Alert>
 
@@ -71,7 +71,7 @@ export function ToolAdminPage() {
 					<TabsTrigger value="metadata">Metadata</TabsTrigger>
 					<TabsTrigger value="calibration">Kalibrering</TabsTrigger>
 					<TabsTrigger value="overview">
-						\u00d6verblick &amp; Lifecycle
+						Överblick &amp; Lifecycle
 					</TabsTrigger>
 				</TabsList>
 
