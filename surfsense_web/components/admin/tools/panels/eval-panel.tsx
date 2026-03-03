@@ -60,15 +60,15 @@ interface BatchJob {
 
 class EvalPanelErrorBoundary extends React.Component<
 	{ children: React.ReactNode },
-	{ hasError: boolean; message?: string }
+	{ hasError: boolean; message?: string; stack?: string }
 > {
 	constructor(props: { children: React.ReactNode }) {
 		super(props);
-		this.state = { hasError: false, message: undefined };
+		this.state = { hasError: false, message: undefined, stack: undefined };
 	}
 
 	static getDerivedStateFromError(error: Error) {
-		return { hasError: true, message: error?.message };
+		return { hasError: true, message: error?.message, stack: error?.stack };
 	}
 
 	componentDidCatch(error: Error, info: React.ErrorInfo) {
@@ -84,8 +84,16 @@ class EvalPanelErrorBoundary extends React.Component<
 						<CardTitle className="text-base">Eval & Audit kunde inte laddas</CardTitle>
 						<CardDescription>Försök ladda om sidan eller kontrollera API-anslutningen.</CardDescription>
 					</CardHeader>
-					<CardContent className="text-sm text-muted-foreground">
-						{this.state.message || "Okänt fel i Eval-panelen"}
+					<CardContent className="text-sm text-muted-foreground space-y-2">
+						<p>{this.state.message || "Okänt fel i Eval-panelen"}</p>
+						{this.state.stack && (
+							<pre className="text-xs whitespace-pre-wrap rounded border p-2 bg-muted/50">
+								{this.state.stack}
+							</pre>
+						)}
+						<Button size="sm" variant="outline" onClick={() => this.setState({ hasError: false })}>
+							Försök igen
+						</Button>
 					</CardContent>
 				</Card>
 			);
