@@ -1,17 +1,6 @@
 "use client";
 
-/**
- * Överblick & Lifecycle tab — unified dashboard showing:
- *
- * 1. Key metrics cards (latest success rates per layer)
- * 2. Trend charts (agent, tool, api-input history)
- * 3. Lifecycle table with toggle, rollback, bulk promote
- * 4. Audit trail
- *
- * This replaces:
- * - /admin/lifecycle (standalone page)
- * - Stats: Agentval, Stats: Toolval, Stats: API Input (3 separate tabs)
- */
+/** Överblick tab — Nyckeltal, Trenddiagram, Lifecycle, Eval-historik, Audit Trail */
 
 import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -20,22 +9,15 @@ import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import {
 	Search,
 	CheckCircle2,
-	Clock,
 	ShieldAlert,
-	AlertCircle,
 	Loader2,
-	ToggleLeft,
-	ToggleRight,
-	TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
 	Card,
 	CardContent,
-	CardDescription,
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
@@ -75,9 +57,7 @@ import type { ToolEvaluationStageHistoryResponse } from "@/contracts/types/admin
 import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
 import { AuditTrail, type AuditTrailEntry } from "@/components/admin/shared/audit-trail";
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function formatPercent(value: number | null | undefined) {
 	if (value == null || Number.isNaN(value)) return "-";
@@ -90,9 +70,7 @@ function formatSignedPercent(value: number | null | undefined) {
 	return `${sign}${(value * 100).toFixed(1)}%`;
 }
 
-// ---------------------------------------------------------------------------
 // Trend bars sub-component
-// ---------------------------------------------------------------------------
 
 function HistoryTrendBars({
 	points,
@@ -104,12 +82,12 @@ function HistoryTrendBars({
 	label: string;
 }) {
 	if (points.length === 0) {
-		return <p className="text-xs text-muted-foreground">Ingen historik ännu.</p>;
+		return <p className="text-xs text-muted-foreground">Ingen historik.</p>;
 	}
 	return (
-		<div className="space-y-2">
+		<div className="space-y-1">
 			<p className="text-xs text-muted-foreground">{label}</p>
-			<div className="flex items-end gap-1 h-28 rounded border bg-muted/30 p-2">
+			<div className="flex items-end gap-0.5 h-16 rounded border bg-muted/30 p-1.5">
 				{points.map((point, index) => {
 					const raw = point[valueKey];
 					const numeric = typeof raw === "number" ? raw : 0;
@@ -117,12 +95,12 @@ function HistoryTrendBars({
 					const runAt = String(point.run_at ?? "");
 					const evalName = String(point.eval_name ?? "");
 					const title = `${evalName || "Eval"} • ${
-						runAt ? new Date(runAt).toLocaleString("sv-SE") : "okänd tid"
+						runAt ? new Date(runAt).toLocaleString("sv-SE") : "okand tid"
 					} • ${formatPercent(numeric)}`;
 					return (
 						<div
 							key={`${valueKey}-${index}-${runAt}`}
-							className="flex-1 min-w-[6px] rounded bg-primary/80 hover:bg-primary transition-colors"
+							className="flex-1 min-w-[4px] rounded-sm bg-primary/80 hover:bg-primary transition-colors"
 							style={{ height: `${Math.round(normalized * 100)}%` }}
 							title={title}
 						/>
@@ -133,9 +111,7 @@ function HistoryTrendBars({
 	);
 }
 
-// ---------------------------------------------------------------------------
-// Stage history section (collapsed version of the old stats tabs)
-// ---------------------------------------------------------------------------
+// Stage history section (compact)
 
 function StageHistorySection({
 	title,
@@ -171,115 +147,87 @@ function StageHistorySection({
 	}, [effectiveCategory, selectedCategory, onSelectCategory]);
 
 	return (
-		<div className="space-y-4">
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-base">{title}</CardTitle>
-					<CardDescription>{description}</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="grid gap-3 md:grid-cols-4">
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Senaste run</p>
-							<p className="text-sm font-medium">
-								{latest?.run_at
-									? new Date(latest.run_at).toLocaleString("sv-SE")
-									: "-"}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Success rate</p>
-							<p className="text-sm font-medium">
-								{formatPercent(latest?.success_rate)}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Stage-metric</p>
-							<p className="text-sm font-medium">
-								{latest?.stage_metric_name
-									? `${latest.stage_metric_name}: ${formatPercent(latest.stage_metric_value ?? null)}`
-									: "-"}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Körningar</p>
-							<p className="text-sm font-medium">{history?.items?.length ?? 0}</p>
-						</div>
-					</div>
+		<div className="space-y-3">
+			<div className="flex items-center gap-4 text-sm">
+				<span className="text-muted-foreground">
+					Senaste: {latest?.run_at ? new Date(latest.run_at).toLocaleString("sv-SE") : "-"}
+				</span>
+				<span className="text-muted-foreground">
+					Rate: {formatPercent(latest?.success_rate)}
+				</span>
+				<span className="text-muted-foreground">
+					Korningar: {history?.items?.length ?? 0}
+				</span>
+			</div>
 
-					<HistoryTrendBars
-						points={history?.items ?? []}
-						valueKey="success_rate"
-						label="Övergripande success rate över tid"
-					/>
+			{categoryOptions.length > 0 && (
+				<div className="flex items-center gap-2">
+					<Label htmlFor={`${history?.stage ?? "stage"}-overview-cat`} className="text-xs">
+						Kategori
+					</Label>
+					<select
+						id={`${history?.stage ?? "stage"}-overview-cat`}
+						className="h-8 rounded-md border bg-background px-2 text-xs"
+						value={effectiveCategory}
+						onChange={(event) => onSelectCategory(event.target.value)}
+					>
+						{categoryOptions.map((categoryId) => (
+							<option key={categoryId} value={categoryId}>
+								{categoryId}
+							</option>
+						))}
+					</select>
+				</div>
+			)}
 
-					{categoryOptions.length > 0 && (
-						<>
-							<div className="space-y-2">
-								<Label
-									htmlFor={`${history?.stage ?? "stage"}-overview-cat`}
-								>
-									Kategori
-								</Label>
-								<select
-									id={`${history?.stage ?? "stage"}-overview-cat`}
-									className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-									value={effectiveCategory}
-									onChange={(event) => onSelectCategory(event.target.value)}
-								>
-									{categoryOptions.map((categoryId) => (
-										<option key={categoryId} value={categoryId}>
-											{categoryId}
-										</option>
-									))}
-								</select>
-							</div>
-							<HistoryTrendBars
-								points={selectedSeries?.points ?? []}
-								valueKey="success_rate"
-								label={
-									effectiveCategory
-										? `Kategori ${effectiveCategory}: success rate`
-										: "Kategori-trend"
-								}
-							/>
-						</>
-					)}
+			{selectedSeries && (
+				<HistoryTrendBars
+					points={selectedSeries.points ?? []}
+					valueKey="success_rate"
+					label={effectiveCategory ? `Kategori: ${effectiveCategory}` : "Kategori-trend"}
+				/>
+			)}
 
-					{(history?.items ?? []).length > 0 && (
-						<div className="space-y-2">
-							<p className="text-sm font-medium">Historiska körningar</p>
-							<div className="max-h-48 overflow-auto space-y-1">
-								{[...(history?.items ?? [])]
-									.reverse()
-									.slice(0, 20)
-									.map((item, index) => (
-										<div
-											key={`${item.run_at}-${index}`}
-											className="rounded border p-2 text-xs space-y-0.5"
-										>
-											<p className="font-medium">
-												{item.eval_name || "Utan namn"} ·{" "}
-												{new Date(item.run_at).toLocaleString("sv-SE")}
-											</p>
-											<p className="text-muted-foreground">
-												Success: {formatPercent(item.success_rate)} ·{" "}
-												Tester: {item.passed_tests}/{item.total_tests}
-											</p>
-										</div>
-									))}
-							</div>
-						</div>
-					)}
-				</CardContent>
-			</Card>
+			{(history?.items ?? []).length > 0 && (
+				<div className="max-h-40 overflow-auto">
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead className="text-xs py-1">Tid</TableHead>
+								<TableHead className="text-xs py-1">Eval</TableHead>
+								<TableHead className="text-xs py-1">Rate</TableHead>
+								<TableHead className="text-xs py-1">Tester</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{[...(history?.items ?? [])]
+								.reverse()
+								.slice(0, 20)
+								.map((item, index) => (
+									<TableRow key={`${item.run_at}-${index}`}>
+										<TableCell className="text-xs py-1">
+											{new Date(item.run_at).toLocaleString("sv-SE")}
+										</TableCell>
+										<TableCell className="text-xs py-1 font-mono">
+											{item.eval_name || "-"}
+										</TableCell>
+										<TableCell className="text-xs py-1 tabular-nums">
+											{formatPercent(item.success_rate)}
+										</TableCell>
+										<TableCell className="text-xs py-1 tabular-nums">
+											{item.passed_tests}/{item.total_tests}
+										</TableCell>
+									</TableRow>
+								))}
+						</TableBody>
+					</Table>
+				</div>
+			)}
 		</div>
 	);
 }
 
-// ---------------------------------------------------------------------------
 // Main component
-// ---------------------------------------------------------------------------
 
 export function OverviewTab() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
@@ -289,22 +237,18 @@ export function OverviewTab() {
 		useState<ToolLifecycleListResponse | null>(null);
 	const [lifecycleLoading, setLifecycleLoading] = useState(true);
 	const [searchQuery, setSearchQuery] = useState("");
+	const [statusFilter, setStatusFilter] = useState<"all" | "live" | "review" | "ready">("all");
 	const [rollbackTool, setRollbackTool] = useState<ToolLifecycleStatus | null>(
 		null,
 	);
 	const [rollbackNotes, setRollbackNotes] = useState("");
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-	// Stats category selections
 	const [agentHistoryCategory, setAgentHistoryCategory] = useState("");
 	const [toolHistoryCategory, setToolHistoryCategory] = useState("");
 	const [apiInputHistoryCategory, setApiInputHistoryCategory] = useState("");
 	const [statsTab, setStatsTab] = useState("agent");
-
-	// Audit trail (placeholder — will be populated when backend endpoint exists)
 	const [auditEntries] = useState<AuditTrailEntry[]>([]);
-
-	// ---- Queries ----
 
 	const { data: toolSettings } = useQuery({
 		queryKey: ["admin-tool-settings"],
@@ -344,8 +288,6 @@ export function OverviewTab() {
 		enabled: !!currentUser && typeof searchSpaceId === "number",
 	});
 
-	// ---- Lifecycle data ----
-
 	useEffect(() => {
 		fetchLifecycleData();
 	}, []);
@@ -362,8 +304,6 @@ export function OverviewTab() {
 			setLifecycleLoading(false);
 		}
 	};
-
-	// ---- Lifecycle helpers ----
 
 	const latestAgentRate =
 		agentEvalHistory?.items && agentEvalHistory.items.length > 0
@@ -406,6 +346,14 @@ export function OverviewTab() {
 			? latestApiInputRate - prevApiInputRate
 			: null;
 
+	// Lifecycle rate from latest eval (for the 4th metric card)
+	const latestEvalRate = toolSettings?.latest_evaluation?.success_rate ?? null;
+
+	// Latest eval date for summary line
+	const latestEvalDate = toolSettings?.latest_evaluation?.run_at
+		? new Date(toolSettings.latest_evaluation.run_at).toLocaleString("sv-SE")
+		: null;
+
 	const toggleToolStatus = async (tool: ToolLifecycleStatus) => {
 		const newStatus = tool.status === "live" ? "review" : "live";
 
@@ -415,7 +363,7 @@ export function OverviewTab() {
 			tool.success_rate < tool.required_success_rate
 		) {
 			toast.error(
-				`Verktyget når inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`,
+				`Verktyget nar inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`,
 			);
 			return;
 		}
@@ -424,7 +372,7 @@ export function OverviewTab() {
 			setActionLoading(tool.tool_id);
 			await adminToolLifecycleApiService.updateToolStatus(tool.tool_id, {
 				status: newStatus,
-				notes: `Status ändrad till ${newStatus}`,
+				notes: `Status andrad till ${newStatus}`,
 			});
 			toast.success(`${tool.tool_id} satt till ${newStatus}`);
 			await fetchLifecycleData();
@@ -442,7 +390,7 @@ export function OverviewTab() {
 
 	const performRollback = async () => {
 		if (!rollbackTool || !rollbackNotes.trim()) {
-			toast.error("Ange en anledning för rollback");
+			toast.error("Ange en anledning for rollback");
 			return;
 		}
 
@@ -451,7 +399,7 @@ export function OverviewTab() {
 			await adminToolLifecycleApiService.rollbackTool(rollbackTool.tool_id, {
 				notes: rollbackNotes,
 			});
-			toast.success(`Rollback genomförd: ${rollbackTool.tool_id}`);
+			toast.success(`Rollback genomford: ${rollbackTool.tool_id}`);
 			setRollbackTool(null);
 			setRollbackNotes("");
 			await fetchLifecycleData();
@@ -494,13 +442,32 @@ export function OverviewTab() {
 		}
 	};
 
-	const filteredTools = useMemo(
-		() =>
-			lifecycleData?.tools.filter((tool) =>
+	const filteredTools = useMemo(() => {
+		let tools = lifecycleData?.tools ?? [];
+
+		// Text search filter
+		if (searchQuery) {
+			tools = tools.filter((tool) =>
 				tool.tool_id.toLowerCase().includes(searchQuery.toLowerCase()),
-			) || [],
-		[lifecycleData?.tools, searchQuery],
-	);
+			);
+		}
+
+		// Status filter
+		if (statusFilter === "live") {
+			tools = tools.filter((tool) => tool.status === "live");
+		} else if (statusFilter === "review") {
+			tools = tools.filter((tool) => tool.status !== "live");
+		} else if (statusFilter === "ready") {
+			tools = tools.filter(
+				(tool) =>
+					tool.status !== "live" &&
+					tool.success_rate !== null &&
+					tool.success_rate >= tool.required_success_rate,
+			);
+		}
+
+		return tools;
+	}, [lifecycleData?.tools, searchQuery, statusFilter]);
 
 	const canToggle = (tool: ToolLifecycleStatus): boolean => {
 		if (tool.status === "live") return true;
@@ -509,182 +476,343 @@ export function OverviewTab() {
 	};
 
 	const getTooltipText = (tool: ToolLifecycleStatus): string => {
-		if (tool.status === "live") return "Sätt till review";
-		if (tool.success_rate === null) return "Ingen eval-data tillgänglig";
+		if (tool.status === "live") return "Satt till review";
+		if (tool.success_rate === null) return "Ingen eval-data tillganglig";
 		if (tool.success_rate < tool.required_success_rate) {
-			return `Success rate för låg: ${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%`;
+			return `Success rate for lag: ${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%`;
 		}
 		return "Befordra till live";
+	};
+
+	// Action icon helper for lifecycle table
+	const getActionIcon = (tool: ToolLifecycleStatus) => {
+		if (tool.status === "live") return "rollback"; // show rollback icon
+		if (tool.success_rate !== null && tool.success_rate >= tool.required_success_rate) {
+			return "promote"; // ready to promote
+		}
+		return "blocked"; // under threshold
 	};
 
 	// ---- Render ----
 
 	return (
-		<div className="space-y-6">
-			{/* Key Metric Cards */}
-			<div className="grid gap-4 md:grid-cols-4">
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Agentval</CardTitle>
-						<TrendingUp className="h-4 w-4 text-muted-foreground" />
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold">
-							{formatPercent(latestAgentRate)}
-						</div>
-						{agentDelta !== null && (
-							<p
-								className={`text-xs ${agentDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
-							>
-								{formatSignedPercent(agentDelta)} vs föregående
-							</p>
-						)}
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Toolval</CardTitle>
-						<TrendingUp className="h-4 w-4 text-muted-foreground" />
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold">
-							{formatPercent(latestToolRate)}
-						</div>
-						{toolDelta !== null && (
-							<p
-								className={`text-xs ${toolDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
-							>
-								{formatSignedPercent(toolDelta)} vs föregående
-							</p>
-						)}
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">API Input</CardTitle>
-						<TrendingUp className="h-4 w-4 text-muted-foreground" />
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold">
-							{formatPercent(latestApiInputRate)}
-						</div>
-						{apiInputDelta !== null && (
-							<p
-								className={`text-xs ${apiInputDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
-							>
-								{formatSignedPercent(apiInputDelta)} vs föregående
-							</p>
-						)}
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Lifecycle</CardTitle>
-						{lifecycleLoading ? (
-							<Loader2 className="h-4 w-4 animate-spin" />
-						) : (
-							<CheckCircle2 className="h-4 w-4 text-emerald-600" />
-						)}
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold">
-							{lifecycleData
-								? `${lifecycleData.live_count}/${lifecycleData.total_count}`
-								: "-"}
-						</div>
-						<p className="text-xs text-muted-foreground">
-							Live / Total
-							{lifecycleData && lifecycleData.review_count > 0
-								? ` · ${lifecycleData.review_count} under review`
-								: ""}
-						</p>
-					</CardContent>
-				</Card>
-			</div>
-
-			{/* Latest eval info */}
-			{toolSettings?.latest_evaluation && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-base">Senaste eval-körning</CardTitle>
-					</CardHeader>
-					<CardContent className="grid gap-3 md:grid-cols-4 text-sm">
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Tidpunkt</p>
-							<p className="font-medium">
-								{new Date(
-									toolSettings.latest_evaluation.run_at,
-								).toLocaleString("sv-SE")}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Antal frågor</p>
-							<p className="font-medium">
-								{toolSettings.latest_evaluation.total_tests}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Passerade</p>
-							<p className="font-medium">
-								{toolSettings.latest_evaluation.passed_tests}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Success rate</p>
-							<p className="font-medium">
-								{(
-									toolSettings.latest_evaluation.success_rate * 100
-								).toFixed(1)}
-								%
-							</p>
-						</div>
-					</CardContent>
-				</Card>
-			)}
-
-			{/* Eval History Tabs — all 3 layers in one view */}
+		<div className="space-y-4">
+			{/* 1. Nyckeltal */}
 			<Card>
-				<CardHeader>
-					<CardTitle>Eval-historik</CardTitle>
-					<CardDescription>
-						Trender och historik per lager: agentval, toolval, API-input.
-					</CardDescription>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-base">Nyckeltal</CardTitle>
+				</CardHeader>
+				<CardContent className="space-y-3">
+					<div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+						{/* Agentval */}
+						<div className="rounded-lg border p-3 space-y-1">
+							<p className="text-xs text-muted-foreground">Agentval</p>
+							<p className="text-xl font-bold tabular-nums">
+								{formatPercent(latestAgentRate)}
+							</p>
+							{agentDelta !== null && (
+								<p className={`text-xs ${agentDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+									{agentDelta >= 0 ? "\u25B2" : "\u25BC"} {formatSignedPercent(agentDelta)}
+								</p>
+							)}
+						</div>
+						{/* Toolval */}
+						<div className="rounded-lg border p-3 space-y-1">
+							<p className="text-xs text-muted-foreground">Toolval</p>
+							<p className="text-xl font-bold tabular-nums">
+								{formatPercent(latestToolRate)}
+							</p>
+							{toolDelta !== null && (
+								<p className={`text-xs ${toolDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+									{toolDelta >= 0 ? "\u25B2" : "\u25BC"} {formatSignedPercent(toolDelta)}
+								</p>
+							)}
+						</div>
+						{/* API Input */}
+						<div className="rounded-lg border p-3 space-y-1">
+							<p className="text-xs text-muted-foreground">API Input</p>
+							<p className="text-xl font-bold tabular-nums">
+								{formatPercent(latestApiInputRate)}
+							</p>
+							{apiInputDelta !== null && (
+								<p className={`text-xs ${apiInputDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+									{apiInputDelta >= 0 ? "\u25B2" : "\u25BC"} {formatSignedPercent(apiInputDelta)}
+								</p>
+							)}
+						</div>
+						{/* Lifecycle */}
+						<div className="rounded-lg border p-3 space-y-1">
+							<p className="text-xs text-muted-foreground">Lifecycle</p>
+							<p className="text-xl font-bold tabular-nums">
+								{lifecycleData
+									? `${lifecycleData.live_count}/${lifecycleData.total_count}`
+									: "-"}
+							</p>
+							{lifecycleData && lifecycleData.review_count > 0 && (
+								<p className="text-xs text-muted-foreground">
+									{lifecycleData.review_count} under review
+								</p>
+							)}
+							{lifecycleLoading && (
+								<Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+							)}
+						</div>
+					</div>
+
+					{/* Summary line */}
+					<div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground border-t pt-2">
+						<span>
+							Live: <span className="font-medium text-foreground">{lifecycleData?.live_count ?? "-"}</span>
+						</span>
+						<span>
+							Review: <span className="font-medium text-foreground">{lifecycleData?.review_count ?? "-"}</span>
+						</span>
+						<span>
+							Total: <span className="font-medium text-foreground">{lifecycleData?.total_count ?? "-"}</span>
+						</span>
+						<span>
+							Senaste eval: <span className="font-medium text-foreground">{latestEvalDate ?? "-"}</span>
+						</span>
+						<span>
+							Fas: <span className="font-medium text-foreground">Shadow</span>
+						</span>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* 2. Trenddiagram (30 dagar) -- 2x2 grid */}
+			<Card>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-base">Trenddiagram (30 dagar)</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<div className="grid gap-3 grid-cols-1 md:grid-cols-2">
+						<HistoryTrendBars
+							points={agentEvalHistory?.items ?? []}
+							valueKey="success_rate"
+							label="Agentval"
+						/>
+						<HistoryTrendBars
+							points={toolEvalHistory?.items ?? []}
+							valueKey="success_rate"
+							label="Toolval"
+						/>
+						<HistoryTrendBars
+							points={apiInputEvalHistory?.items ?? []}
+							valueKey="success_rate"
+							label="API Input"
+						/>
+						<HistoryTrendBars
+							points={
+								// Combined/overall trend -- use agent as proxy if no combined data
+								agentEvalHistory?.items ?? []
+							}
+							valueKey="success_rate"
+							label="Overgripande"
+						/>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* 3. Lifecycle-status */}
+			<Card>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-base">Lifecycle-status</CardTitle>
+				</CardHeader>
+				<CardContent className="space-y-3">
+					<div className="flex items-center gap-3 flex-wrap">
+						<div className="flex items-center gap-2 flex-1 min-w-[200px]">
+							<Search className="h-4 w-4 text-muted-foreground shrink-0" />
+							<Input
+								placeholder="Sok verktyg..."
+								value={searchQuery}
+								onChange={(e) => setSearchQuery(e.target.value)}
+								className="h-8 text-sm"
+							/>
+						</div>
+						<select
+							className="h-8 rounded-md border bg-background px-2 text-xs"
+							value={statusFilter}
+							onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+						>
+							<option value="all">Alla</option>
+							<option value="live">Live</option>
+							<option value="review">Review</option>
+							<option value="ready">Redo att promota</option>
+						</select>
+						{lifecycleData && lifecycleData.review_count > 0 && (
+							<Button
+								onClick={bulkPromoteToLive}
+								variant="outline"
+								size="sm"
+								className="gap-1 text-xs h-8"
+								disabled={lifecycleLoading}
+							>
+								Promota alla redo
+							</Button>
+						)}
+					</div>
+
+					{lifecycleLoading ? (
+						<div className="flex items-center justify-center h-24">
+							<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+						</div>
+					) : (
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead className="text-xs">Verktyg</TableHead>
+									<TableHead className="text-xs">Status</TableHead>
+									<TableHead className="text-xs">Rate</TableHead>
+									<TableHead className="text-xs">Troskel</TableHead>
+									<TableHead className="text-xs text-right">Atgard</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{filteredTools.length === 0 ? (
+									<TableRow>
+										<TableCell
+											colSpan={5}
+											className="text-center text-sm text-muted-foreground"
+										>
+											{searchQuery
+												? "Inga verktyg hittades"
+												: "Inga verktyg tillgangliga"}
+										</TableCell>
+									</TableRow>
+								) : (
+									filteredTools.map((tool) => {
+										const action = getActionIcon(tool);
+										return (
+											<TableRow key={tool.tool_id}>
+												<TableCell className="font-mono text-xs py-2">
+													{tool.tool_id}
+												</TableCell>
+												<TableCell className="py-2">
+													<LifecycleBadge
+														status={tool.status === "live" ? "live" : "review"}
+														successRate={tool.success_rate}
+														requiredSuccessRate={tool.required_success_rate}
+														compact
+													/>
+												</TableCell>
+												<TableCell className="text-xs py-2 tabular-nums">
+													{tool.success_rate !== null ? (
+														<span className={tool.success_rate >= tool.required_success_rate ? "text-emerald-600" : "text-amber-600"}>
+															{(tool.success_rate * 100).toFixed(1)}%
+														</span>
+													) : (
+														<span className="text-muted-foreground">N/A</span>
+													)}
+												</TableCell>
+												<TableCell className="text-xs py-2 tabular-nums">
+													{(tool.required_success_rate * 100).toFixed(0)}%
+												</TableCell>
+												<TableCell className="text-right py-2">
+													<div className="flex items-center justify-end gap-1">
+														{action === "rollback" && (
+															<TooltipProvider>
+																<Tooltip>
+																	<TooltipTrigger asChild>
+																		<Button
+																			variant="ghost"
+																			size="sm"
+																			className="h-7 w-7 p-0"
+																			disabled={actionLoading === tool.tool_id}
+																			onClick={() => setRollbackTool(tool)}
+																		>
+																			<ShieldAlert className="h-3.5 w-3.5 text-red-600" />
+																		</Button>
+																	</TooltipTrigger>
+																	<TooltipContent>
+																		<p>Emergency rollback</p>
+																	</TooltipContent>
+																</Tooltip>
+															</TooltipProvider>
+														)}
+														{action === "promote" && (
+															<TooltipProvider>
+																<Tooltip>
+																	<TooltipTrigger asChild>
+																		<Button
+																			variant="ghost"
+																			size="sm"
+																			className="h-7 w-7 p-0"
+																			disabled={actionLoading === tool.tool_id}
+																			onClick={() => toggleToolStatus(tool)}
+																		>
+																			{actionLoading === tool.tool_id ? (
+																				<Loader2 className="h-3.5 w-3.5 animate-spin" />
+																			) : (
+																				<CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+																			)}
+																		</Button>
+																	</TooltipTrigger>
+																	<TooltipContent>
+																		<p>Befordra till live</p>
+																	</TooltipContent>
+																</Tooltip>
+															</TooltipProvider>
+														)}
+														{action === "blocked" && (
+															<span className="text-xs text-muted-foreground px-1">&mdash;</span>
+														)}
+													</div>
+												</TableCell>
+											</TableRow>
+										);
+									})
+								)}
+							</TableBody>
+						</Table>
+					)}
+
+					{/* Legend */}
+					<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground border-t pt-2">
+						<span><CheckCircle2 className="inline h-3 w-3 text-emerald-600" /> = Redo att promota</span>
+						<span><ShieldAlert className="inline h-3 w-3 text-red-600" /> = Emergency rollback</span>
+						<span>&mdash; = Under troskel</span>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* 4. Eval-historik (tabbed detail) */}
+			<Card>
+				<CardHeader className="pb-3">
+					<CardTitle className="text-base">Eval-historik</CardTitle>
 				</CardHeader>
 				<CardContent>
 					<Tabs value={statsTab} onValueChange={setStatsTab}>
-						<TabsList>
-							<TabsTrigger value="agent">Agentval</TabsTrigger>
-							<TabsTrigger value="tool">Toolval</TabsTrigger>
-							<TabsTrigger value="api_input">API Input</TabsTrigger>
+						<TabsList className="h-8">
+							<TabsTrigger value="agent" className="text-xs">Agentval</TabsTrigger>
+							<TabsTrigger value="tool" className="text-xs">Toolval</TabsTrigger>
+							<TabsTrigger value="api_input" className="text-xs">API Input</TabsTrigger>
 						</TabsList>
 
-						<TabsContent value="agent">
+						<TabsContent value="agent" className="mt-3">
 							<StageHistorySection
 								title="Historik: Agentval"
-								description="Utveckling över tid för agent_accuracy och success rate, uppdelat per kategori."
+								description="Utveckling over tid for agent_accuracy och success rate."
 								history={agentEvalHistory}
 								selectedCategory={agentHistoryCategory}
 								onSelectCategory={setAgentHistoryCategory}
 							/>
 						</TabsContent>
 
-						<TabsContent value="tool">
+						<TabsContent value="tool" className="mt-3">
 							<StageHistorySection
 								title="Historik: Toolval"
-								description="Utveckling över tid för tool_accuracy och success rate, uppdelat per kategori."
+								description="Utveckling over tid for tool_accuracy och success rate."
 								history={toolEvalHistory}
 								selectedCategory={toolHistoryCategory}
 								onSelectCategory={setToolHistoryCategory}
 							/>
 						</TabsContent>
 
-						<TabsContent value="api_input">
+						<TabsContent value="api_input" className="mt-3">
 							<StageHistorySection
 								title="Historik: API Input"
-								description="Utveckling över tid för api_input och success rate, uppdelat per kategori."
+								description="Utveckling over tid for api_input och success rate."
 								history={apiInputEvalHistory}
 								selectedCategory={apiInputHistoryCategory}
 								onSelectCategory={setApiInputHistoryCategory}
@@ -694,222 +822,7 @@ export function OverviewTab() {
 				</CardContent>
 			</Card>
 
-			{/* Lifecycle Table */}
-			<Card>
-				<CardHeader>
-					<CardTitle>Lifecycle-status per verktyg</CardTitle>
-					<CardDescription>
-						Hantera review/live-status. Verktyg i review exkluderas från produktion
-						i faser med tool_gate eller högre.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="flex items-center justify-between gap-4">
-						<div className="flex items-center gap-2 flex-1">
-							<Search className="h-4 w-4 text-muted-foreground" />
-							<Input
-								placeholder="Sök tool ID..."
-								value={searchQuery}
-								onChange={(e) => setSearchQuery(e.target.value)}
-								className="max-w-sm"
-							/>
-						</div>
-
-						{lifecycleData && lifecycleData.review_count > 0 && (
-							<Button
-								onClick={bulkPromoteToLive}
-								variant="outline"
-								className="gap-2"
-								disabled={lifecycleLoading}
-							>
-								<CheckCircle2 className="h-4 w-4" />
-								Befordra alla till Live ({lifecycleData.review_count})
-							</Button>
-						)}
-					</div>
-
-					{lifecycleLoading ? (
-						<div className="flex items-center justify-center h-32">
-							<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-						</div>
-					) : (
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>Tool ID</TableHead>
-									<TableHead>Status</TableHead>
-									<TableHead>Success Rate</TableHead>
-									<TableHead>Tröskelvärde</TableHead>
-									<TableHead>Senaste eval</TableHead>
-									<TableHead>Ändrad</TableHead>
-									<TableHead className="text-right">
-										Åtgärder
-									</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{filteredTools.length === 0 ? (
-									<TableRow>
-										<TableCell
-											colSpan={7}
-											className="text-center text-muted-foreground"
-										>
-											{searchQuery
-												? "Inga verktyg hittades"
-												: "Inga verktyg tillgängliga"}
-										</TableCell>
-									</TableRow>
-								) : (
-									filteredTools.map((tool) => (
-										<TableRow key={tool.tool_id}>
-											<TableCell className="font-mono text-sm">
-												{tool.tool_id}
-											</TableCell>
-											<TableCell>
-												<LifecycleBadge
-													status={
-														tool.status === "live"
-															? "live"
-															: "review"
-													}
-													successRate={tool.success_rate}
-													requiredSuccessRate={
-														tool.required_success_rate
-													}
-													compact
-												/>
-											</TableCell>
-											<TableCell>
-												{tool.success_rate !== null ? (
-													<div className="flex items-center gap-2">
-														<span>
-															{(
-																tool.success_rate * 100
-															).toFixed(1)}
-															%
-														</span>
-														{tool.success_rate >=
-														tool.required_success_rate ? (
-															<CheckCircle2 className="h-4 w-4 text-emerald-600" />
-														) : (
-															<AlertCircle className="h-4 w-4 text-amber-600" />
-														)}
-													</div>
-												) : (
-													<span className="text-muted-foreground">
-														N/A
-													</span>
-												)}
-											</TableCell>
-											<TableCell>
-												≥
-												{(
-													tool.required_success_rate * 100
-												).toFixed(0)}
-												%
-											</TableCell>
-											<TableCell>
-												{tool.last_eval_at ? (
-													<span className="text-sm text-muted-foreground">
-														{new Date(
-															tool.last_eval_at,
-														).toLocaleDateString("sv-SE")}
-													</span>
-												) : (
-													<span className="text-muted-foreground">
-														Aldrig
-													</span>
-												)}
-											</TableCell>
-											<TableCell>
-												<span className="text-sm text-muted-foreground">
-													{new Date(
-														tool.changed_at,
-													).toLocaleDateString("sv-SE")}
-												</span>
-											</TableCell>
-											<TableCell className="text-right">
-												<div className="flex items-center justify-end gap-2">
-													<TooltipProvider>
-														<Tooltip>
-															<TooltipTrigger asChild>
-																<Button
-																	variant="ghost"
-																	size="sm"
-																	disabled={
-																		!canToggle(
-																			tool,
-																		) ||
-																		actionLoading ===
-																			tool.tool_id
-																	}
-																	onClick={() =>
-																		toggleToolStatus(
-																			tool,
-																		)
-																	}
-																>
-																	{actionLoading ===
-																	tool.tool_id ? (
-																		<Loader2 className="h-4 w-4 animate-spin" />
-																	) : tool.status ===
-																		"live" ? (
-																		<ToggleRight className="h-4 w-4" />
-																	) : (
-																		<ToggleLeft className="h-4 w-4" />
-																	)}
-																</Button>
-															</TooltipTrigger>
-															<TooltipContent>
-																<p>
-																	{getTooltipText(
-																		tool,
-																	)}
-																</p>
-															</TooltipContent>
-														</Tooltip>
-													</TooltipProvider>
-
-													{tool.status === "live" && (
-														<TooltipProvider>
-															<Tooltip>
-																<TooltipTrigger asChild>
-																	<Button
-																		variant="ghost"
-																		size="sm"
-																		disabled={
-																			actionLoading ===
-																			tool.tool_id
-																		}
-																		onClick={() =>
-																			setRollbackTool(
-																				tool,
-																			)
-																		}
-																	>
-																		<ShieldAlert className="h-4 w-4 text-red-600" />
-																	</Button>
-																</TooltipTrigger>
-																<TooltipContent>
-																	<p>
-																		Emergency rollback
-																	</p>
-																</TooltipContent>
-															</Tooltip>
-														</TooltipProvider>
-													)}
-												</div>
-											</TableCell>
-										</TableRow>
-									))
-								)}
-							</TableBody>
-						</Table>
-					)}
-				</CardContent>
-			</Card>
-
-			{/* Audit Trail */}
+			{/* 5. Audit Trail */}
 			<AuditTrail entries={auditEntries} />
 
 			{/* Emergency Rollback Dialog */}
@@ -921,17 +834,17 @@ export function OverviewTab() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Emergency Rollback</AlertDialogTitle>
 						<AlertDialogDescription>
-							Sätt tillbaka{" "}
+							Satt tillbaka{" "}
 							<span className="font-mono font-semibold">
 								{rollbackTool?.tool_id}
 							</span>{" "}
-							till review-status. Detta tar omedelbart bort verktyget från
+							till review-status. Detta tar omedelbart bort verktyget fran
 							produktion.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<div className="py-4">
 						<label className="text-sm font-medium mb-2 block">
-							Anledning (krävs):
+							Anledning (kravs):
 						</label>
 						<Input
 							placeholder="T.ex. Verktyg orsakar fel i produktion"
@@ -959,7 +872,7 @@ export function OverviewTab() {
 									Rollback...
 								</>
 							) : (
-								"Bekräfta Rollback"
+								"Bekrafta Rollback"
 							)}
 						</AlertDialogAction>
 					</AlertDialogFooter>
