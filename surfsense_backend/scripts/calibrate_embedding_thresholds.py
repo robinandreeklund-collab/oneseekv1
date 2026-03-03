@@ -145,15 +145,71 @@ def _percentile(values: list[float], pct: float) -> float:
     return sorted_values[floor_k] * (1 - d) + sorted_values[ceil_k] * d
 
 
+def _build_stub_registry() -> dict:
+    """Build a lightweight tool registry without DB or service dependencies.
+
+    Creates ``StructuredTool`` stubs from all known ``*_TOOL_DEFINITIONS``
+    lists and the ``BUILTIN_TOOLS`` registry so that ``build_tool_index``
+    receives the same tool IDs it would at runtime.
+    """
+    from langchain_core.tools import StructuredTool
+
+    from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS
+    from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
+    from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+    from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
+    from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.registry import BUILTIN_TOOLS
+    from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+
+    def _noop(**kwargs):  # noqa: ARG001
+        return "stub"
+
+    registry: dict[str, StructuredTool] = {}
+
+    # Domain tool definitions (SCB, Kolada, SMHI, etc.)
+    for definitions in [
+        SCB_TOOL_DEFINITIONS,
+        KOLADA_TOOL_DEFINITIONS,
+        SKOLVERKET_TOOL_DEFINITIONS,
+        BOLAGSVERKET_TOOL_DEFINITIONS,
+        TRAFIKVERKET_TOOL_DEFINITIONS,
+        SMHI_TOOL_DEFINITIONS,
+        GEOAPIFY_TOOL_DEFINITIONS,
+        RIKSDAGEN_TOOL_DEFINITIONS,
+        MARKETPLACE_TOOL_DEFINITIONS,
+    ]:
+        for defn in definitions:
+            tool_id = defn.tool_id
+            registry[tool_id] = StructuredTool.from_function(
+                func=_noop,
+                name=getattr(defn, "name", tool_id),
+                description=getattr(defn, "description", ""),
+            )
+
+    # Built-in tools from registry (knowledge_base, podcast, link_preview …)
+    for tool_def in BUILTIN_TOOLS:
+        if tool_def.name not in registry:
+            registry[tool_def.name] = StructuredTool.from_function(
+                func=_noop,
+                name=tool_def.name,
+                description=tool_def.description,
+            )
+
+    return registry
+
+
 def run_calibration(args: argparse.Namespace) -> dict:
     # Import order matters — load config and the tools registry first so that
     # the circular dependency chain (bigtool_store → kolada_tools → tools →
     # registry → kolada_tools) is resolved before we touch bigtool_store.
     from app.config import config  # noqa: E402
-    from app.agents.new_chat.tools.registry import build_tools  # noqa: E402
+    import app.agents.new_chat.tools.registry  # noqa: E402, F401 — trigger module load
     from app.agents.new_chat.bigtool_store import (  # noqa: E402
         DEFAULT_TOOL_RETRIEVAL_TUNING,
-        ToolIndexEntry,
         _normalize_vector,
         _score_entry_components,
         build_tool_index,
@@ -177,10 +233,10 @@ def run_calibration(args: argparse.Namespace) -> dict:
     logger.info("  Smoke test OK — %d-dim vector", len(test_vec))
 
     # -----------------------------------------------------------------------
-    # 2. Build tool index (all tools, no metadata overrides)
+    # 2. Build tool index (stub tools — no DB/services required)
     # -----------------------------------------------------------------------
     logger.info("Building tool index...")
-    tool_registry = build_tools()
+    tool_registry = _build_stub_registry()
     tool_index = build_tool_index(tool_registry)
     logger.info("  %d tools in index", len(tool_index))
 
