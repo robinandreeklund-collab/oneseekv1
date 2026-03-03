@@ -146,18 +146,18 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def run_calibration(args: argparse.Namespace) -> dict:
-    from app.agents.new_chat.bigtool_store import (
+    # Import order matters — load config and the tools registry first so that
+    # the circular dependency chain (bigtool_store → kolada_tools → tools →
+    # registry → kolada_tools) is resolved before we touch bigtool_store.
+    from app.config import config  # noqa: E402
+    from app.agents.new_chat.tools.registry import build_tools  # noqa: E402
+    from app.agents.new_chat.bigtool_store import (  # noqa: E402
         DEFAULT_TOOL_RETRIEVAL_TUNING,
         ToolIndexEntry,
-        _cosine_similarity as _cosine_sim_impl,
-        _get_embedding_for_tool,
         _normalize_vector,
         _score_entry_components,
         build_tool_index,
-        namespace_for_tool,
     )
-    from app.agents.new_chat.tools.registry import build_tools
-    from app.config import config
     from app.utils.text import normalize_text, tokenize
 
     # -----------------------------------------------------------------------
