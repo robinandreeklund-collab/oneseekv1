@@ -20,7 +20,7 @@ import {
 	XCircle,
 	Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EvalJobStatusCard } from "@/components/admin/shared/eval-job-status-card";
 import { formatPercent, useToolCatalog } from "@/components/admin/tools/hooks/use-tool-catalog";
@@ -56,6 +56,42 @@ interface BatchJob {
 	status: "pending" | "running" | "completed" | "failed";
 	successRate: number | null;
 	error: string | null;
+}
+
+class EvalPanelErrorBoundary extends React.Component<
+	{ children: React.ReactNode },
+	{ hasError: boolean; message?: string }
+> {
+	constructor(props: { children: React.ReactNode }) {
+		super(props);
+		this.state = { hasError: false, message: undefined };
+	}
+
+	static getDerivedStateFromError(error: Error) {
+		return { hasError: true, message: error?.message };
+	}
+
+	componentDidCatch(error: Error, info: React.ErrorInfo) {
+		// Log to console to aid debugging without crashing the whole dashboard.
+		console.error("Eval & Audit panel crashed", error, info);
+	}
+
+	render() {
+		if (this.state.hasError) {
+			return (
+				<Card>
+					<CardHeader className="pb-2">
+						<CardTitle className="text-base">Eval & Audit kunde inte laddas</CardTitle>
+						<CardDescription>Försök ladda om sidan eller kontrollera API-anslutningen.</CardDescription>
+					</CardHeader>
+					<CardContent className="text-sm text-muted-foreground">
+						{this.state.message || "Okänt fel i Eval-panelen"}
+					</CardContent>
+				</Card>
+			);
+		}
+		return this.props.children;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -917,10 +953,12 @@ export function EvalPanel() {
 	}
 
 	return (
-		<div className="space-y-6">
-			<AuditSection searchSpaceId={searchSpaceId} />
-			<EvalSection searchSpaceId={searchSpaceId} />
-			<AutoLoopSection searchSpaceId={searchSpaceId} />
-		</div>
+		<EvalPanelErrorBoundary>
+			<div className="space-y-6">
+				<AuditSection searchSpaceId={searchSpaceId} />
+				<EvalSection searchSpaceId={searchSpaceId} />
+				<AutoLoopSection searchSpaceId={searchSpaceId} />
+			</div>
+		</EvalPanelErrorBoundary>
 	);
 }
