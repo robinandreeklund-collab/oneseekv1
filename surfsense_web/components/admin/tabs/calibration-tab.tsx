@@ -3,10 +3,12 @@
 /**
  * CalibrationTab — Flik 2: Kalibrering
  *
+ * Fas-panel ÖVERST visar live routing-fas (Shadow → Tool gate → Agent auto → Adaptive → Intent finetune).
+ *
  * Guidat 3-stegsflöde:
- *   Steg 1: Metadata Audit (delegerar till MetadataCatalogTab)
- *   Steg 2: Eval (generering + agentval eval + API input eval + resultat)
- *   Steg 3: Auto-optimering (auto-loop med holdout)
+ *   Steg 1: Metadata Audit (egen audit-sektion med 3-layer accuracy + kollisionsrapport)
+ *   Steg 2: Eval (generering + agentval eval + API input eval + resultat + diff-vy)
+ *   Steg 3: Auto-optimering (auto-loop med holdout + lifecycle-promotion)
  *
  * Extracted from tool-settings-page.tsx (5283 lines — DEPRECATED)
  */
@@ -18,6 +20,8 @@ import { useAtomValue } from "jotai";
 import { stringify as stringifyYaml } from "yaml";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
 import type {
+	MetadataCatalogAuditRunResponse,
+	MetadataCatalogSeparationResponse,
 	ToolAutoLoopDraftPromptItem,
 	ToolApiInputEvaluationJobStatusResponse,
 	ToolApiInputEvaluationResponse,
@@ -31,6 +35,7 @@ import type {
 	ToolRetrievalTuning,
 } from "@/contracts/types/admin-tool-settings.types";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
+import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -45,9 +50,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, Download, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { MetadataCatalogTab } from "@/components/admin/metadata-catalog-tab";
+import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
+import { SuggestionDiffView, type SuggestionDiffItem } from "@/components/admin/shared/suggestion-diff-view";
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -363,6 +369,17 @@ export function CalibrationTab() {
 		useState(false);
 	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
 
+	// --- Audit state (Steg 1 — egen audit, ingen MetadataCatalogTab-wrapping) ---
+	const [isRunningAudit, setIsRunningAudit] = useState(false);
+	const [auditResult, setAuditResult] = useState<MetadataCatalogAuditRunResponse | null>(null);
+	const [isRunningSeparation, setIsRunningSeparation] = useState(false);
+	const [separationResult, setSeparationResult] = useState<MetadataCatalogSeparationResponse | null>(null);
+	const [auditMaxTools, setAuditMaxTools] = useState(25);
+	const [auditRetrievalLimit, setAuditRetrievalLimit] = useState(5);
+
+	// --- Lifecycle promotion state ---
+	const [isPromoting, setIsPromoting] = useState(false);
+
 	// ---------------------------------------------------------------------------
 	// Queries
 	// ---------------------------------------------------------------------------
@@ -420,6 +437,12 @@ export function CalibrationTab() {
 			if (!status) return 1400;
 			return status === "pending" || status === "running" ? 1400 : false;
 		},
+	});
+
+	const { data: lifecycleData, refetch: refetchLifecycle } = useQuery({
+		queryKey: ["admin-tool-lifecycle"],
+		queryFn: () => adminToolLifecycleApiService.getToolLifecycleList(),
+		enabled: !!currentUser,
 	});
 
 	// ---------------------------------------------------------------------------
@@ -500,6 +523,40 @@ export function CalibrationTab() {
 			) ?? [],
 		[evaluationResult?.suggestions, selectedSuggestionIds]
 	);
+
+	const suggestionDiffItems: SuggestionDiffItem[] = useMemo(() => {
+		if (!evaluationResult?.suggestions) return [];
+		return evaluationResult.suggestions.map((suggestion) => {
+			const fields: SuggestionDiffItem["fields"] = [];
+			if (suggestion.current_metadata.description !== suggestion.proposed_metadata.description) {
+				fields.push({
+					field: "description",
+					oldValue: suggestion.current_metadata.description,
+					newValue: suggestion.proposed_metadata.description,
+				});
+			}
+			const currentKw = new Set(suggestion.current_metadata.keywords);
+			const proposedKw = new Set(suggestion.proposed_metadata.keywords);
+			const addedKw = suggestion.proposed_metadata.keywords.filter((k) => !currentKw.has(k));
+			const removedKw = suggestion.current_metadata.keywords.filter((k) => !proposedKw.has(k));
+			if (addedKw.length || removedKw.length) {
+				fields.push({ field: "keywords", added: addedKw, removed: removedKw });
+			}
+			const currentEx = new Set(suggestion.current_metadata.example_queries ?? []);
+			const proposedEx = new Set(suggestion.proposed_metadata.example_queries ?? []);
+			const addedEx = (suggestion.proposed_metadata.example_queries ?? []).filter((q) => !currentEx.has(q));
+			const removedEx = (suggestion.current_metadata.example_queries ?? []).filter((q) => !proposedEx.has(q));
+			if (addedEx.length || removedEx.length) {
+				fields.push({ field: "example_queries", added: addedEx, removed: removedEx });
+			}
+			return {
+				toolId: suggestion.tool_id,
+				toolName: suggestion.tool_id,
+				fields,
+				validationStatus: "ok" as const,
+			};
+		});
+	}, [evaluationResult?.suggestions]);
 
 	const selectedPromptSuggestions = useMemo(
 		() =>
@@ -1361,6 +1418,61 @@ export function CalibrationTab() {
 	};
 
 	// ---------------------------------------------------------------------------
+	// Audit handlers (Steg 1 — egen audit)
+	// ---------------------------------------------------------------------------
+
+	const handleRunAudit = async () => {
+		setIsRunningAudit(true);
+		try {
+			const result = await adminToolSettingsApiService.runMetadataCatalogAudit({
+				search_space_id: data?.search_space_id,
+				metadata_patch: includeDraftMetadata ? metadataPatch : [],
+				max_tools: auditMaxTools,
+				retrieval_limit: auditRetrievalLimit,
+			});
+			setAuditResult(result);
+			toast.success(
+				`Audit klar: Intent ${(result.summary.intent_accuracy * 100).toFixed(1)}% · Agent ${(result.summary.agent_accuracy * 100).toFixed(1)}% · Tool ${(result.summary.tool_accuracy * 100).toFixed(1)}%`
+			);
+		} catch (_error) {
+			toast.error("Audit misslyckades");
+		} finally {
+			setIsRunningAudit(false);
+		}
+	};
+
+	const handleRunSeparation = async () => {
+		setIsRunningSeparation(true);
+		try {
+			const result = await adminToolSettingsApiService.runMetadataCatalogSeparation({
+				search_space_id: data?.search_space_id,
+				metadata_patch: includeDraftMetadata ? metadataPatch : [],
+				max_tools: auditMaxTools,
+				retrieval_limit: auditRetrievalLimit,
+			});
+			setSeparationResult(result);
+			toast.success("Separation klar");
+		} catch (_error) {
+			toast.error("Separation misslyckades");
+		} finally {
+			setIsRunningSeparation(false);
+		}
+	};
+
+	const handleBulkPromote = async () => {
+		setIsPromoting(true);
+		try {
+			await adminToolLifecycleApiService.bulkPromoteToLive();
+			await refetchLifecycle();
+			toast.success("Kvalificerade verktyg befordrade till Live");
+		} catch (_error) {
+			toast.error("Kunde inte befordra verktyg");
+		} finally {
+			setIsPromoting(false);
+		}
+	};
+
+	// ---------------------------------------------------------------------------
 	// Render
 	// ---------------------------------------------------------------------------
 
@@ -1386,6 +1498,62 @@ export function CalibrationTab() {
 
 	return (
 		<div className="space-y-6">
+			{/* ================================================================ */}
+			{/* FAS-PANEL ÖVERST                                                */}
+			{/* ================================================================ */}
+			<Card>
+				<CardHeader>
+					<CardTitle>Fas-panel</CardTitle>
+					<CardDescription>
+						Live routing-fas, embedding-modell och antal verktyg.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div className="flex flex-wrap items-center gap-2">
+						{(["shadow", "tool_gate", "agent_auto", "adaptive", "intent_finetune"] as const).map(
+							(phase) => {
+								const currentPhase = draftRetrievalTuning?.live_routing_phase ?? data?.retrieval_tuning?.live_routing_phase ?? "shadow";
+								const isActive = phase === currentPhase;
+								const labels: Record<string, string> = {
+									shadow: "Shadow",
+									tool_gate: "Tool gate",
+									agent_auto: "Agent auto",
+									adaptive: "Adaptive",
+									intent_finetune: "Intent finetune",
+								};
+								return (
+									<Badge
+										key={phase}
+										variant={isActive ? "default" : "outline"}
+										className={isActive ? "bg-green-600 hover:bg-green-700" : ""}
+									>
+										{isActive ? "●" : "○"} {labels[phase]}
+									</Badge>
+								);
+							}
+						)}
+					</div>
+					<div className="grid gap-3 md:grid-cols-3 text-sm">
+						<div className="rounded border p-3">
+							<p className="text-xs text-muted-foreground">Metadata version</p>
+							<p className="font-medium font-mono text-xs">{data?.metadata_version_hash?.slice(0, 12) ?? "-"}</p>
+						</div>
+						<div className="rounded border p-3">
+							<p className="text-xs text-muted-foreground">Antal verktyg</p>
+							<p className="font-medium">
+								{data?.categories?.reduce((sum, cat) => sum + cat.tools.length, 0) ?? 0}
+							</p>
+						</div>
+						<div className="rounded border p-3">
+							<p className="text-xs text-muted-foreground">Lifecycle</p>
+							<p className="font-medium">
+								{lifecycleData?.live_count ?? 0} Live / {lifecycleData?.review_count ?? 0} Review
+							</p>
+						</div>
+					</div>
+				</CardContent>
+			</Card>
+
 			{/* Guided 3-step navigation */}
 			<Card>
 				<CardHeader>
@@ -1411,10 +1579,238 @@ export function CalibrationTab() {
 			</Card>
 
 			{/* ================================================================ */}
-			{/* STEG 1: METADATA AUDIT                                          */}
+			{/* STEG 1: METADATA AUDIT (egen audit — inte MetadataCatalogTab)    */}
 			{/* ================================================================ */}
 			{calibrationStep === "audit" && (
-				<MetadataCatalogTab searchSpaceId={data?.search_space_id} />
+				<div className="space-y-6">
+					{/* Audit controls */}
+					<Card>
+						<CardHeader>
+							<CardTitle>Metadata Audit</CardTitle>
+							<CardDescription>
+								Kör en 3-layer audit (intent, agent, tool) med probe-frågor
+								och analysera kollisioner.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-4">
+							<div className="flex flex-wrap items-center gap-3">
+								<div className="flex items-center gap-2">
+									<Label htmlFor="audit-max-tools">Max verktyg</Label>
+									<Input
+										id="audit-max-tools"
+										type="number"
+										min={5}
+										max={200}
+										value={auditMaxTools}
+										onChange={(e) =>
+											setAuditMaxTools(Number.parseInt(e.target.value || "25", 10))
+										}
+										className="w-24"
+									/>
+								</div>
+								<div className="flex items-center gap-2">
+									<Label htmlFor="audit-retrieval-limit">Retrieval K</Label>
+									<Input
+										id="audit-retrieval-limit"
+										type="number"
+										min={1}
+										max={15}
+										value={auditRetrievalLimit}
+										onChange={(e) =>
+											setAuditRetrievalLimit(Number.parseInt(e.target.value || "5", 10))
+										}
+										className="w-24"
+									/>
+								</div>
+								<div className="flex items-center gap-2">
+									<Switch checked={includeDraftMetadata} onCheckedChange={setIncludeDraftMetadata} />
+									<span className="text-sm">Inkludera draft</span>
+								</div>
+								<Button onClick={handleRunAudit} disabled={isRunningAudit}>
+									{isRunningAudit ? "Kör audit..." : "Kör audit"}
+								</Button>
+								<Button variant="outline" onClick={handleRunSeparation} disabled={isRunningSeparation || !auditResult}>
+									{isRunningSeparation ? "Separerar..." : "Separera kollisioner"}
+								</Button>
+							</div>
+						</CardContent>
+					</Card>
+
+					{/* Audit results — 3-layer accuracy */}
+					{auditResult && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Audit-resultat</CardTitle>
+								<CardDescription>
+									{auditResult.summary.total_probes} probes ·
+									metadata version {auditResult.metadata_version_hash.slice(0, 8)}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4">
+								<div className="grid gap-4 md:grid-cols-3">
+									<div className="rounded border p-3 text-center">
+										<p className="text-xs text-muted-foreground">Intent accuracy</p>
+										<p className="text-2xl font-semibold">
+											{(auditResult.summary.intent_accuracy * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3 text-center">
+										<p className="text-xs text-muted-foreground">Agent accuracy</p>
+										<p className="text-2xl font-semibold">
+											{(auditResult.summary.agent_accuracy * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3 text-center">
+										<p className="text-xs text-muted-foreground">Tool accuracy</p>
+										<p className="text-2xl font-semibold">
+											{(auditResult.summary.tool_accuracy * 100).toFixed(1)}%
+										</p>
+									</div>
+								</div>
+
+								{/* Conditional accuracy */}
+								<div className="grid gap-4 md:grid-cols-2">
+									{auditResult.summary.agent_accuracy_given_intent_correct != null && (
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Agent | Intent korrekt</p>
+											<p className="text-lg font-semibold">
+												{(auditResult.summary.agent_accuracy_given_intent_correct * 100).toFixed(1)}%
+											</p>
+										</div>
+									)}
+									{auditResult.summary.tool_accuracy_given_intent_agent_correct != null && (
+										<div className="rounded border p-3">
+											<p className="text-xs text-muted-foreground">Tool | Intent+Agent korrekt</p>
+											<p className="text-lg font-semibold">
+												{(auditResult.summary.tool_accuracy_given_intent_agent_correct * 100).toFixed(1)}%
+											</p>
+										</div>
+									)}
+								</div>
+
+								{/* Collision report (confusion matrices) */}
+								{auditResult.summary.tool_confusion_matrix.length > 0 && (
+									<div className="rounded border p-3 space-y-2">
+										<p className="text-sm font-medium">
+											Kollisionsrapport ({auditResult.summary.tool_confusion_matrix.length} par)
+										</p>
+										<div className="max-h-64 overflow-auto space-y-1">
+											{auditResult.summary.tool_confusion_matrix.slice(0, 15).map((pair, idx) => (
+												<div key={`collision-${idx}`} className="flex items-center gap-2 text-xs rounded bg-muted/40 px-2 py-1">
+													<Badge variant="outline">{pair.expected_label}</Badge>
+													<span className="text-muted-foreground">↔</span>
+													<Badge variant="outline">{pair.predicted_label}</Badge>
+													<span className="text-muted-foreground ml-auto">
+														{pair.count} fel
+													</span>
+												</div>
+											))}
+										</div>
+									</div>
+								)}
+
+								{/* Vector recall summary */}
+								{auditResult.summary.vector_recall_summary && (
+									<div className="grid gap-3 md:grid-cols-3 text-sm">
+										<Badge variant="outline">
+											Vektor-kandidater: {auditResult.summary.vector_recall_summary.probes_with_vector_candidates}
+										</Badge>
+										<Badge variant="outline">
+											Top-1 från vektor: {auditResult.summary.vector_recall_summary.probes_with_top1_from_vector}
+										</Badge>
+										<Badge variant="outline">
+											Förväntad i top-K: {auditResult.summary.vector_recall_summary.probes_with_expected_tool_in_vector_top_k}
+										</Badge>
+									</div>
+								)}
+
+								{/* Probe details (collapsed by default) */}
+								{auditResult.probes.length > 0 && (
+									<details className="rounded border p-3">
+										<summary className="text-sm font-medium cursor-pointer">
+											Visa probe-detaljer ({auditResult.probes.length} probes)
+										</summary>
+										<div className="mt-3 max-h-96 overflow-auto space-y-2">
+											{auditResult.probes.slice(0, 50).map((probe) => (
+												<div
+													key={probe.probe_id}
+													className="rounded border p-2 text-xs space-y-1"
+												>
+													<p className="font-medium">{probe.query}</p>
+													<div className="flex flex-wrap gap-2">
+														<Badge variant={probe.intent.predicted_label === probe.intent.expected_label ? "outline" : "destructive"}>
+															Intent: {probe.intent.expected_label ?? "-"} → {probe.intent.predicted_label ?? "-"}
+														</Badge>
+														<Badge variant={probe.agent.predicted_label === probe.agent.expected_label ? "outline" : "destructive"}>
+															Agent: {probe.agent.expected_label ?? "-"} → {probe.agent.predicted_label ?? "-"}
+														</Badge>
+														<Badge variant={probe.tool.predicted_label === probe.tool.expected_label ? "outline" : "destructive"}>
+															Tool: {probe.tool.expected_label ?? "-"} → {probe.tool.predicted_label ?? "-"}
+														</Badge>
+													</div>
+												</div>
+											))}
+										</div>
+									</details>
+								)}
+							</CardContent>
+						</Card>
+					)}
+
+					{/* Separation results */}
+					{separationResult && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Separationsresultat</CardTitle>
+								<CardDescription>
+									Baseline → Final accuracy efter separation
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4">
+								<div className="grid gap-4 md:grid-cols-2">
+									<div className="rounded border p-3 space-y-1">
+										<p className="text-xs text-muted-foreground">Baseline</p>
+										<p className="text-sm">
+											Intent {(separationResult.baseline_summary.intent_accuracy * 100).toFixed(1)}% ·
+											Agent {(separationResult.baseline_summary.agent_accuracy * 100).toFixed(1)}% ·
+											Tool {(separationResult.baseline_summary.tool_accuracy * 100).toFixed(1)}%
+										</p>
+									</div>
+									<div className="rounded border p-3 space-y-1">
+										<p className="text-xs text-muted-foreground">Slutresultat</p>
+										<p className="text-sm">
+											Intent {(separationResult.final_summary.intent_accuracy * 100).toFixed(1)}% ·
+											Agent {(separationResult.final_summary.agent_accuracy * 100).toFixed(1)}% ·
+											Tool {(separationResult.final_summary.tool_accuracy * 100).toFixed(1)}%
+										</p>
+									</div>
+								</div>
+								{separationResult.proposed_tool_metadata_patch.length > 0 && (
+									<div className="rounded border p-3 space-y-2">
+										<p className="text-sm font-medium">
+											{separationResult.proposed_tool_metadata_patch.length} metadata-ändringar föreslagna
+										</p>
+										<Button
+											onClick={async () => {
+												try {
+													await adminToolSettingsApiService.updateMetadataCatalog({
+														tool_updates: separationResult.proposed_tool_metadata_patch,
+													});
+													await refetch();
+													toast.success("Separationsförslag applicerade");
+												} catch (_error) {
+													toast.error("Kunde inte applicera separationsförslag");
+												}
+											}}
+										>
+											Applicera separationsförslag
+										</Button>
+									</div>
+								)}
+							</CardContent>
+						</Card>
+					)}
+				</div>
 			)}
 
 			{/* ================================================================ */}
@@ -2123,33 +2519,20 @@ export function CalibrationTab() {
 									{evaluationResult.suggestions.length === 0 ? (
 										<p className="text-sm text-muted-foreground">Inga förbättringsförslag hittades.</p>
 									) : (
-										<div className="space-y-3">
-											{evaluationResult.suggestions.map((suggestion) => {
-												const isSelected = selectedSuggestionIds.has(suggestion.tool_id);
-												return (
-													<div key={suggestion.tool_id} className="rounded border p-3 space-y-2">
-														<div className="flex items-center gap-2">
-															<input type="checkbox" checked={isSelected} onChange={() => toggleSuggestion(suggestion.tool_id)} />
-															<Badge variant="secondary">{suggestion.tool_id}</Badge>
-															<Badge variant="outline">{suggestion.failed_test_ids.length} fail-case(s)</Badge>
-														</div>
-														<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
-														<div className="grid gap-3 md:grid-cols-2">
-															<div className="rounded bg-muted/50 p-2">
-																<p className="text-xs font-medium mb-1">Nuvarande</p>
-																<p className="text-xs">{suggestion.current_metadata.description}</p>
-																<p className="text-[11px] text-muted-foreground mt-2">Keywords: {suggestion.current_metadata.keywords.join(", ") || "-"}</p>
-															</div>
-															<div className="rounded bg-muted/50 p-2">
-																<p className="text-xs font-medium mb-1">Föreslagen</p>
-																<p className="text-xs">{suggestion.proposed_metadata.description}</p>
-																<p className="text-[11px] text-muted-foreground mt-2">Keywords: {suggestion.proposed_metadata.keywords.join(", ") || "-"}</p>
-															</div>
-														</div>
-													</div>
-												);
-											})}
-										</div>
+										<SuggestionDiffView
+											suggestions={suggestionDiffItems}
+											selectedIds={selectedSuggestionIds}
+											onToggle={toggleSuggestion}
+											onToggleAll={(selected) => {
+												if (selected) {
+													setSelectedSuggestionIds(
+														new Set(evaluationResult.suggestions.map((s) => s.tool_id))
+													);
+												} else {
+													setSelectedSuggestionIds(new Set());
+												}
+											}}
+										/>
 									)}
 								</CardContent>
 							</Card>
@@ -2549,6 +2932,53 @@ export function CalibrationTab() {
 								)}
 							</div>
 						)}
+					</CardContent>
+				</Card>
+			)}
+
+			{/* ================================================================ */}
+			{/* LIFECYCLE PROMOTION (visas alltid)                              */}
+			{/* ================================================================ */}
+			{lifecycleData && lifecycleData.review_count > 0 && (
+				<Card>
+					<CardHeader>
+						<CardTitle>Lifecycle-promotion</CardTitle>
+						<CardDescription>
+							Verktyg i Review som uppnått krävd success rate kan befordras till Live.
+						</CardDescription>
+					</CardHeader>
+					<CardContent className="space-y-4">
+						<div className="grid gap-3 md:grid-cols-3 text-sm">
+							<div className="rounded border p-3">
+								<p className="text-xs text-muted-foreground">Live</p>
+								<p className="text-2xl font-semibold text-green-600">{lifecycleData.live_count}</p>
+							</div>
+							<div className="rounded border p-3">
+								<p className="text-xs text-muted-foreground">Review</p>
+								<p className="text-2xl font-semibold text-amber-600">{lifecycleData.review_count}</p>
+							</div>
+							<div className="rounded border p-3">
+								<p className="text-xs text-muted-foreground">Totalt</p>
+								<p className="text-2xl font-semibold">{lifecycleData.total_count}</p>
+							</div>
+						</div>
+						<div className="max-h-64 overflow-auto space-y-1">
+							{lifecycleData.tools
+								.filter((t) => t.status === "review")
+								.map((tool) => (
+									<div key={`promo-${tool.tool_id}`} className="flex items-center justify-between gap-2 rounded border p-2 text-xs">
+										<span className="font-mono truncate max-w-[250px]">{tool.tool_id}</span>
+										<LifecycleBadge
+											status={tool.status as "live" | "review"}
+											successRate={tool.success_rate}
+											requiredSuccessRate={tool.required_success_rate}
+										/>
+									</div>
+								))}
+						</div>
+						<Button onClick={handleBulkPromote} disabled={isPromoting}>
+							{isPromoting ? "Befordrar..." : "Befordra kvalificerade till Live"}
+						</Button>
 					</CardContent>
 				</Card>
 			)}

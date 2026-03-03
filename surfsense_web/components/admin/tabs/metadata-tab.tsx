@@ -16,7 +16,9 @@ import {
 	METADATA_MAX_KEYWORD_CHARS,
 	METADATA_MAX_EXAMPLE_QUERY_CHARS,
 } from "@/contracts/types/admin-tool-settings.types";
+import type { ToolLifecycleStatusResponse } from "@/contracts/types/admin-tool-lifecycle.types";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
+import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -36,7 +38,7 @@ import {
 	AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Separator } from "@/components/ui/separator";
-import { Save, RotateCcw, Plus, X, Loader2 } from "lucide-react";
+import { Save, RotateCcw, Plus, X, Loader2, Lock, ShieldCheck } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
 
@@ -54,6 +56,8 @@ type LiveRoutingPhase =
 type NumericRetrievalTuningField = {
 	[K in keyof ToolRetrievalTuning]: ToolRetrievalTuning[K] extends number ? K : never;
 }[keyof ToolRetrievalTuning];
+
+type StatusFilter = "all" | "live" | "review";
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -280,6 +284,7 @@ export function MetadataTab() {
 
 	// ---- Local state -------------------------------------------------------
 	const [searchTerm, setSearchTerm] = useState("");
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 	const [draftTools, setDraftTools] = useState<Record<string, ToolMetadataUpdateItem>>({});
 	const [draftRetrievalTuning, setDraftRetrievalTuning] =
 		useState<ToolRetrievalTuning | null>(null);
@@ -300,6 +305,30 @@ export function MetadataTab() {
 			adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
+
+	const { data: lifecycleData } = useQuery({
+		queryKey: ["admin-tool-lifecycle"],
+		queryFn: () => adminToolLifecycleApiService.getToolLifecycleList(),
+		enabled: !!currentUser,
+	});
+
+	const { data: catalogData } = useQuery({
+		queryKey: ["admin-metadata-catalog", data?.search_space_id],
+		queryFn: () =>
+			adminToolSettingsApiService.getMetadataCatalog(data?.search_space_id),
+		enabled: !!currentUser && typeof data?.search_space_id === "number",
+	});
+
+	// ---- Lifecycle lookup map -----------------------------------------------
+	const lifecycleByToolId = useMemo(() => {
+		const map: Record<string, ToolLifecycleStatusResponse> = {};
+		if (lifecycleData?.tools) {
+			for (const tool of lifecycleData.tools) {
+				map[tool.tool_id] = tool;
+			}
+		}
+		return map;
+	}, [lifecycleData?.tools]);
 
 	// ---- Derived data -------------------------------------------------------
 	const originalTools = useMemo(() => {
@@ -335,11 +364,21 @@ export function MetadataTab() {
 			tools: category.tools.filter((tool) => {
 				const draft = draftTools[tool.tool_id] ?? toUpdateItem(tool);
 				const term = searchTerm.toLowerCase();
-				return (
+				const matchesSearch =
 					draft.name.toLowerCase().includes(term) ||
 					draft.description.toLowerCase().includes(term) ||
-					draft.tool_id.toLowerCase().includes(term)
-				);
+					draft.tool_id.toLowerCase().includes(term);
+
+				if (!matchesSearch) return false;
+
+				// Apply lifecycle status filter
+				if (statusFilter !== "all") {
+					const lifecycle = lifecycleByToolId[tool.tool_id];
+					const toolStatus = lifecycle?.status ?? "review";
+					if (toolStatus !== statusFilter) return false;
+				}
+
+				return true;
 			}),
 		}))
 		.filter((category) => category.tools.length > 0);
@@ -348,6 +387,22 @@ export function MetadataTab() {
 		(acc, cat) => acc + cat.tools.length,
 		0
 	);
+
+	// ---- Lock management derived data ---------------------------------------
+	const stabilityLockCount = catalogData?.stability_locks?.locked_count ?? 0;
+	const stabilityLockedItems = catalogData?.stability_locks?.locked_items ?? [];
+
+	// Count unique tool confusion pairs from the audit data as separation lock proxy
+	const separationPairCount = useMemo(() => {
+		if (!catalogData?.stability_locks?.locked_items) return 0;
+		// Count items that have a non-null lock_reason containing "separation" or "collision"
+		return stabilityLockedItems.filter(
+			(item) =>
+				item.lock_reason != null &&
+				(item.lock_reason.toLowerCase().includes("separation") ||
+					item.lock_reason.toLowerCase().includes("collision"))
+		).length;
+	}, [catalogData?.stability_locks?.locked_items, stabilityLockedItems]);
 
 	// ---- Effects ------------------------------------------------------------
 	useEffect(() => {
@@ -540,173 +595,10 @@ export function MetadataTab() {
 	// ---- Render -------------------------------------------------------------
 	return (
 		<div className="space-y-6">
-			{/* Guide card */}
+			{/* Globala retrieval-vikter */}
 			<Card>
 				<CardHeader>
-					<CardTitle>Guide: Så använder du Metadata-fliken</CardTitle>
-					<CardDescription>
-						Denna flik styr produktionsbeteendet för tool retrieval. Spara här när
-						du är nöjd med resultat från eval-fliken.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-3 text-sm">
-					<div className="rounded border p-3">
-						<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
-							<li>
-								Justera <span className="font-medium">Description</span>,{" "}
-								<span className="font-medium">Keywords</span> och{" "}
-								<span className="font-medium">Exempelfrågor</span> per verktyg.
-							</li>
-							<li>
-								Ställ in <span className="font-medium">Retrieval Tuning</span> om
-								tool-valen missar rätt kandidat.
-							</li>
-							<li>
-								Spara ändringar i metadata-fliken (enskilt eller "Spara alla
-								ändringar").
-							</li>
-							<li>
-								Gå till <span className="font-medium">Tool Evaluation</span> och kör
-								nya tester.
-							</li>
-							<li>
-								Kom tillbaka hit och spara bara de ändringar som förbättrar både
-								huvudsuite och holdout.
-							</li>
-						</ol>
-					</div>
-					<p className="text-xs text-muted-foreground">
-						Tips: "Senaste eval-körning" visar snabb status på hur senaste
-						justeringar presterade.
-					</p>
-				</CardContent>
-			</Card>
-
-			{/* API categories overview */}
-			{apiCategories?.providers?.length ? (
-				<Card>
-					<CardHeader>
-						<CardTitle>API-kategorier (alla providers)</CardTitle>
-						<CardDescription>
-							Översikt av tillgängliga providers, API-kategorier och underkategorier
-							för testdesign i Tool Evaluation.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="space-y-4">
-						{apiCategories.providers.map((provider) => {
-							const topLevel = provider.categories.filter(
-								(item) => item.level === "top_level"
-							);
-							const subcategories = provider.categories.filter(
-								(item) => item.level !== "top_level"
-							);
-							return (
-								<div
-									key={provider.provider_key}
-									className="rounded border p-3 space-y-3"
-								>
-									<div className="flex flex-wrap items-center gap-2">
-										<Badge variant="secondary">{provider.provider_name}</Badge>
-										<Badge variant="outline">{topLevel.length} toppnivå</Badge>
-										<Badge variant="outline">
-											{subcategories.length} underkategorier
-										</Badge>
-									</div>
-									<div className="grid gap-4 lg:grid-cols-2">
-										<div className="space-y-2">
-											<p className="text-sm font-medium">Toppnivå</p>
-											<div className="max-h-72 overflow-auto rounded border p-2 space-y-1">
-												{topLevel.map((item) => (
-													<div
-														key={`${provider.provider_key}-${item.tool_id}`}
-														className="rounded bg-muted/40 px-2 py-1 text-xs"
-													>
-														<p className="font-medium">
-															{item.category_name}
-														</p>
-														<p className="text-muted-foreground">
-															{item.tool_id}
-															{item.base_path
-																? ` · ${item.base_path}`
-																: ""}
-														</p>
-													</div>
-												))}
-											</div>
-										</div>
-										<div className="space-y-2">
-											<p className="text-sm font-medium">Underkategorier</p>
-											<div className="max-h-72 overflow-auto rounded border p-2 space-y-1">
-												{subcategories.map((item) => (
-													<div
-														key={`${provider.provider_key}-${item.tool_id}`}
-														className="rounded bg-muted/40 px-2 py-1 text-xs"
-													>
-														<p className="font-medium">
-															{item.tool_name}
-														</p>
-														<p className="text-muted-foreground">
-															{item.category_name} · {item.tool_id}
-															{item.base_path
-																? ` · ${item.base_path}`
-																: ""}
-														</p>
-													</div>
-												))}
-											</div>
-										</div>
-									</div>
-								</div>
-							);
-						})}
-					</CardContent>
-				</Card>
-			) : null}
-
-			{/* Latest eval summary */}
-			{data?.latest_evaluation && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Senaste eval-körning</CardTitle>
-						<CardDescription>
-							Visar senaste genomförda Tool Evaluation för detta search space.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="grid gap-3 md:grid-cols-4 text-sm">
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Tidpunkt</p>
-							<p className="font-medium">
-								{new Date(data.latest_evaluation.run_at).toLocaleString("sv-SE")}
-							</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Antal frågor</p>
-							<p className="font-medium">{data.latest_evaluation.total_tests}</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Passerade</p>
-							<p className="font-medium">{data.latest_evaluation.passed_tests}</p>
-						</div>
-						<div className="rounded border p-3">
-							<p className="text-xs text-muted-foreground">Success rate</p>
-							<p className="font-medium">
-								{(data.latest_evaluation.success_rate * 100).toFixed(1)}%
-							</p>
-						</div>
-						{data.latest_evaluation.eval_name && (
-							<div className="rounded border p-3 md:col-span-4">
-								<p className="text-xs text-muted-foreground">Eval-namn</p>
-								<p className="font-medium">{data.latest_evaluation.eval_name}</p>
-							</div>
-						)}
-					</CardContent>
-				</Card>
-			)}
-
-			{/* Retrieval Tuning card */}
-			<Card>
-				<CardHeader>
-					<CardTitle>Retrieval Tuning</CardTitle>
+					<CardTitle>Globala retrieval-vikter</CardTitle>
 					<CardDescription>
 						Styr hur tool_retrieval viktar namn, keywords, embeddings och rerank.
 					</CardDescription>
@@ -714,68 +606,10 @@ export function MetadataTab() {
 				<CardContent className="space-y-4">
 					{draftRetrievalTuning ? (
 						<>
-							{/* Live routing rollout */}
+							{/* Auto-select thresholds + Top-K */}
 							<div className="rounded-lg border p-3 space-y-3">
-								<div className="flex flex-wrap items-center justify-between gap-3">
-									<div>
-										<p className="text-sm font-medium">Live routing rollout</p>
-										<p className="text-xs text-muted-foreground">
-											Aktivera fasstyrd utrullning (Shadow → Tool gate → Agent
-											auto → Adaptive → Intent finjustering).
-										</p>
-									</div>
-									<div className="flex items-center gap-2">
-										<Badge
-											variant={
-												draftRetrievalTuning.live_routing_enabled
-													? "default"
-													: "outline"
-											}
-										>
-											{draftRetrievalTuning.live_routing_enabled
-												? "Aktiv"
-												: "Av"}
-										</Badge>
-										<Switch
-											checked={
-												draftRetrievalTuning.live_routing_enabled ?? false
-											}
-											onCheckedChange={(checked) =>
-												updateRetrievalTuningToggle(
-													"live_routing_enabled",
-													checked
-												)
-											}
-										/>
-									</div>
-								</div>
-								<div className="grid gap-3 md:grid-cols-3">
-									<div className="space-y-1 md:col-span-2">
-										<Label>Aktiv fas</Label>
-										<select
-											value={
-												draftRetrievalTuning.live_routing_phase ?? "shadow"
-											}
-											onChange={(event) =>
-												updateRetrievalPhase(
-													event.target.value as LiveRoutingPhase
-												)
-											}
-											className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-										>
-											<option value="shadow">Fas 0 — Shadow mode</option>
-											<option value="tool_gate">Fas 1 — Tool gate</option>
-											<option value="agent_auto">
-												Fas 1b — Agent auto-select
-											</option>
-											<option value="adaptive">
-												Fas 2 — Adaptiva per-tool thresholds
-											</option>
-											<option value="intent_finetune">
-												Fas 3 — Intent shortlist/vikter
-											</option>
-										</select>
-									</div>
+								<p className="text-sm font-medium">Auto-select trösklar och Top-K</p>
+								<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
 									<div className="space-y-1">
 										<Label>Tool candidate top-K</Label>
 										<Input
@@ -794,8 +628,60 @@ export function MetadataTab() {
 											}
 										/>
 									</div>
+									<div className="space-y-1">
+										<Label>Intent top-K</Label>
+										<Input
+											type="number"
+											step="1"
+											min={2}
+											max={8}
+											value={
+												draftRetrievalTuning.intent_candidate_top_k ?? 3
+											}
+											onChange={(e) =>
+												updateRetrievalTuningField(
+													"intent_candidate_top_k",
+													Number.parseInt(e.target.value || "3", 10)
+												)
+											}
+										/>
+									</div>
+									<div className="space-y-1">
+										<Label>Agent top-K</Label>
+										<Input
+											type="number"
+											step="1"
+											min={2}
+											max={8}
+											value={
+												draftRetrievalTuning.agent_candidate_top_k ?? 3
+											}
+											onChange={(e) =>
+												updateRetrievalTuningField(
+													"agent_candidate_top_k",
+													Number.parseInt(e.target.value || "3", 10)
+												)
+											}
+										/>
+									</div>
+									<div className="space-y-1">
+										<Label>Rerank candidates</Label>
+										<Input
+											type="number"
+											step="1"
+											min={1}
+											max={100}
+											value={draftRetrievalTuning.rerank_candidates}
+											onChange={(e) =>
+												updateRetrievalTuningField(
+													"rerank_candidates",
+													Number.parseInt(e.target.value || "1", 10)
+												)
+											}
+										/>
+									</div>
 								</div>
-								{/* Auto-select thresholds grid */}
+								<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
 								<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
 									<div className="space-y-1">
 										<Label>Intent top-K</Label>
@@ -1088,23 +974,7 @@ export function MetadataTab() {
 										}
 									/>
 								</div>
-								<div className="space-y-1">
-									<Label>Rerank candidates</Label>
-									<Input
-										type="number"
-										step="1"
-										min={1}
-										max={100}
-										value={draftRetrievalTuning.rerank_candidates}
-										onChange={(e) =>
-											updateRetrievalTuningField(
-												"rerank_candidates",
-												Number.parseInt(e.target.value || "1", 10)
-											)
-										}
-									/>
 								</div>
-							</div>
 
 							{/* Save retrieval tuning */}
 							<div className="flex items-center gap-2">
@@ -1121,7 +991,20 @@ export function MetadataTab() {
 								>
 									{isSavingRetrievalTuning
 										? "Sparar vikter..."
-										: "Spara retrieval-vikter"}
+										: "Spara vikter"}
+								</Button>
+								<Button
+									variant="outline"
+									onClick={() => {
+										if (data?.retrieval_tuning) {
+											setDraftRetrievalTuning({ ...data.retrieval_tuning });
+											toast.info("Vikter återställda till senast sparade.");
+										}
+									}}
+									disabled={!retrievalTuningChanged}
+								>
+									<RotateCcw className="h-4 w-4 mr-1" />
+									Återställ
 								</Button>
 							</div>
 						</>
@@ -1133,7 +1016,7 @@ export function MetadataTab() {
 				</CardContent>
 			</Card>
 
-			{/* Search bar + save-all */}
+			{/* Search bar + filters + save-all */}
 			<div className="flex flex-wrap items-center gap-4">
 				<Input
 					placeholder="Sök verktyg..."
@@ -1141,9 +1024,28 @@ export function MetadataTab() {
 					onChange={(e) => setSearchTerm(e.target.value)}
 					className="max-w-md"
 				/>
+				<select
+					value={statusFilter}
+					onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+					className="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				>
+					<option value="all">Alla</option>
+					<option value="live">Live</option>
+					<option value="review">Review</option>
+				</select>
 				<div className="text-sm text-muted-foreground">
 					{totalTools} verktyg i {filteredCategories.length} kategorier
 				</div>
+				{lifecycleData && (
+					<div className="flex items-center gap-2 text-xs text-muted-foreground">
+						<Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
+							{lifecycleData.live_count} Live
+						</Badge>
+						<Badge variant="secondary" className="text-xs">
+							{lifecycleData.review_count} Review
+						</Badge>
+					</div>
+				)}
 				<Badge variant="outline">
 					{changedToolIds.length} osparade ändringar
 				</Badge>
@@ -1182,6 +1084,7 @@ export function MetadataTab() {
 												draftTools[tool.tool_id] ??
 												toUpdateItem(tool);
 											const changed = changedToolSet.has(tool.tool_id);
+											const lifecycle = lifecycleByToolId[tool.tool_id];
 											return (
 												<div key={tool.tool_id}>
 													{index > 0 && (
@@ -1199,6 +1102,19 @@ export function MetadataTab() {
 																>
 																	{draft.tool_id}
 																</Badge>
+																{lifecycle && (
+																	<LifecycleBadge
+																		status={
+																			lifecycle.status === "live"
+																				? "live"
+																				: "review"
+																		}
+																		successRate={lifecycle.success_rate}
+																		requiredSuccessRate={
+																			lifecycle.required_success_rate
+																		}
+																	/>
+																)}
 																{(tool.has_override ||
 																	changed) && (
 																	<Badge
@@ -1245,6 +1161,121 @@ export function MetadataTab() {
 					</CardContent>
 				</Card>
 			)}
+
+			{/* Lock management section */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Lock className="h-5 w-5" />
+						Lås-hantering
+					</CardTitle>
+					<CardDescription>
+						Översikt av stabilitets- och separationslås. Lås skyddar verktygsmetadata
+						från oavsiktliga ändringar under pågående optimering.
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<div className="grid gap-4 md:grid-cols-2">
+						{/* Stability locks */}
+						<div className="rounded-lg border p-4 space-y-3">
+							<div className="flex items-center gap-2">
+								<ShieldCheck className="h-4 w-4 text-muted-foreground" />
+								<p className="text-sm font-medium">Stabilitets-lås</p>
+							</div>
+							<div className="flex items-baseline gap-2">
+								<span className="text-3xl font-bold tabular-nums">
+									{stabilityLockCount}
+								</span>
+								<span className="text-sm text-muted-foreground">
+									verktyg låsta
+								</span>
+							</div>
+							{stabilityLockedItems.length > 0 && (
+								<div className="max-h-32 overflow-auto space-y-1">
+									{stabilityLockedItems.slice(0, 5).map((item) => (
+										<div
+											key={`stab-lock-${item.item_id}`}
+											className="flex items-center gap-2 text-xs text-muted-foreground"
+										>
+											<Lock className="h-3 w-3 shrink-0" />
+											<span className="truncate font-mono">
+												{item.item_id}
+											</span>
+											{item.lock_level && (
+												<Badge variant="outline" className="text-[10px] shrink-0">
+													{item.lock_level}
+												</Badge>
+											)}
+										</div>
+									))}
+									{stabilityLockedItems.length > 5 && (
+										<p className="text-xs text-muted-foreground">
+											... och {stabilityLockedItems.length - 5} till
+										</p>
+									)}
+								</div>
+							)}
+							<Button variant="outline" size="sm" className="w-full" disabled>
+								Hantera →
+							</Button>
+						</div>
+
+						{/* Separation locks */}
+						<div className="rounded-lg border p-4 space-y-3">
+							<div className="flex items-center gap-2">
+								<Lock className="h-4 w-4 text-muted-foreground" />
+								<p className="text-sm font-medium">Separations-lås</p>
+							</div>
+							<div className="flex items-baseline gap-2">
+								<span className="text-3xl font-bold tabular-nums">
+									{separationPairCount}
+								</span>
+								<span className="text-sm text-muted-foreground">
+									kollisionspar
+								</span>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								Antal verktyg med separations- eller kollisionslås som förhindrar
+								samtidiga metadataändringar på konkurrerande verktyg.
+							</p>
+							<Button variant="outline" size="sm" className="w-full" disabled>
+								Hantera →
+							</Button>
+						</div>
+					</div>
+
+					{catalogData?.stability_locks && (
+						<div className="mt-4 flex items-center gap-3 text-xs text-muted-foreground">
+							<Badge
+								variant={
+									catalogData.stability_locks.lock_mode_enabled
+										? "default"
+										: "outline"
+								}
+								className="text-xs"
+							>
+								Lås-läge:{" "}
+								{catalogData.stability_locks.lock_mode_enabled
+									? "Aktivt"
+									: "Av"}
+							</Badge>
+							<Badge
+								variant={
+									catalogData.stability_locks.auto_lock_enabled
+										? "default"
+										: "outline"
+								}
+								className="text-xs"
+							>
+								Auto-lås:{" "}
+								{catalogData.stability_locks.auto_lock_enabled
+									? "Aktivt"
+									: "Av"}
+							</Badge>
+						</div>
+					)}
+				</CardContent>
+			</Card>
 		</div>
 	);
 }
