@@ -271,14 +271,16 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 		enabled: typeof searchSpaceId === "number",
 	});
 
-	const categories =
-		(
-			apiCategories as {
-				providers?: Array<{ provider_key: string; categories?: Array<{ category_id: string }> }>;
-			}
-		)?.providers
-			?.flatMap((p) => p.categories?.map((c) => c.category_id) ?? [])
-			?.filter((catId, index, arr) => arr.indexOf(catId) === index) ?? [];
+	const rawProviders =
+		(apiCategories as {
+			providers?: Array<{ provider_key: string; categories?: Array<{ category_id: string }> }>;
+		})?.providers;
+
+	const categories = Array.isArray(rawProviders)
+		? rawProviders
+				.flatMap((p) => (Array.isArray(p.categories) ? p.categories.map((c) => c.category_id) : []))
+				.filter((catId, index, arr) => arr.indexOf(catId) === index)
+		: [];
 
 	// Cleanup on unmount
 	useEffect(() => {
@@ -723,17 +725,19 @@ function EvalSection({ searchSpaceId }: { searchSpaceId: number | undefined }) {
 								totalTests={jobStatus.total_tests as number}
 								error={jobStatus.error as string}
 								caseStatuses={
-									(jobStatus.case_statuses as Array<{
-										test_id: string;
-										status: string;
-										question: string;
-										passed?: boolean;
-										error?: string;
-										selected_route?: string;
-										selected_sub_route?: string;
-										selected_agent?: string;
-										selected_tool?: string;
-									}>) ?? []
+									Array.isArray(jobStatus.case_statuses)
+										? (jobStatus.case_statuses as Array<{
+												test_id: string;
+												status: string;
+												question: string;
+												passed?: boolean;
+												error?: string;
+												selected_route?: string;
+												selected_sub_route?: string;
+												selected_agent?: string;
+												selected_tool?: string;
+											}>)
+										: []
 								}
 								onExportJson={() => {
 									const blob = new Blob([JSON.stringify(jobStatus, null, 2)], {
@@ -834,7 +838,9 @@ function AutoLoopSection({ searchSpaceId }: { searchSpaceId: number | undefined 
 		}
 	}, [targetRate, maxIterations, patience, minDelta, searchSpaceId]);
 
-	const iterations = (jobStatus?.iterations as Array<Record<string, unknown>>) ?? [];
+	const iterations = Array.isArray(jobStatus?.iterations)
+		? (jobStatus?.iterations as Array<Record<string, unknown>>)
+		: [];
 
 	return (
 		<Card>
