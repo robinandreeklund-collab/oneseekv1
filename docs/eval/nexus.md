@@ -1,0 +1,1368 @@
+5 separata lager
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NEXUS — RETRIEVAL INTELLIGENCE PLATFORM                                     │
+│                                                                               │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐ │
+│  │  SPACE     │  │  SYNTH    │  │   AUTO    │  │   EVAL    │  │  DEPLOY   │ │
+│  │  AUDITOR   │  │  FORGE    │  │   LOOP    │  │  LEDGER   │  │  CONTROL  │ │
+│  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘ │
+│        │               │               │               │               │       │
+│  Visa  │  Generera     │  Förbättra    │  Logga        │  Deploya      │       │
+│  rymd  │  frågor       │  metadata     │  allt         │  godkänt      │       │
+└────────┴───────────────┴───────────────┴───────────────┴───────────────┴──────┘
+          ↑                               ↑
+     Förstå →      ← Skapa →      ← Optimera →    ← Verifiera →    ← Deploya
+
+Lager 1: SPACE AUDITOR — Embedding-rymd visualisering
+Kärnidé: Mät kontinuerligt hur separerade verktyg, intents och agenter är i vektorrymden.
+
+┌─────────────────────────────────────────────────────────┐
+│  SPACE AUDITOR                              [Export] [▶] │
+│                                                          │
+│  Separation Score: 0.73 ██████████░░░  Bra              │
+│  Cluster Purity:   0.91 █████████████  Utmärkt          │
+│  Confusion Risk:   0.18 ███░░░░░░░░░░  Låg              │
+│                                                          │
+│  ┌─────────────────────────────────────────────────────┐ │
+│  │  UMAP 2D — Verktygsrymd                             │ │
+│  │                                                     │ │
+│  │   ●●● smhi          ○○ riksdag    ■■ marketplace    │ │
+│  │      ●●●                ○○          ■■■             │ │
+│  │          ◆◆◆ scb                ▲▲ kod              │ │
+│  │                                                     │ │
+│  │  ⚠ VARNING: smhi_brandrisk ↔ skolverket_kursplan   │ │
+│  │    Cosine similarity: 0.87 (för nära!)             │ │
+│  └─────────────────────────────────────────────────────┘ │
+│                                                          │
+│  Namespace Confusion Matrix:                            │
+│  tools/weather vs tools/knowledge: 0.12 ✓              │
+│  tools/politik vs tools/marketplace: 0.08 ✓            │
+│  tools/weather/smhi vs tools/action: 0.31 ⚠            │
+└─────────────────────────────────────────────────────────┘
+
+Metriker:
+
+Intra-class distance — Hur tätt klustrar verktyg i samma namespace?
+Inter-class distance — Hur långt är det mellan namespaces?
+Confusion Risk Score — Top-10 farliga par (verktyg som är för lika)
+Hubness detection — Vilka verktyg hamnar för ofta som "närmaste granne" (falskt positiva magneter)
+Implementering:
+
+class SpaceAuditor:
+    def compute_separation_matrix(self, tools: list[ToolIndexEntry]) -> SeparationReport:
+        embeddings = [t.semantic_embedding for t in tools]
+        namespaces = [t.namespace for t in tools]
+        
+        # UMAP för visualisering
+        coords_2d = UMAP(n_components=2).fit_transform(embeddings)
+        
+        # Separation metrics
+        intra_scores = silhouette_score(embeddings, namespace_labels)
+        confusion_pairs = self._find_risky_pairs(embeddings, threshold=0.85)
+        
+        return SeparationReport(coords_2d, intra_scores, confusion_pairs)
+
+Lager 2: SYNTH FORGE — Auto-generering av testfrågor
+Kärnidé: Local LLM genererar 4 svårighetsnivåer av testfrågor per verktyg, automatiskt.
+
+┌─────────────────────────────────────────────────────────┐
+│  SYNTH FORGE                    [Generera] [Stoppa]      │
+│                                                          │
+│  Verktyg: smhi_vaderprognoser_metfcst                   │
+│  Status: Genererar... ████████░░  80%                   │
+│                                                          │
+│  LÄTT (direkta):                                        │
+│  ✓ "Vad blir vädret i Stockholm imorgon?"               │
+│  ✓ "SMHI-prognos för Göteborg nästa vecka"             │
+│                                                          │
+│  MEDEL (kontextuella):                                  │
+│  ✓ "Ska vi ta med paraply till fotbollsmatchen?"        │
+│  ✓ "Bör vi resa till Dalarna denna helg?"              │
+│                                                          │
+│  SVÅR (tvetydiga):                                      │
+│  ✓ "Hur är förhållandena?" (geography ambiguous)       │
+│  ✓ "Vad säger meteorologerna?" (which source?)         │
+│                                                          │
+│  ADVERSARIAL (bör INTE välja detta verktyg):            │
+│  ✓ "Hur varmt var det i Stockholm 1987?" → historik     │
+│  ✓ "Vilket väder har Medelhavet?" → inte Sverige        │
+└─────────────────────────────────────────────────────────┘
+
+LLM-prompt-struktur:
+
+SYNTH_PROMPT = """
+Du är en expert på att testa AI-system för verktygsval.
+
+Verktyg: {tool_name}
+Beskrivning: {description}
+Namespace: {namespace}
+Exkluderar: {excludes}
+Geografisk räckvidd: {geographic_scope}
+
+Generera exakt 4 frågor per kategori:
+1. DIREKTA — frågor som tydligt mappar till detta verktyg
+2. KONTEXTUELLA — frågor där verktyget behövs men inte nämns explicit  
+3. TVETYDIGA — frågor som testar disambiguation mot liknande verktyg
+4. ADVERSARIAL — frågor som INTE ska välja detta verktyg (för negativ träning)
+
+Format: JSON med difficulty, question, expected_tool, expected_reason
+"""
+
+Contrastive pairs — varje adversarial-fråga genererar ett hårt negativt par som kan användas för att fine-tuna embeddings längre fram.
+
+Lager 3: AUTO LOOP — Självförbättrande system
+Kärnidé: Systemet kör eval → identifierar fel → LLM föreslår fix → test → auto-PR för granskning.
+
+┌─────────────────────────────────────────────────────────────┐
+│  AUTO LOOP                              [Kör Loop] [Pausa]   │
+│                                                              │
+│  Loop #47 — 2026-03-03 14:22                               │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────┐ │
+│  │   Kör    │ →  │Analysera │ →  │  Föreslå │ →  │Review  │ │
+│  │  Eval    │    │  Fel     │    │   Fix    │    │& Merge │ │
+│  └──────────┘    └──────────┘    └──────────┘    └────────┘ │
+│                                                              │
+│  Senaste körning:                                           │
+│  ✓ 847 testfall körda                                       │
+│  ✗ 23 misslyckanden identifierade                          │
+│                                                              │
+│  Rotorsaksanalys:                                           │
+│  ├─ smhi_brandrisk: 8 fel — brandrisk liknar skolverket     │
+│  │  LLM-förslag: Lägg till "brandindex, RH, vindkänslighet"│
+│  │  Embedding δ: +0.15 separation efter fix                │
+│  │  Status: [Godkänn] [Avvisa] [Testa mer]                │
+│  │                                                          │
+│  ├─ riksdag_voteringar: 5 fel — förväxlas med dokument      │
+│  │  LLM-förslag: Skärp unique_scope: "ONLY voting records" │
+│  └─ kolada_query: 3 fel — query format för tekniskt         │
+└─────────────────────────────────────────────────────────────┘
+
+Auto-loop pipeline:
+
+1. Kör full eval suite (syntetisk + manuell)
+2. Cluster failure modes (vilka tool-par förväxlas?)  
+3. LLM rotorsaksanalys per failure cluster
+4. Generera metadata-fix kandidater
+5. Compute embedding delta (förbättras separationen?)
+6. Om delta > threshold: skapa "metadata PR" för human review
+7. Om PR godkänns: uppdatera DB, reindex embeddings
+8. Kör micro-eval för de påverkade verktygen
+9. Logga till EVAL LEDGER, nästa loop startar
+
+Feedback-signal integration:
+
+Production logs (vilka verktyg väljs och vad ger användaren feedback på?)
+Thumbs up/down på svar → kopplas till tool-chain
+Implicit: om användaren re-frågar med omformulering → trolig feltriggning
+Lager 4: EVAL LEDGER — Metriker per pipeline-steg
+Kärnidé: Separata metriker för varje steg i retrieval-pipelinen, med trendkurvor.
+
+┌─────────────────────────────────────────────────────────────────┐
+│  EVAL LEDGER                              [Filter] [Export]      │
+│                                                                  │
+│  Pipeline-precision (senaste 30 dagar):                         │
+│                                                                  │
+│  Steg 1: Intent routing        ████████████████░  94.2% (+1.2) │
+│  Steg 2: Route selection       █████████████░░░░  81.7% (-0.3) │
+│  Steg 3: Bigtool retrieval     ████████████░░░░░  78.9% (+2.1) │
+│  Steg 4: Reranker effekt       ██████████████░░░  87.3% (+0.5) │
+│  Steg 5: End-to-end quality    ████████████░░░░░  79.1% (new)  │
+│                                                                  │
+│  Per-namespace breakdown:                                       │
+│  tools/weather/smhi:     92.1% ██████████████████              │
+│  tools/politik:          73.4% ███████████████░░░ ⚠ Under 80% │
+│  tools/marketplace:      88.7% ████████████████░░             │
+│  tools/knowledge/kb:     95.2% ███████████████████             │
+│                                                                  │
+│  Reranker isolerad analys:                                      │
+│  Pre-rerank accuracy:    71.2%                                  │
+│  Post-rerank accuracy:   87.3%  (+16.1pp — reranker hjälper!) │
+│  Reranker kan göra SÄMRE: 4 cases/vecka  ← actionable         │
+└─────────────────────────────────────────────────────────────────┘
+
+Nyckelmetriker:
+
+Metrik  Beskrivning Beräkning
+namespace_precision@k   Hur ofta rätt namespace i top-k TP / (TP + FP) per ns
+intent_confidence_calibration   Stämmer confidence med accuracy?    ECE (Expected Calibration Error)
+reranker_delta  Hur mycket förbättrar reranker? accuracy_post - accuracy_pre
+embedding_separation_score  Silhouette score per namespace  sklearn silhouette
+mrr@10  Mean Reciprocal Rank, top-10    standard MRR
+ndcg@5  Position-weighted relevance standard nDCG
+hard_negative_precision Hur ofta undviks adversarial?   adversarial_correct / total
+Lager 5: DEPLOY CONTROL — Lifecycle med triple-gate
+┌─────────────────────────────────────────────────────────────────┐
+│  DEPLOY CONTROL                                                  │
+│                                                                  │
+│  Lifecycle: REVIEW → STAGING → LIVE → (ROLLBACK)               │
+│                                                                  │
+│  Gate 1 — Embed-separation test:                               │
+│    smhi_brandrisk: separation score 0.72 ✓ (min: 0.65)        │
+│                                                                  │
+│  Gate 2 — Eval-trösklar:                                       │
+│    Success rate: 88.3% ✓ (min: 80%)                           │
+│    Hard negative rate: 91.2% ✓ (min: 85%)                     │
+│    Adversarial rate: 87.4% ✓ (min: 80%)                       │
+│                                                                  │
+│  Gate 3 — LLM-judge quality:                                   │
+│    Description clarity: 4.2/5 ✓                               │
+│    Keyword relevance: 4.5/5 ✓                                 │
+│    Disambiguation quality: 3.8/5 ⚠ (min: 4.0)                │
+│                                                                  │
+│  → Gate 3 ej passerad. Auto-loop föreslår fix.                │
+│    [Visa förslag] [Kör om] [Override & Deploy]                │
+└─────────────────────────────────────────────────────────────────┘
+
+Databas-schema för NEXUS
+-- Syntetiska testfall (genererade av LLM)
+CREATE TABLE eval_synthetic_cases (
+  id uuid PRIMARY KEY,
+  tool_id text NOT NULL,
+  namespace text NOT NULL,
+  question text NOT NULL,
+  difficulty text NOT NULL,     -- 'easy'|'medium'|'hard'|'adversarial'
+  expected_tool text,
+  expected_not_tool text[],     -- adversarial: should NOT pick these
+  generation_model text,
+  generation_run_id uuid,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Embedding-rymd snapshots
+CREATE TABLE eval_space_snapshots (
+  id uuid PRIMARY KEY,
+  snapshot_at timestamptz DEFAULT now(),
+  tool_id text NOT NULL,
+  namespace text NOT NULL,
+  embedding_model text NOT NULL,
+  umap_x float8, umap_y float8,          -- 2D coords för visualisering
+  cluster_label int,                      -- tilldelat kluster
+  silhouette_score float8,               -- per-point separation
+  nearest_neighbor_tool text,            -- närmaste granne
+  nearest_neighbor_distance float8
+);
+
+-- Auto-loop körningar
+CREATE TABLE eval_auto_loop_runs (
+  id uuid PRIMARY KEY,
+  loop_number int NOT NULL,
+  started_at timestamptz,
+  completed_at timestamptz,
+  total_tests int,
+  failures int,
+  metadata_proposals jsonb[],            -- LLM-förslag
+  approved_proposals int,
+  embedding_delta float8,               -- separation förbättring
+  status text                            -- 'running'|'waiting_review'|'done'
+);
+
+-- Pipeline-steg metriker (ersätter befintlig)
+CREATE TABLE eval_pipeline_stage_metrics (
+  id uuid PRIMARY KEY,
+  run_id uuid NOT NULL,
+  stage int NOT NULL,                    -- 1=intent, 2=route, 3=bigtool, 4=rerank, 5=e2e
+  stage_name text NOT NULL,
+  namespace text,                        -- null = all namespaces
+  precision_at_1 float8,
+  precision_at_5 float8,
+  mrr_at_10 float8,
+  ndcg_at_5 float8,
+  hard_negative_precision float8,
+  reranker_delta float8,                 -- NULL om inte steg 4
+  recorded_at timestamptz DEFAULT now()
+);
+
+Vad gör detta bättre än dagens system?
+Aspekt  Idag    NEXUS
+Testfall    Manuellt skrivna JSON   Auto-genererade, 4 svårighetsnivåer
+Embedding-analys    Ingen   UMAP-visualisering + separation score
+Förbättringsloop    Manuell LLM-driven auto-loop med PR-förslag
+Reranker-eval   Inte isolerad   Pre/post-rerank delta tracking
+Adversarial test    Ingen   Hard negatives per verktyg
+Namespace-förvirring    Okänd   Confusion matrix + alerting
+LLM-som-domare  Nej Gate 3 i lifecycle
+Self-improving  Nej Hela Lager 3
+Implementeringsordning (3 faser)
+FAS 1 (2 veckor) — Grunden
+  └─ Eval Ledger: pipeline-steg metriker i DB
+  └─ Space Auditor: silhouette + confusion risk alerts
+  └─ Synth Forge: LLM-genererade frågor (lätt + medel)
+
+FAS 2 (2 veckor) — Intelligensen  
+  └─ Adversarial generation (svår + adversarial)
+  └─ Auto Loop: failure analysis + LLM-förslag
+  └─ Reranker isolerad eval (pre/post delta)
+
+FAS 3 (1 vecka) — Polish
+  └─ Deploy Control: triple-gate lifecycle
+  └─ UMAP live-visualisering i admin UI
+  └─ Production feedback → auto-loop kopplingen
+
+Kärnsatsen: Istället för att underhålla statiska testfiler ber du systemet generera sina egna prövningar, analysera sina egna svagheter, och föreslå sina egna förbättringar — med människa i loopen bara för att godkänna.
+
+Vad tänker du? Vill du börja bygga något specifikt lager, eller ska vi förfina designen ytterligare?
+
+Sources:
+
+Synthetic data for RAG evaluation — Red Hat Developer (2026)
+RAG Evaluation: 2026 Metrics and Benchmarks — Label Your Data
+Contrastive learning for embedding models — Milvus AI Reference
+Can Contrastive Learning Refine Embeddings — arXiv
+Perfekt - nu har jag också den djupa forskningen klar. Några kritiska fynd som stärker och skärper förslaget:
+
+Tillägg från forskningen — 4 saker du MÅSTE veta
+1. ms-marco är inte tränad på svenska
+Er nuvarande reranker ms-marco-MultiBERT-L-12 är MS MARCO-tränad enbart på engelska. För svenska agentfrågor finns ett semantisk gap. Forskningen pekar på:
+
+Nuläge:   ms-marco-MultiBERT-L-12  →  engelska
+Bättre:   BGE-reranker-v2-m3       →  100+ språk inkl. svenska
+          Cohere Rerank 3.5        →  multilingual API (managed)
+
+NEXUS bör inkludera en Reranker A/B-testmodul som mäter pre/post delta per språk:
+
+ms-marco:        svenska accuracy  =  73.2%  ⚠
+bge-v2-m3:       svenska accuracy  =  ?      ← mäts i Eval Ledger
+
+2. Ert eval-underlag är för litet
+Ert befintliga system har 10–20 testfall per leverantör. ARES-forskningen är tydlig: för statistiskt tillförlitliga metriker behövs 100–500 per domän. Det är precis detta NEXUS Synth Forge löser automatiskt.
+
+Roundtrip consistency filter (ARES-metod): generera fråga → verifiera att rätt verktyg återfinns inom top-3 → annars kassera frågan. Filtrerar bort tvetydiga syntetiska frågor automatiskt.
+
+3. Bädda in tools OCH agents i samma rymd
+Paper från november 2025: Tool-to-Agent Retrieval — bäddade in både verktyg och agenter i ett delat vektorrum. Resultaten är relevanta:
+
++19.4% Recall@5
++17.7% nDCG@5
+
+För OneSeek betyder detta: intent → route → agent → tool bör alla ha embeddings i samma rum, med kontrollerade avstånd. Space Auditor bör visualisera detta hierarkiskt:
+
+[INTENT: väder]
+    ↓ nära
+[ROUTE: kunskap]
+    ↓ nära
+[AGENT: weather-worker]
+    ↓ nära
+[TOOL: smhi_metfcst]  ← men LÅNGT från [riksdag_voteringar]
+
+Space Auditor-metriken utökas:
+
+Nivå    Vad mäts
+Intent → Route  Ska vara tight (<0.3 cosine)
+Route → Tools   Ska vara tight inom route
+Tool → Tool (cross-ns)  Ska vara separerade (>0.6 cosine)
+4. RAGElo tournament för era befintliga eval-filer
+Ni har redan versionerade eval-filer (_v1, _v2, _v3, _v4). Istället för att definiera ett fast "gold standard" tröskelvärde — kör ett RAGElo Elo-tournament:
+
+eval_v1 vs eval_v2  → LLM bedömer vilken retrieval är bättre per fråga
+eval_v2 vs eval_v3  → parvisa jämförelser
+...
+Elo-poäng avgör bästa konfiguration automatiskt
+
+Det är snabbt, kräver inga absoluta trösklar, och passar era befintliga strukturer perfekt.
+
+Komplett NEXUS — Slutgiltig skiss
+NEXUS RETRIEVAL INTELLIGENCE PLATFORM
+══════════════════════════════════════════════════════════════════════════
+
+  SPACE AUDITOR        SYNTH FORGE         AUTO LOOP
+  ─────────────        ───────────         ─────────
+  · UMAP visualization  · LLM-generated    · Failure clustering
+  · Silhouette score      4 difficulty       LLM root-cause
+  · Confusion risk        levels           · Metadata PR proposals
+  · Intent→Tool→Agent   · Roundtrip       · Roundtrip-filtered
+    hierarchy view        filter             auto-accept
+                        · Hard negatives
+
+  EVAL LEDGER          DEPLOY CONTROL
+  ───────────          ──────────────
+  · 5-stage pipeline   · Gate 1: separation score
+  · Pre/post rerank    · Gate 2: eval thresholds
+  · RAGElo tournament  · Gate 3: LLM-judge quality
+  · Reranker A/B       · Lifecycle: REVIEW→LIVE→ROLLBACK
+  · Swedish vs EN
+    accuracy split
+
+Byggordning (föreslagen):
+
+Sprint 1: Eval Ledger + 5-stage metriker + Space Auditor grund
+Sprint 2: Synth Forge (LLM-generering + roundtrip filter)
+Sprint 3: Auto Loop + failure clustering + metadata-PR
+Sprint 4: RAGElo tournament + Reranker A/B + Deploy triple-gate
+Sprint 5: Production feedback → loop-koppling + UMAP live-viz
+
+Vill du att jag börjar koda ett specifikt lager? Eller ska vi förfina något ytterligare — t.ex. databasschema, UI-design, eller Synth Forge-promptarna?
+
+
+NEXUS v2 — Precision Routing Architecture
+Var exakt läcker precision idag?
+Innan vi förfinar behöver vi förstå varje punkt där ett fel kan uppstå:
+
+Användaren skriver: "Hur är det med tågen till Göteborg och vad kostar en tvårumma där?"
+
+NULÄGE — precision-läckor markerade med ⚡:
+
+Query  →  ⚡ Lexikal scoring (hanterar inte multi-intent)
+       →  ⚡ Reranker (ms-marco, ej tränad på svenska)
+       →  ⚡ Intent resolver (1 intent per query, men detta är 2)
+       →  ⚡ Route selection (vilket route väljs om intents pekar åt olika håll?)
+       →  ⚡ Bigtool retrieval (felaktig namespace om route är fel)
+       →  Felaktigt verktyg valt
+
+Svaret: 6 separata ställen där precision kan läcka. Vi måste täppa varje hål.
+
+Den kompletta 5-lagers precision-stacken
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   NEXUS PRECISION ROUTING STACK                              │
+│                                                                              │
+│  ┌─ LAGER 0 ──────────────────────────────────────────────────────────────┐ │
+│  │  QUERY UNDERSTANDING PRE-LAYER (QUL)            < 5ms, no LLM          │ │
+│  │                                                                         │ │
+│  │  · Multi-intent detection → decompose till sub-queries                 │ │
+│  │  · Entity extraction → plats, tid, organisation, ämne                  │ │
+│  │  · Domain hint scoring → vilka zoner är relevanta?                     │ │
+│  │  · Swedish normalization → förkortningar, dialekt, skrivvarianter       │ │
+│  │  · Complexity pre-score → trivial / simple / complex                   │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌─ LAGER 1 ──────────────────────────────────────────────────────────────┐ │
+│  │  CONFIDENCE BAND CASCADE                        < 10ms                 │ │
+│  │                                                                         │ │
+│  │  Band 0 [0.95–1.00] → Direkt route, ingen LLM                         │ │
+│  │  Band 1 [0.80–0.94] → Route + namespace verify, minimal LLM            │ │
+│  │  Band 2 [0.60–0.79] → Top-3 kandidater, LLM väljer                    │ │
+│  │  Band 3 [0.40–0.59] → Decompose eller omformulering                   │ │
+│  │  Band 4 [< 0.40]   → OOD-detektion → generell fallback               │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌─ LAGER 2 ──────────────────────────────────────────────────────────────┐ │
+│  │  ZONE-AWARE BIGTOOL RETRIEVAL                                           │ │
+│  │                                                                         │ │
+│  │  · Zone pre-filter från Lager 0 entities                               │ │
+│  │  · KBLab embedding av (sub-)query                                      │ │
+│  │  · Namespace-boostad vektorsökning                                      │ │
+│  │  · Cross-encoder reranking (Swedish-aware)                             │ │
+│  │  · Hard-negative guard → filtrera bort kända confusion-par             │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌─ LAGER 3 ──────────────────────────────────────────────────────────────┐ │
+│  │  POST-SELECTION SCHEMA VERIFICATION             (ny!)                  │ │
+│  │                                                                         │ │
+│  │  · Extrahera required parameters för valt verktyg                      │ │
+│  │  · Matcha mot entities från Lager 0                                    │ │
+│  │  · Om saknat required param → infer från kontext ELLER clarify         │ │
+│  │  · Geographic scope check (verktyget täcker Sverige, frågan om Peru?) │ │
+│  │  · Temporal scope check (verktyget realtid, frågan om historik?)       │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌─ LAGER 4 ──────────────────────────────────────────────────────────────┐ │
+│  │  FEEDBACK CAPTURE & LOOP INJECTION                                      │ │
+│  │                                                                         │ │
+│  │  · Logga routing-beslut med confidence + band                          │ │
+│  │  · Implicit signal: omformulerade följdfrågor = trolig feltriggning     │ │
+│  │  · Explicit signal: thumbs → kopplas till tool-chain                  │ │
+│  │  · Allt flödar in i Auto Loop                                          │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Lager 0 djupdykning — Query Understanding Pre-Layer
+Det som saknas helt idag. Körs innan all routing, utan LLM, snabb.
+
+@dataclass
+class QueryAnalysis:
+    sub_queries: list[str]          # ["tåg till Göteborg", "tvårumma Göteborg"]
+    entities: QueryEntities         # {location: "Göteborg", time: None, org: None}
+    domain_hints: list[str]         # ["transport", "bostad"]
+    zone_candidates: list[str]      # ["tools/action/travel", "tools/marketplace"]
+    complexity: str                 # "simple" | "compound" | "complex"
+    is_multi_intent: bool           # True
+    swedish_normalized: str         # canonical form of the query
+    ood_risk: float                 # 0.0–1.0, hur okänd är frågan?
+
+class QueryUnderstandingLayer:
+    def analyze(self, query: str) -> QueryAnalysis:
+        # 1. Swedish normalization
+        normalized = self.normalize_swedish(query)
+        # "tvårumma" → "tvårumslägenhet", "SL" → "Storstockholms Lokaltrafik"
+
+        # 2. Entity extraction (regelbaserad + NER, ej LLM)
+        entities = self.extract_entities(normalized)
+        # Plats: GeoNames-lista för Sverige
+        # Tid: regex för datum/tid-fraser
+        # Organisation: lista över kända myndigheter/bolag
+
+        # 3. Multi-intent detection (semantic similarity mellan meningar)
+        sub_queries = self.detect_and_split_intents(normalized)
+
+        # 4. Domain hint scoring (keyword → zone mapping)
+        zone_candidates = self.score_zones(entities, sub_queries)
+
+        # 5. OOD pre-score (distance to nearest tool centroid)
+        ood_risk = self.compute_ood_risk(normalized)
+
+        return QueryAnalysis(...)
+
+Swedish normalization-bank (kritisk för precision):
+
+SL          → Storstockholms Lokaltrafik
+SMHI        → Sveriges meteorologiska och hydrologiska institut
+SCB         → Statistiska centralbyrån
+tvårumma    → tvårumslägenhet
+dagis       → förskola
+gympa       → idrott
+moms        → mervärdesskatt
+
+Lager 1 djupdykning — Confidence Band Cascade
+Idag är confidence en enda siffra. Vi behöver 5 bands med distinkta beteenden:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONFIDENCE BAND CASCADE                                                     │
+│                                                                              │
+│  Input: fråga om "SMHI-prognos Umeå imorgon"                               │
+│                                                                              │
+│  ┌─ BAND 0 ─────────────────────────────────────────────────────────────┐  │
+│  │  Score: 0.97  →  DIREKT ROUTE, ingen LLM                             │  │
+│  │  Villkor: top-1 score > 0.95 OCH margin till top-2 > 0.20           │  │
+│  │  Beteende: välj top-1 verktyg direkt, logga, kör                    │  │
+│  │  Latens: ~3ms extra                                                   │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌─ BAND 1 ─────────────────────────────────────────────────────────────┐  │
+│  │  Score: 0.83  →  NAMESPACE VERIFY                                    │  │
+│  │  Villkor: top-1 > 0.80, margin > 0.10                               │  │
+│  │  Beteende: bekräfta namespace med snabb LLM-check (1 token output)  │  │
+│  │  Latens: ~50ms extra                                                  │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌─ BAND 2 ─────────────────────────────────────────────────────────────┐  │
+│  │  Score: 0.71  →  TOP-3 KANDIDATER → LLM VÄLJER                      │  │
+│  │  Villkor: top-1 > 0.60, margin < 0.10 (tuff konkurrens)             │  │
+│  │  Beteende: presentera top-3 med motiveringar, LLM väljer            │  │
+│  │  Latens: ~150ms extra                                                 │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌─ BAND 3 ─────────────────────────────────────────────────────────────┐  │
+│  │  Score: 0.52  →  QUERY DECOMPOSE / OMFORMULERA                       │  │
+│  │  Villkor: top-1 < 0.60 OCH ood_risk < 0.70                         │  │
+│  │  Beteende: dela upp i sub-queries, kör varje separat                │  │
+│  │  Latens: parallell körning av sub-queries                            │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌─ BAND 4 ─────────────────────────────────────────────────────────────┐  │
+│  │  Score: 0.31  →  OOD-DETEKTION → GENERELL FALLBACK                  │  │
+│  │  Villkor: top-1 < 0.40 ELLER ood_risk > 0.70                        │  │
+│  │  Beteende: logga som "dark matter", kör web_search, flagga för review│  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Calibration-problem: Nuvarande confidence är okalibrerad. Lösning — Platt-kalibrering på validation-set:
+
+class ConfidenceCalibrator:
+    """Platt scaling: transformerar råa retrieval-scores till kalibrerade probs"""
+    
+    def fit(self, raw_scores: list[float], labels: list[int]):
+        # Träna sigmoid på (raw_score → correct/incorrect)
+        # Efter kalibrering: score 0.83 = faktisk accuracy 83%
+        self.platt_a, self.platt_b = self._fit_platt(raw_scores, labels)
+    
+    def calibrate(self, raw_score: float) -> float:
+        return 1 / (1 + exp(self.platt_a * raw_score + self.platt_b))
+    
+    def compute_ece(self, scores, labels, n_bins=10) -> float:
+        """Expected Calibration Error — ska vara nära 0.0"""
+        # Binnar scores i 10 grupper, jämför mean(score) vs mean(correct)
+        ...
+
+Embedding Zone Architecture — Designad rymd
+Den viktigaste insikten: vektorrymden ska designas aktivt, inte bara uppstå av sig själv.
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NEXUS EMBEDDING ZONES (768-dim → UMAP-2D för visualisering)                │
+│                                                                              │
+│                        ╔═══════════════════╗                                │
+│                        ║   ZON A: KUNSKAP  ║                                │
+│                        ║  search_kb        ║                                │
+│                        ║  search_web       ║   ← tätt kluster,             │
+│                        ║  search_docs      ║     hög kohesion               │
+│                        ║  recall_memory    ║                                │
+│                        ╚═══════════════════╝                                │
+│                                ↕ min 0.55 cosine                           │
+│  ╔══════════════════════╗               ╔═════════════════════╗             │
+│  ║  ZON B: MYNDIGHETER  ║               ║  ZON C: HANDLING    ║             │
+│  ║  smhi_* (sub-kluster)║               ║  sandbox_*          ║             │
+│  ║  trafikverket_*      ║               ║  generate_podcast   ║             │
+│  ║  riksdag_*           ║               ║  display_image      ║             │
+│  ║  skolverket_*        ║               ║  trafiklab_route    ║             │
+│  ║  kolada_*            ║               ╚═════════════════════╝             │
+│  ║  scb_*               ║                       ↕ min 0.50                 │
+│  ║  bolagsverket_*      ║               ╔═════════════════════╗             │
+│  ╚══════════════════════╝               ║  ZON D: JÄMFÖRELSE  ║             │
+│                                         ║  call_grok          ║             │
+│  ← Sub-kluster i ZON B: →              ║  call_gpt           ║             │
+│  [smhi_vaeder] ↔ [smhi_hydro]          ║  call_claude        ║             │
+│  intra-kluster avstånd < 0.25          ╚═════════════════════╝             │
+│                                                                              │
+│  ⚠ BOUNDARY ZONES — specialbevakning:                                      │
+│    smhi_brandrisk ↔ skolverket (brandriskkurs?)  → confusion risk          │
+│    trafikverket_* ↔ trafiklab_route              → båda om trafik          │
+│    search_web ↔ call_oneseek                     → båda "sök information"  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Zone Health Targets (mäts kontinuerligt av Space Auditor):
+
+Mått    Target  Alert
+Intra-zon silhouette score  > 0.60  < 0.45
+Inter-zon centroid distance > 0.55  < 0.40
+Boundary tool confusion risk    < 0.25  > 0.40
+Zone purity (retrieved tools från rätt zon) > 90%   < 80%
+Hubness (verktyg som är "magnet" felaktigt) < 3% av queries > 8%
+Lager 3 — Post-Selection Schema Verification
+Nytt lager. Efter att verktyg valts, verifiera att queryn faktiskt kan matas in:
+
+TOOL_SCHEMAS = {
+    "smhi_vaderprognoser_metfcst": {
+        "required": ["location"],
+        "optional": ["time_horizon"],
+        "geographic_scope": "sweden",
+        "temporal_scope": "forecast_only",  # ej historik
+    },
+    "riksdag_dokument": {
+        "required_one_of": ["topic", "date_range", "document_type"],
+        "geographic_scope": "sweden",
+        "temporal_scope": "all",
+    },
+    "kolada_query": {
+        "required": ["municipality_or_region"],
+        "required_one_of": ["kpi_name", "kpi_id"],
+        "geographic_scope": "sweden_municipalities",
+        "temporal_scope": "historical_only",
+    }
+}
+
+class SchemaVerifier:
+    def verify(self, tool_id: str, query_analysis: QueryAnalysis) -> VerificationResult:
+        schema = TOOL_SCHEMAS[tool_id]
+        
+        # 1. Required params check
+        missing = self._check_required(schema, query_analysis.entities)
+        
+        # 2. Geographic scope
+        geo_mismatch = self._check_geo_scope(schema, query_analysis.entities)
+        
+        # 3. Temporal scope
+        time_mismatch = self._check_temporal_scope(schema, query_analysis.entities)
+        
+        if missing or geo_mismatch or time_mismatch:
+            return VerificationResult(
+                pass_=False,
+                action="infer" if self._can_infer(missing) else "clarify",
+                inference_target=missing,
+                mismatch_reason=geo_mismatch or time_mismatch
+            )
+        
+        return VerificationResult(pass_=True)
+
+Konsekvenser av schema mismatch:
+
+Location saknas → försök extrahera från kontext (tidigare meddelanden) → om ej möjligt: fråga
+Temporal mismatch (historik-fråga till forecast-verktyg) → reroute till rätt verktyg
+Geographic mismatch (fråga om Norge till SMHI) → flagga + web fallback
+Hard Negative Bank — Systematisk confusion-hantering
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  HARD NEGATIVE BANK                                                          │
+│                                                                              │
+│  Verktyg: smhi_brandrisk_fwif                                               │
+│                                                                              │
+│  KÄNDA CONFUSION-PAR (ranked by confusion frequency):                      │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  #1  skolverket_brandsäkerhet  —  confusion rate: 12%               │  │
+│  │      Exempel-queries som orsakar förvirring:                         │  │
+│  │      · "brandrisker för barn" (→ skolverket, ej SMHI)               │  │
+│  │      · "brandsäkerhet i skogen" (→ SMHI, ej skolverket)             │  │
+│  │      Fix: Lägg till "meteorologisk, FWI, Angström" i smhi keywords   │  │
+│  │      Status: [Föreslagen] [Testad] [Deployad]                       │  │
+│  │                                                                       │  │
+│  │  #2  smhi_vaderobservationer  —  confusion rate: 8%                 │  │
+│  │      Exempel: "aktuell brandrisk" vs "aktuella mätvärden"           │  │
+│  │      Fix: Skärp unique_scope med "ONLY fire risk index, not obs"     │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ADVERSARIAL TEST-BANK (auto-genererade från confusion-par):               │
+│  · "Vad är brandrisken i skolan?" → INTE smhi_brandrisk                    │
+│  · "FWI index Norrland idag?" → smhi_brandrisk ✓                          │
+│  · "Brandsäkerhetsregler för förskola?" → INTE smhi_brandrisk             │
+│                                                                              │
+│  Separation trend: [Week 1: 0.31] [Week 2: 0.38] [Week 3: 0.45] → ↑      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Hard negative-generering:
+
+För varje confusion-par (tool_A, tool_B):
+  1. Generera 10 frågor som borde gå till tool_A men liknar tool_B
+  2. Roundtrip-test: embedda → retrieval → top-1 == tool_A? (inte tool_B)
+  3. Om fel: lägg till i adversarial bank
+  4. Beräkna "confusion delta" per vecka → trend tracking
+
+Dark Matter Detection — OOD-queries
+Frågor som faller utanför alla kända verktygs scope. Kritiskt att hantera rätt.
+
+class DarkMatterDetector:
+    """Mahalanobis-distance baserad OOD-detektion"""
+    
+    def __init__(self, tool_embeddings: list[list[float]], namespaces: list[str]):
+        # Beräkna centroid + kovarians per namespace-zon
+        self.zone_models = self._fit_zone_gaussians(tool_embeddings, namespaces)
+    
+    def compute_ood_score(self, query_embedding: list[float]) -> OODResult:
+        # Mahalanobis distance till närmaste zon-centroid
+        distances = {
+            zone: self._mahalanobis(query_embedding, model)
+            for zone, model in self.zone_models.items()
+        }
+        min_distance = min(distances.values())
+        nearest_zone = min(distances, key=distances.get)
+        
+        # Om minimalt avstånd > threshold: OOD
+        ood_score = self._normalize_distance(min_distance)
+        
+        return OODResult(
+            ood_score=ood_score,                  # 0.0 = välkänd, 1.0 = helt okänd
+            nearest_zone=nearest_zone,
+            confidence=1.0 - ood_score,
+            action="dark_matter" if ood_score > 0.70 else "low_confidence"
+        )
+    
+    def log_dark_matter(self, query: str, ood_result: OODResult):
+        # Spara för new-tool-discovery analys
+        # Klustera dark matter queries → mönster = möjliga nya verktyg
+        ...
+
+Dark Matter Dashboard:
+
+DARK MATTER REGISTER — senaste 30 dagar
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total OOD queries: 47
+
+Kluster #1 (12 queries): "elpriser", "spotpris", "Nord Pool"
+  → Möjligt nytt verktyg: energipriser_elpris
+  → Recommendation: [Skapa verktyg] [Ignorera]
+
+Kluster #2 (8 queries): "tomtpris", "fastighetsvärdering"
+  → Möjligt nytt verktyg: lantmateriet_fastigheter
+  → Recommendation: [Skapa verktyg] [Ignorera]
+
+Kluster #3 (6 queries): blandade, inget mönster
+  → Sannolikt "rörigt input", inget åtgärd krävs
+
+Precision-Eval Metriker — Komplett set
+Helt ny metrik-taxonomi organiserad i 3 nivåer:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PRECISION METRIK-TAXONOMI                                                   │
+│                                                                              │
+│  NIVÅ 1: ROUTING-PRECISION (per query)                                      │
+│  ─────────────────────────────────────                                      │
+│  FCR (First Correct Rank)      position av rätt verktyg i rankat resultat  │
+│  Namespace Purity              % av top-k från rätt namespace               │
+│  Band Distribution             % queries per confidence band (0–4)         │
+│  Schema Match Rate             % där required params finns i query          │
+│  OOD Rate                      % queries som är dark matter                 │
+│                                                                              │
+│  NIVÅ 2: RETRIEVAL-KVALITET (per domän)                                     │
+│  ─────────────────────────────────────                                      │
+│  MRR@10                        Mean Reciprocal Rank, top-10                 │
+│  nDCG@5                        position-viktad relevans                     │
+│  Hard Negative Precision       % adversarial queries som INTE triggar fel   │
+│  Reranker Delta (pre/post)     hur mycket förbättrar reranker per domän     │
+│  Confusion Reduction Rate      confusion-frekvens trending ned?             │
+│                                                                              │
+│  NIVÅ 3: KALIBRERING & HÄLSA (systemövergripande)                          │
+│  ──────────────────────────────────────────────                             │
+│  ECE (Expected Calibration Error)  confidence matches actual accuracy?     │
+│  Silhouette Score (per zone)       embedding-kluster-kvalitet               │
+│  Inter-Zone Separation             centroid-avstånd mellan zoner            │
+│  Hubness Score                     verktyg som är "false magnets"           │
+│  Dark Matter Trend                 OOD-rate stigande eller sjunkande?       │
+│  Band-0 Throughput Rate            % queries på direktroute (snabbast)     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Nyckelinsikt: Band-0 Throughput Rate är ett proxy-mått för hela systemets mognad. Om 80%+ av queries löses på Band 0 (direkt, ingen LLM), är systemet i exceptionellt bra form.
+
+Auto Loop — Refined med precision-feed
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PRECISION AUTO LOOP — Full Pipeline                                         │
+│                                                                              │
+│  ┌──────────────┐                                                            │
+│  │  1. GENERERA │  Synth Forge: 4 difficulty levels per verktyg             │
+│  │   testfall   │  + Hard negatives från confusion-par                      │
+│  └──────┬───────┘                                                            │
+│         ↓                                                                    │
+│  ┌──────────────┐                                                            │
+│  │  2. KÖR EVAL │  5-lagers precision stack                                 │
+│  │  per lager   │  Mät FCR, Band dist, Schema match, OOD rate              │
+│  └──────┬───────┘                                                            │
+│         ↓                                                                    │
+│  ┌──────────────┐                                                            │
+│  │  3. CLUSTER  │  Gruppera fel efter typ:                                  │
+│  │   failure    │  · Zone-fel (fel zon retrieval)                           │
+│  │   modes      │  · Schema-fel (fel verktyg, rätt zon)                    │
+│  │              │  · Confidence-fel (oklalibrerat score)                   │
+│  │              │  · OOD-fel (borde ruttats till web-fallback)              │
+│  └──────┬───────┘                                                            │
+│         ↓                                                                    │
+│  ┌──────────────┐                                                            │
+│  │  4. LLM ROOT │  Per failure-cluster:                                     │
+│  │   CAUSE      │  "Varför väljs verktyg X istället för Y?"                │
+│  │   ANALYSIS   │  Output: rotorsak + specifik fix                         │
+│  └──────┬───────┘                                                            │
+│         ↓                                                                    │
+│  ┌──────────────┐                                                            │
+│  │  5. TESTA    │  Simulera fix, mät embedding delta                        │
+│  │   FIX        │  Kör micro-eval på påverkade verktyg                     │
+│  │   ISOLERAT   │  Godkänn om: separation ↑ OCH accuracy ↑                │
+│  └──────┬───────┘                                                            │
+│         ↓                                                                    │
+│  ┌──────────────┐                                                            │
+│  │  6. HUMAN    │  Visa förslag med diff, delta, evidens                   │
+│  │   REVIEW     │  [Godkänn] [Modifiera] [Avvisa] [Testa mer]             │
+│  │   QUEUE      │                                                            │
+│  └──────┬───────┘                                                            │
+│         ↓                                                                    │
+│  ┌──────────────┐                                                            │
+│  │  7. DEPLOY   │  Triple-gate check → uppdatera DB                        │
+│  │   & REINDEX  │  Reindex embeddings för påverkade verktyg               │
+│  └──────────────┘                                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Komplett Admin UI — 5 tabs, rent
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NEXUS                                                    [Kör Loop ▶]       │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  [ RYMD ] [ FORGE ] [ LOOP ] [ LEDGER ] [ DEPLOY ]                          │
+│                                                                              │
+│  ══ RYMD — Embedding Zone Health ══════════════════════════════════════════ │
+│                                                                              │
+│  System Health:  ████████████░░░  84%   Band-0 Rate: 71% ██████████░░      │
+│  ECE:            0.04  ✓ (kalibrerad)   OOD Rate:    2.1% ██░░░░░░░░░      │
+│                                                                              │
+│  [UMAP Zone Visualisering]                  Confusion Register:             │
+│   ●●● Zon A: Kunskap (silh: 0.82)           #1 smhi_brand ↔ skolverket 12%│
+│      ■■■ Zon B: Myndigheter (0.71)          #2 trafiklab ↔ trafikverket 8% │
+│        ◆◆◆ sub: smhi (0.88)                 #3 search_web ↔ call_oneseek 5%│
+│        ▲▲▲ sub: riksdag (0.79)                                              │
+│   ○○○ Zon C: Handling (0.85)               Dark Matter kluster:            │
+│   △△△ Zon D: Jämförelse (0.91)             · Elpriser (12 queries) [→]    │
+│                                             · Fastigheter (8 queries) [→]  │
+│  ⚠ Alert: trafiklab ↔ trafikverket                                         │
+│    Cosine: 0.41 — under 0.50-gränsen                                       │
+│    [Visa förslag] [Ignorera]                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Det enda som ger "rakt igenom"-precision
+Sammanfattat i en princip:
+
+Precision rakt igenom uppnås när Band-0 throughput är > 80%. Det betyder att 4 av 5 frågor löses direkt — utan LLM-anrop, utan tvekan. Det är målet. Allt i NEXUS bygger mot det målet.
+
+Vägen dit:
+
+QUL tar bort tvetydighet innan embedding-steget
+Kalibrerade confidence bands säkerställer att systemet vet när det vet
+Väldesignade zoner gör att rätt verktyg hamnar högt från start
+Hard negative bank tränar systemet att aktivt undvika confusion-par
+Schema verification fångar sista ledet av felrouting
+Auto loop förbättrar Band-0 rate mätbart varje vecka
+Vill du att vi börjar koda något specifikt nu — QUL, confidence calibration, zone-design, eller NEXUS databasschema?
+
+Forskningen är klar. Den tillför sex kritiska refinements som kompletterar designen. Låt mig integrera dem noggrant.
+
+NEXUS v2.1 — Precision Refinements
+Baserat på ACL 2025, EMNLP 2025, arXiv:2410.10347 och UAEval4RAG
+
+Refinement 1 — Lager 0 får konkreta svenska NLP-modeller
+Tidigare var QUL abstrakt. Nu vet vi exakt vilka modeller som ska användas:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  QUL STACK — Svenska NLP-modeller                                            │
+│                                                                              │
+│  Steg 1: Swedish spaCy sv_core_news_lg (KB Lab)      < 3ms, offline        │
+│          · UPOS tagger: 98.4% accuracy                                      │
+│          · NER: F1 90.1% (PRS, LOC, ORG, EVN, TME)                        │
+│          · Lemmatizer + dependency parser                                   │
+│          · Kör synkront i async FastAPI — snabbast möjliga                 │
+│                                                                              │
+│  Steg 2: KB/bert-base-swedish-cased-ner              < 20ms, GPU          │
+│          · Tränad på nyheter + myndighetstext — perfekt för civic queries  │
+│          · Backup om spaCy missar entitet (ovanliga ortsnamn etc)          │
+│          · Kör endast om spaCy entity confidence < 0.70                   │
+│                                                                              │
+│  Steg 3: Municipality Gazetteer (SCB register)       < 1ms, dict-lookup   │
+│          · Alla 290 svenska kommuner + vanliga förkortningar               │
+│          · "Sthlm" → "Stockholm", "Gbg" → "Göteborg"                      │
+│          · En träff här → direkt boost till rätt namespace-zon             │
+│                                                                              │
+│  Steg 4: Intent Margin Gate                          ← ny trigger          │
+│          · Om lexikal margin < 0.15 → MULTI-INTENT SIGNAL                 │
+│          · Triggar decomposition INNAN embedding-steget                    │
+│          · Baserat på: arXiv:2410.10347 (Unified Cascade Routing)         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Intent Margin Gate är nyckeln — istället för att låta en tveksam query gå rakt in i LLM-resolvern och hoppas på det bästa:
+
+# I intent_router.py — lägg till INNAN LLM-kall
+MULTI_INTENT_MARGIN_THRESHOLD = 0.15
+
+def should_decompose(top_score: float, second_score: float) -> bool:
+    margin = (top_score - second_score) / max(1.0, top_score)
+    return margin < MULTI_INTENT_MARGIN_THRESHOLD
+    # Om True: kör multi_query_decomposer, EJ direkt LLM-resolver
+
+Refinement 2 — Confidence Calibration: Platt + DATS per zon
+Okalibrerade scores är systemets dolda fel. Lösning i två delar:
+
+Del 1: Platt scaling på reranker-output (globalt, direkt implementerbart):
+
+class PlattCalibratedReranker:
+    """
+    ms-marco returnerar råa cross-encoder scores — inte kalibrerade probs.
+    Platt-kalibrering gör score 0.83 → faktisk accuracy 83%.
+    """
+    def __init__(self):
+        self.A: float | None = None  # Fittas på 200+ labeled routing-par
+        self.B: float | None = None
+
+    def fit(self, raw_scores: list[float], labels: list[int]):
+        """labels: 1 = korrekt verktyg valt, 0 = fel"""
+        from scipy.optimize import minimize
+        import numpy as np
+        
+        def nll(params):
+            A, B = params
+            probs = 1 / (1 + np.exp(A * np.array(raw_scores) + B))
+            probs = np.clip(probs, 1e-7, 1 - 1e-7)
+            return -np.mean(
+                np.array(labels) * np.log(probs)
+                + (1 - np.array(labels)) * np.log(1 - probs)
+            )
+        
+        res = minimize(nll, [1.0, 0.0], method="L-BFGS-B")
+        self.A, self.B = res.x
+
+    def calibrate(self, raw_score: float) -> float:
+        return 1 / (1 + np.exp(self.A * raw_score + self.B))
+
+Del 2: DATS — Distance-Aware Temperature Scaling (per zon, inte globalt):
+
+Problemet: En global T fungerar inte när domains är hetrogena. SMHI-queries har andra distributions-egenskaper än Riksdag-queries.
+
+# DATS: beräkna per-batch temperature baserat på avstånd till zon-centroid
+class ZonalTemperatureScaler:
+    def __init__(self, zone_centroids: dict[str, np.ndarray]):
+        self.centroids = zone_centroids
+        self.zone_temperatures: dict[str, float] = {}  # Fittas per zon
+    
+    def calibrate_zone_score(
+        self, 
+        raw_score: float, 
+        query_embedding: np.ndarray,
+        resolved_zone: str
+    ) -> float:
+        # Avstånd till zon-centroid påverkar temperatur
+        centroid = self.centroids[resolved_zone]
+        distance = np.linalg.norm(query_embedding - centroid)
+        
+        T = self.zone_temperatures.get(resolved_zone, 1.0)
+        # Queries långt från centroid → osäkrare → mjukare distribution
+        adaptive_T = T * (1 + 0.1 * distance)
+        
+        return float(torch.softmax(torch.tensor([raw_score]) / adaptive_T, dim=0)[0])
+
+ECE monitoring — ska vara < 0.05 för Band-0/1, < 0.10 för Band-2:
+
+ECE Dashboard (senaste 14 dagar):
+Zone A Kunskap:      ECE 0.031 ✓  ████░░░░░░  Väl kalibrerad
+Zone B Myndigheter:  ECE 0.067 ⚠  ████████░░  Nära gräns
+  └ sub: smhi:       ECE 0.048 ✓
+  └ sub: riksdag:    ECE 0.091 ✗  ████████████  Rekalibrera!
+Zone C Handling:     ECE 0.029 ✓  ███░░░░░░░  Excellent
+Zone D Jämförelse:   ECE 0.041 ✓  ████░░░░░░  Bra
+
+Refinement 3 — OOD: Energy Score som primärmetod
+Forskningen är tydlig: Energy Score är enklare att deploya och presterar lika bra som Mahalanobis utan distributional assumptions.
+
+class DarkMatterDetector:
+    """
+    Energy-based OOD detection — inga distributional assumptions.
+    Lägre energy = mer in-distribution (känd query-typ).
+    Rekommenderas i ACM CSUR 2025 som primärmetod för produktion.
+    """
+    
+    def __init__(self, ood_threshold: float = -5.0, knn_threshold: float = 2.5):
+        self.energy_threshold = ood_threshold
+        self.knn_threshold = knn_threshold
+        self.knn_index = None  # FAISS index med tränings-queries
+
+    def energy_score(self, route_logits: np.ndarray, T: float = 1.0) -> float:
+        """Lägre score = välkänd query-typ. Trigger om > threshold."""
+        return float(-T * np.log(np.sum(np.exp(route_logits / T))))
+
+    def knn_score(self, query_embedding: np.ndarray, k: int = 5) -> float:
+        """Avstånd till k:te närmaste tränings-query. Backup-gate."""
+        distances, _ = self.knn_index.search(query_embedding.reshape(1, -1), k)
+        return float(distances[0][-1])  # k:te närmaste = OOD signal
+
+    def detect(self, query_embedding: np.ndarray, route_logits: np.ndarray) -> OODResult:
+        energy = self.energy_score(route_logits)
+        
+        if energy > self.energy_threshold:
+            return OODResult(is_ood=True, method="energy", score=energy)
+        
+        # KNN som extra gate vid borderline energy
+        if energy > self.energy_threshold * 0.8:
+            knn_dist = self.knn_score(query_embedding)
+            if knn_dist > self.knn_threshold:
+                return OODResult(is_ood=True, method="knn", score=knn_dist)
+        
+        return OODResult(is_ood=False, score=energy)
+
+UAEval4RAG-integration — 6 kategorier av "out-of-scope" queries att tracka separat:
+
+UAEval kategori Exempel Fallback
+no_tool_exists  "Hjälp mig skriva till Kronofogden" Generell LLM-svar
+out_of_geographic_scope "Väder i Tokyo" web_search
+out_of_temporal_scope   "Vad kostade en lägenhet 1975?" web_search
+ambiguous_entity    "Ring till dem" (vem?)  Clarification
+conflicting_constraints "Billigaste snabbaste vägen"    Top-2 presentation
+underspecified  "Visa statistik" (vilken?)  Clarification
+Refinement 4 — Hard Negative Bank: 70% False Negative Warning
+Kritisk insikt från NV-Retriever (ACL 2025): Upp till 70% av BM25-minerade "negatives" är faktiskt korrekta svar — de är false negatives. Om dessa ingår i träning förstör det modellen.
+
+Lösning: Positive-Aware Filter innan något läggs i negative bank:
+
+class HardNegativeMiner:
+    
+    FALSE_NEGATIVE_SIMILARITY_THRESHOLD = 0.80
+    
+    def mine_hard_negatives(
+        self, 
+        anchor_tool: ToolIndexEntry, 
+        candidate_tools: list[ToolIndexEntry],
+        known_positives: list[ToolIndexEntry]
+    ) -> list[HardNegative]:
+        
+        hard_negatives = []
+        
+        for candidate in candidate_tools:
+            # STEG 1: False negative guard
+            # Om kandidaten liknar ett känt positivt verktyg → skippa
+            is_false_negative = any(
+                cosine_similarity(candidate.semantic_embedding, pos.semantic_embedding) 
+                > self.FALSE_NEGATIVE_SIMILARITY_THRESHOLD
+                for pos in known_positives
+            )
+            if is_false_negative:
+                continue
+            
+            # STEG 2: Kräv domain-overlap (hårt negativ = rätt domän, fel verktyg)
+            shares_domain = len(set(anchor_tool.keywords) & set(candidate.keywords)) >= 1
+            if not shares_domain:
+                continue  # Lätt negativ, inte hårt
+            
+            # STEG 3: Kräv parameter-skillnad (ej identiska verktyg)
+            differs_on_param = (
+                anchor_tool.geographic_scope != candidate.geographic_scope
+                or anchor_tool.core_activity != candidate.core_activity
+            )
+            if not differs_on_param:
+                continue
+            
+            hard_negatives.append(HardNegative(
+                anchor=anchor_tool.tool_id,
+                negative=candidate.tool_id,
+                mining_method="semantic_positive_aware",
+                similarity_score=cosine_similarity(
+                    anchor_tool.semantic_embedding, 
+                    candidate.semantic_embedding
+                )
+            ))
+        
+        return hard_negatives
+
+Semi-hard negative zone (viktig balans):
+
+För svårt ← [FEATURE COLLAPSE RISK] ←──────────────────→ [FÅ FEL] → För lätt
+
+                    SEMI-HARD ZONE (optimal)
+                    d(anchor, positive) < d(anchor, negative) < d(anchor, positive) + margin
+                    margin ≈ 0.15 för tool-retrieval
+
+Refinement 5 — Zone Architecture: Prefix-trick (ingen retraining)
+Forskningen (arXiv:2511.22150) visar att zone-separation kan uppnås utan att träna om hela embedding-modellen. Zone-prefixed embeddings ger strukturerad rymd direkt:
+
+ZONE_PREFIXES = {
+    "kunskap":       "[KUNSK] ",    # Faktahämtning, svar på frågor
+    "myndigheter":   "[MYNDG] ",    # Svenska gov APIs
+    "handling":      "[HANDL] ",    # Skapa, generera, utföra
+    "jämförelse":    "[JAMFR] ",    # Multi-model comparison
+}
+
+# Vid indexering — embedda med prefix
+def embed_tool_with_zone(tool: ToolIndexEntry) -> list[float]:
+    zone = resolve_zone_from_namespace(tool.namespace)
+    prefixed_description = f"{ZONE_PREFIXES[zone]}{tool.description}"
+    return embedding_model.encode(prefixed_description)
+
+# Vid query — embedda med löst route-hint om känt
+def embed_query_with_hint(query: str, zone_hint: str | None) -> list[float]:
+    if zone_hint and zone_hint in ZONE_PREFIXES:
+        prefixed = f"{ZONE_PREFIXES[zone_hint]}{query}"
+    else:
+        prefixed = query  # Ingen hint → bred sökning
+    return embedding_model.encode(prefixed)
+
+Varför detta fungerar: KBLab/sentence-bert-swedish-cased är tränad kontextuellt — prefix-tokens påverkar hela representationen. Empiriskt ger prefix-separation +12–18% inter-zone distance utan fine-tuning.
+
+HNSW payload-filter per zon (Qdrant-pattern, men applicerbart på pgvector via WHERE):
+
+# pgvector + zone filter — snabb retrieval inom rätt zon
+async def retrieve_tools_in_zone(
+    query_embedding: list[float], 
+    zone: str, 
+    top_k: int = 10
+) -> list[ToolIndexEntry]:
+    return await db.execute(
+        """
+        SELECT tool_id, 1 - (semantic_embedding <=> :query_emb) AS similarity
+        FROM tool_index
+        WHERE zone = :zone
+          AND lifecycle_status = 'live'
+        ORDER BY semantic_embedding <=> :query_emb
+        LIMIT :k
+        """,
+        {"query_emb": query_embedding, "zone": zone, "k": top_k}
+    )
+
+Refinement 6 — Select-then-Route (StR): 94.3% accuracy, 4x lägre kostnad
+EMNLP 2025 pattern som ersätter "flat routing" direkt:
+
+NULÄGE (flat routing):
+Query → Alla ~130 verktyg → Reranker → Top-K → LLM
+
+STR (Select-then-Route):
+Query → Zone selector (lightweight) → 15–20 kandidater → Reranker → Top-K → LLM
+
+Effekt: 4x lägre inference-kostnad, +2–3% accuracy pga. reducerat brus
+
+class SelectThenRouter:
+    """
+    Steg 1: Lightweight taxonomy selector (multi-label klassificering)
+    Steg 2: Confidence cascade inom vald taxonomi
+    """
+    
+    def select_zones(self, query_analysis: QueryAnalysis) -> list[str]:
+        """Välj 1–3 relevanta zoner baserat på QUL entities + keywords"""
+        zones = []
+        
+        # Entity-baserat
+        if query_analysis.entities.locations:
+            zones.append("myndigheter")  # Geobundet → gov APIs
+        if query_analysis.domain_hints & {"väder", "klimat", "vind"}:
+            zones.append("myndigheter")
+        if query_analysis.domain_hints & {"köpa", "sälja", "pris"}:
+            zones.append("kunskap")  # marketplace under kunskap
+        if query_analysis.complexity == "trivial":
+            zones.append("konversation")
+        
+        # Fallback: alla zoner om ingen hint
+        return zones or ["kunskap", "myndigheter", "handling"]
+    
+    def route(self, query: str, query_analysis: QueryAnalysis) -> RoutingDecision:
+        # Steg 1: Välj zoner
+        candidate_zones = self.select_zones(query_analysis)
+        
+        # Steg 2: Retrievera top-K per zon (parallellt)
+        candidates = []
+        for zone in candidate_zones:
+            zone_candidates = retrieve_tools_in_zone(
+                query_analysis.embedding, zone, top_k=5
+            )
+            candidates.extend(zone_candidates)
+        
+        # Steg 3: Cross-encoder rerank på ~15 kandidater (inte 130)
+        reranked = reranker.rerank(query, candidates)
+        
+        # Steg 4: Confidence band → avgör om LLM behövs
+        return apply_confidence_bands(reranked)
+
+Komplett Precision Stack — Slutgiltig version
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NEXUS v2.1 — COMPLETE PRECISION ROUTING STACK                              │
+│                                                                              │
+│  INPUT: "Hur är trafiken på E4 och vad kostar en bostad i Sundsvall?"      │
+│                                                                              │
+│  ┌── QUL < 5ms ──────────────────────────────────────────────────────────┐ │
+│  │  spaCy NER → {location: "Sundsvall", ner_conf: 0.97}                 │ │
+│  │  Municipality Gazetteer → "Sundsvall" ✓ → boost [myndigheter, kunsk] │ │
+│  │  Intent Margin Gate → margin: 0.09 < 0.15 → MULTI-INTENT DETECTED    │ │
+│  │  Decompose → ["trafik E4", "bostad Sundsvall"]                        │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│          ↓ 2 sub-queries, körs parallellt                                   │
+│  ┌── OOD Gate < 2ms ─────────────────────────────────────────────────────┐ │
+│  │  Energy score: -7.2 < -5.0 ✓ (in-distribution)                       │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌── SELECT-THEN-ROUTE < 8ms ────────────────────────────────────────────┐ │
+│  │  Sub-query 1: zones=[myndigheter] → 5 trafikverket candidates         │ │
+│  │  Sub-query 2: zones=[kunskap, myndigheter] → 5+5 marketplace+kolada  │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌── ZONE-AWARE RERANKER < 20ms ─────────────────────────────────────────┐ │
+│  │  BGE-reranker-v2-m3 (Swedish-aware) på ~10 kandidater                 │ │
+│  │  Platt-kalibrerade scores: [0.94, 0.91, 0.72, ...]                   │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌── CONFIDENCE BAND ────────────────────────────────────────────────────┐ │
+│  │  Sub-query 1: 0.94 → Band 0 (DIREKT ROUTE) → trafikverket_vaglag     │ │
+│  │  Sub-query 2: 0.72 → Band 2 (LLM verify) → marketplace vs kolada?    │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  ┌── SCHEMA VERIFICATION ────────────────────────────────────────────────┐ │
+│  │  trafikverket_vaglag: required=[road_segment] → "E4" ✓ extracted     │ │
+│  │  marketplace_blocket: required=[query] → "bostad Sundsvall" ✓        │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│          ↓                                                                   │
+│  OUTPUT: Parallell körning av 2 tools, båda med verified parameters        │
+│                                                                              │
+│  Totalt extra latens: ~35ms  |  LLM-anrop: 1 (bara sub-query 2)          │
+│  Jämfört med flat routing:   ~180ms  |  LLM-anrop: 2–3                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Raffinerade metriker — Komplett precision-dashboard
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PRECISION METRICS — REAL-TIME DASHBOARD                                    │
+│                                                                              │
+│  ► ROUTING HEALTH                                                            │
+│    Band-0 Throughput      71% ████████████████░░░░  Mål: >80%             │
+│    Multi-intent detect    88% ████████████████████  Utmärkt               │
+│    Schema match rate      94% ██████████████████░░  Utmärkt               │
+│    OOD rate (dark matter)  2.1% ██░░░░░░░░░░░░░░░  Låg ✓                 │
+│                                                                              │
+│  ► CALIBRATION                                                               │
+│    Global ECE             0.041 ✓  Kalibrerad                             │
+│    Zone B (Myndigheter)   0.091 ✗  → Auto-rekalibrering schemalagd       │
+│    Platt A/B (reranker)   A=1.23, B=-0.41  ← fittade parametrar          │
+│                                                                              │
+│  ► RETRIEVAL QUALITY                                                         │
+│    FCR (First Correct Rank) 1.2  ██████████████████░░  < 1.5 target      │
+│    Namespace Purity         91%  ███████████████████░  > 88% target ✓    │
+│    Hard Neg Precision       87%  █████████████████░░░  > 85% target ✓    │
+│    Reranker Delta          +14pp ████████████░░░░░░░░  Strong lift        │
+│                                                                              │
+│  ► EMBEDDING HEALTH                                                          │
+│    Silhouette (global)     0.71  ████████████████░░░░                     │
+│    Inter-zone distance     0.58  ████████████████░░░░  > 0.55 ✓          │
+│    False negative rate     4.2%  ████░░░░░░░░░░░░░░░  < 10% ✓           │
+│    Hubness (false magnets)  2.1%  ██░░░░░░░░░░░░░░░░  < 5% ✓            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Databasschema — Komplett och slutgiltigt
+-- Confidence calibration parameters per zon
+CREATE TABLE nexus_calibration_params (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  zone text NOT NULL,
+  calibration_method text NOT NULL,  -- 'platt' | 'temperature' | 'dats'
+  param_a float8,                    -- Platt A
+  param_b float8,                    -- Platt B
+  temperature float8,                -- Temperature scaling T
+  ece_score float8,                  -- Expected Calibration Error
+  fitted_on_samples int,
+  fitted_at timestamptz DEFAULT now(),
+  is_active bool DEFAULT true
+);
+
+-- OOD / Dark Matter register
+CREATE TABLE nexus_dark_matter_queries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  query_text text NOT NULL,
+  energy_score float8 NOT NULL,
+  knn_distance float8,
+  uaq_category text,     -- UAEval4RAG: no_tool|geo_scope|temporal_scope|ambiguous|conflicting|underspecified
+  cluster_id int,        -- tilldelat via DBSCAN klustering
+  reviewed bool DEFAULT false,
+  new_tool_candidate text,  -- om kluster leder till ny tool-idé
+  created_at timestamptz DEFAULT now()
+);
+
+-- Hard negative bank
+CREATE TABLE nexus_hard_negatives (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  anchor_tool text NOT NULL,
+  negative_tool text NOT NULL,
+  mining_method text NOT NULL,   -- 'semantic' | 'bm25' | 'adversarial' | 'production_error'
+  similarity_score float8,
+  is_false_negative bool DEFAULT false,  -- markeras om det visar sig vara FP
+  adversarial_query text,               -- exempel-query som triggar confusion
+  confusion_frequency float8,           -- hur ofta förväxlas dessa i produktion
+  added_at timestamptz DEFAULT now(),
+  UNIQUE(anchor_tool, negative_tool)
+);
+
+-- Zone-prefix konfiguration + health
+CREATE TABLE nexus_zone_config (
+  zone text PRIMARY KEY,
+  prefix_token text NOT NULL,
+  centroid_embedding vector(768),
+  silhouette_score float8,
+  inter_zone_min_distance float8,
+  last_reindexed timestamptz,
+  ood_energy_threshold float8 DEFAULT -5.0,
+  band0_rate float8,           -- % queries på direkt route
+  ece_score float8
+);
+
+-- Routing precision events (varje routing-beslut)
+CREATE TABLE nexus_routing_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  query_text text,
+  query_hash text,               -- för deduplication
+  band int NOT NULL,             -- 0-4
+  resolved_zone text,
+  selected_tool text,
+  raw_reranker_score float8,
+  calibrated_confidence float8,
+  is_multi_intent bool,
+  sub_query_count int,
+  schema_verified bool,
+  is_ood bool DEFAULT false,
+  implicit_feedback text,        -- 'reformulation' | 'follow_up' | null
+  explicit_feedback int,         -- -1, 0, 1
+  routed_at timestamptz DEFAULT now()
+);
+
+Prioriterad byggordning — Vad ger mest precision snabbast
+SPRINT 1 — Fundamental Precision (2 veckor)
+  ├─ Intent Margin Gate (< 0.15 → decompose)        ← 1 dag, direkt impact
+  ├─ Platt calibration på reranker                  ← 2 dagar, trustworthy scores
+  ├─ Energy score OOD gate                          ← 1 dag, stoppar dark matter
+  └─ Swedish spaCy NER i QUL                        ← 2 dagar, entity pre-filter
+
+SPRINT 2 — Zone Architecture (2 veckor)
+  ├─ Zone-prefix embeddings + reindex               ← 3 dagar
+  ├─ HNSW zone-filter i pgvector queries            ← 1 dag
+  ├─ Select-then-Route (StR) pattern                ← 2 dagar
+  └─ DATS per-zone calibration                      ← 2 dagar
+
+SPRINT 3 — Self-Improvement Loop (2 veckor)
+  ├─ Hard negative bank + false negative filter     ← 3 dagar
+  ├─ Synth Forge med roundtrip filter               ← 3 dagar
+  └─ Auto Loop: failure clustering + LLM fix        ← 4 dagar
+
+SPRINT 4 — Admin UI + Observability (1 vecka)
+  ├─ NEXUS dashboard (5 tabs)                       ← 3 dagar
+  ├─ UMAP zone visualisering                        ← 1 dag
+  └─ ECE + Band-0 real-time metrics                 ← 1 dag
+
+MÅLBILD efter Sprint 1-4:
+  Band-0 throughput:    > 80%      (direkt routing, ingen LLM)
+  ECE global:          < 0.05     (kalibrerad confidence)
+  Namespace Purity:    > 92%      (rätt zon, varje gång)
+  OOD rate:            < 3%       (dark matter hanterat)
+  Reranker Delta:      > +12pp    (reranker faktiskt hjälper)
