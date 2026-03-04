@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
 	Card,
 	CardContent,
@@ -7,6 +8,8 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
+import { nexusApiService } from "@/lib/apis/nexus-api.service";
 
 const BANDS = [
 	{
@@ -46,10 +49,32 @@ const BANDS = [
 	},
 ];
 
+interface BandDistributionData {
+	distribution: number[];
+	total: number;
+	percentages: number[];
+}
+
 export function BandDistribution() {
-	// Placeholder data — replaced with real data when routing events exist
-	const distribution = [0, 0, 0, 0, 0];
-	const total = distribution.reduce((a, b) => a + b, 0);
+	const [data, setData] = useState<BandDistributionData | null>(null);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		nexusApiService
+			.getBandDistribution()
+			.then(setData)
+			.catch(() =>
+				setData({
+					distribution: [0, 0, 0, 0, 0],
+					total: 0,
+					percentages: [0, 0, 0, 0, 0],
+				}),
+			)
+			.finally(() => setLoading(false));
+	}, []);
+
+	const distribution = data?.distribution ?? [0, 0, 0, 0, 0];
+	const total = data?.total ?? 0;
 
 	return (
 		<Card>
@@ -61,53 +86,73 @@ export function BandDistribution() {
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
-				<div className="space-y-3">
-					{BANDS.map((band) => {
-						const count = distribution[band.band];
-						const pct = total > 0 ? (count / total) * 100 : 0;
+				{loading ? (
+					<div className="flex items-center justify-center h-32">
+						<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+					</div>
+				) : (
+					<>
+						<div className="space-y-3">
+							{BANDS.map((band) => {
+								const count = distribution[band.band];
+								const pct = total > 0 ? (count / total) * 100 : 0;
 
-						return (
-							<div key={band.band} className="space-y-1">
-								<div className="flex items-center justify-between text-sm">
-									<div className="flex items-center gap-2">
-										<div
-											className={`h-3 w-3 rounded-sm ${band.color}`}
-										/>
-										<span className="font-medium">
-											Band {band.band}: {band.name}
-										</span>
-										<span className="text-muted-foreground text-xs">
-											{band.description}
-										</span>
+								return (
+									<div key={band.band} className="space-y-1">
+										<div className="flex items-center justify-between text-sm">
+											<div className="flex items-center gap-2">
+												<div
+													className={`h-3 w-3 rounded-sm ${band.color}`}
+												/>
+												<span className="font-medium">
+													Band {band.band}: {band.name}
+												</span>
+												<span className="text-muted-foreground text-xs">
+													{band.description}
+												</span>
+											</div>
+											<div className="flex items-center gap-3">
+												<span className="text-xs text-muted-foreground">
+													Mål: {band.target}
+												</span>
+												<span className="font-mono text-sm tabular-nums w-16 text-right">
+													{total > 0
+														? `${count} (${pct.toFixed(0)}%)`
+														: "—"}
+												</span>
+											</div>
+										</div>
+										<div className="h-2 rounded-full bg-muted overflow-hidden">
+											<div
+												className={`h-full rounded-full transition-all ${band.color}`}
+												style={{ width: `${pct}%` }}
+											/>
+										</div>
 									</div>
-									<div className="flex items-center gap-3">
-										<span className="text-xs text-muted-foreground">
-											Mål: {band.target}
-										</span>
-										<span className="font-mono text-sm tabular-nums w-12 text-right">
-											{total > 0 ? `${pct.toFixed(0)}%` : "—"}
-										</span>
-									</div>
-								</div>
-								<div className="h-2 rounded-full bg-muted overflow-hidden">
-									<div
-										className={`h-full rounded-full transition-all ${band.color}`}
-										style={{ width: `${pct}%` }}
-									/>
-								</div>
-							</div>
-						);
-					})}
-				</div>
+								);
+							})}
+						</div>
 
-				{total === 0 && (
-					<p className="text-center text-sm text-muted-foreground mt-6">
-						Inga routing-händelser registrerade ännu. Kör{" "}
-						<code className="text-xs bg-muted px-1 py-0.5 rounded">
-							POST /api/v1/nexus/routing/route
-						</code>{" "}
-						för att börja samla data.
-					</p>
+						{total === 0 && (
+							<p className="text-center text-sm text-muted-foreground mt-6">
+								Inga routing-händelser registrerade ännu. Kör{" "}
+								<code className="text-xs bg-muted px-1 py-0.5 rounded">
+									POST /api/v1/nexus/seed
+								</code>{" "}
+								för att populera basdata, sedan{" "}
+								<code className="text-xs bg-muted px-1 py-0.5 rounded">
+									POST /api/v1/nexus/routing/route
+								</code>{" "}
+								för att börja samla data.
+							</p>
+						)}
+
+						{total > 0 && (
+							<p className="text-center text-sm text-muted-foreground mt-4">
+								Totalt: {total} routing-händelser
+							</p>
+						)}
+					</>
 				)}
 			</CardContent>
 		</Card>

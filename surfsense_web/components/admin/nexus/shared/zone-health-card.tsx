@@ -67,11 +67,13 @@ export function ZoneHealthCard() {
 	const [zones, setZones] = useState<ZoneConfigResponse[]>([]);
 	const [loading, setLoading] = useState(true);
 
+	const [error, setError] = useState<string | null>(null);
+
 	useEffect(() => {
 		nexusApiService
 			.getZones()
 			.then(setZones)
-			.catch(() => {})
+			.catch((err) => setError(err.message || "Kunde inte hämta zondata"))
 			.finally(() => setLoading(false));
 	}, []);
 
@@ -80,6 +82,16 @@ export function ZoneHealthCard() {
 			<Card>
 				<CardContent className="flex items-center justify-center h-32">
 					<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+				</CardContent>
+			</Card>
+		);
+	}
+
+	if (error) {
+		return (
+			<Card>
+				<CardContent className="flex items-center justify-center h-32 text-muted-foreground">
+					<p className="text-sm">{error}</p>
 				</CardContent>
 			</Card>
 		);

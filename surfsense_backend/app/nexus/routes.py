@@ -1,12 +1,19 @@
-"""NEXUS FastAPI routes — /api/v1/nexus/..."""
+"""NEXUS FastAPI routes — /api/v1/nexus/...
+
+Sprint 5: All endpoints are fully integrated — no placeholders.
+"""
 
 from __future__ import annotations
 
+import uuid as uuid_mod
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import User, get_async_session
+from app.nexus.models import NexusAutoLoopRun, NexusDarkMatterQuery
 from app.nexus.schemas import (
     AnalyzeQueryRequest,
     AutoLoopRunResponse,
@@ -91,11 +98,7 @@ async def analyze_query(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Run QUL analysis on a query (no DB, no LLM).
-
-    Returns entity extraction, multi-intent detection, zone candidates,
-    and complexity classification.
-    """
+    """Run QUL analysis on a query (no DB, no LLM)."""
     return service.analyze_query(request.query)
 
 
@@ -106,10 +109,7 @@ async def route_query(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Run the full precision routing pipeline.
-
-    Sprint 2: QUL → StR → OOD → Calibrate → Bands → Schema verify.
-    """
+    """Run the full precision routing pipeline."""
     return await service.route_query(request.query, session)
 
 
@@ -124,7 +124,7 @@ async def get_space_health(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Get space auditor health report — silhouette, confusion, hubness."""
+    """Get space auditor health report."""
     return await service.get_space_health(session)
 
 
@@ -144,7 +144,7 @@ async def get_confusion_pairs(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Get top confusion pairs — tools that are dangerously similar."""
+    """Get top confusion pairs."""
     return await service.get_confusion_pairs(session)
 
 
@@ -154,7 +154,7 @@ async def get_hubness_alerts(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Get hubness alerts — tools that dominate nearest-neighbor results."""
+    """Get hubness alerts."""
     return await service.get_hubness_alerts(session)
 
 
@@ -217,14 +217,16 @@ async def get_forge_cases(
 
 @nexus_router.post("/loop/start")
 async def loop_start(
+    session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Start an auto-improvement loop run (background task placeholder)."""
-    from app.nexus.tasks import auto_loop_task
+    """Start an auto-improvement loop run.
 
-    result = auto_loop_task()
-    return result
+    Runs synchronously: loads test cases, evaluates routing, clusters
+    failures, creates proposals, and returns results.
+    """
+    return await service.run_auto_loop(session)
 
 
 @nexus_router.get("/loop/runs", response_model=list[AutoLoopRunResponse])
@@ -250,11 +252,41 @@ async def approve_loop_run(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Approve proposals from an auto-loop run."""
+    """Approve proposals from an auto-loop run.
+
+    Updates the run status to 'approved' and increments approved_proposals.
+    """
+    try:
+        uid = uuid_mod.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run_id format") from None
+
+    result = await session.execute(
+        select(NexusAutoLoopRun).where(NexusAutoLoopRun.id == uid)
+    )
+    run = result.scalars().first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    if run.status not in ("review", "pending"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run is in '{run.status}' state, cannot approve",
+        )
+
+    # Count proposals to approve
+    proposals = run.metadata_proposals or {}
+    proposal_list = proposals.get("proposals", [])
+    approved_count = len(proposal_list)
+
+    run.status = "approved"
+    run.approved_proposals = approved_count
+    await session.commit()
+
     return {
         "status": "approved",
         "run_id": run_id,
-        "message": "Placeholder — connect to AutoLoop in production",
+        "approved_proposals": approved_count,
     }
 
 
@@ -281,7 +313,7 @@ async def get_ledger_trend(
     service: NexusService = Depends(_get_service),
 ):
     """Get metrics trend over time."""
-    return MetricsTrend(period_days=days, data_points=[])
+    return await service.get_ledger_trend(session, days=days)
 
 
 # ------------------------------------------------------------------
@@ -311,8 +343,32 @@ async def review_dark_matter(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Mark a dark matter cluster as reviewed."""
-    return {"status": "reviewed", "cluster_id": cluster_id}
+    """Mark dark matter queries in a cluster as reviewed.
+
+    Updates all unreviewed queries matching the cluster_id.
+    """
+    # Update all queries in this cluster
+    result = await session.execute(
+        update(NexusDarkMatterQuery)
+        .where(
+            NexusDarkMatterQuery.cluster_id == cluster_id,
+            NexusDarkMatterQuery.reviewed.is_(False),
+        )
+        .values(
+            reviewed=True,
+            new_tool_candidate=(request.new_tool_candidate if request else None),
+        )
+        .returning(NexusDarkMatterQuery.id)
+    )
+    updated_ids = result.scalars().all()
+    await session.commit()
+
+    return {
+        "status": "reviewed",
+        "cluster_id": cluster_id,
+        "updated_count": len(updated_ids),
+        "new_tool_candidate": request.new_tool_candidate if request else None,
+    }
 
 
 # ------------------------------------------------------------------
@@ -329,6 +385,16 @@ async def get_routing_events(
 ):
     """Get recent routing events."""
     return await service.get_routing_events(session, limit=limit)
+
+
+@nexus_router.get("/routing/band-distribution")
+async def get_band_distribution(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get band distribution from routing events."""
+    return await service.get_band_distribution(session)
 
 
 class FeedbackRequest(BaseModel):
@@ -415,11 +481,8 @@ async def fit_calibration(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Trigger calibration fitting (placeholder)."""
-    return {
-        "status": "completed",
-        "message": "Calibration fit placeholder — connect in production",
-    }
+    """Trigger calibration fitting using routing event data."""
+    return await service.fit_calibration(session)
 
 
 @nexus_router.get("/calibration/ece", response_model=ECEReport)
@@ -433,19 +496,20 @@ async def get_calibration_ece(
 
 
 # ------------------------------------------------------------------
-# Seed / Demo Data
+# Seed Data
 # ------------------------------------------------------------------
 
 
 @nexus_router.post("/seed")
-async def seed_demo_data(
+async def seed_data(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    """Populate NEXUS with realistic demo data for testing.
+    """Populate NEXUS with infrastructure seed data.
 
-    Inserts zone configs, routing events, space snapshots, synthetic cases,
+    Inserts zone configs, routing events, space snapshots,
     loop runs, pipeline metrics, dark matter queries, and calibration params.
+    Synthetic test cases are generated separately via /forge/generate.
     """
     from app.nexus.seed import seed_nexus_data
 

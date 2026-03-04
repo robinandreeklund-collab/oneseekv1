@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from datetime import UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -549,6 +549,10 @@ class NexusService:
         )
 
         # Persist generated cases to DB
+        from app.nexus.llm import get_nexus_llm_info
+
+        model_name = get_nexus_llm_info().get("model")
+
         persisted = 0
         for case in result.cases:
             db_case = NexusSyntheticCase(
@@ -560,6 +564,7 @@ class NexusService:
                 roundtrip_verified=case.roundtrip_verified,
                 quality_score=case.quality_score,
                 generation_run_id=result.run_id,
+                generation_model=model_name,
             )
             session.add(db_case)
             persisted += 1
@@ -922,3 +927,229 @@ class NexusService:
         global_ece = sum(per_zone.values()) / len(per_zone) if per_zone else None
 
         return ECEReport(global_ece=global_ece, per_zone=per_zone)
+
+    async def fit_calibration(self, session: AsyncSession) -> dict:
+        """Fit Platt calibration using routing event data.
+
+        Collects (raw_score, band) pairs from routing events and fits
+        the Platt sigmoid to produce calibrated confidence scores.
+        """
+        from datetime import UTC, datetime
+
+        # Load routing events with scores
+        result = await session.execute(
+            select(NexusRoutingEvent)
+            .where(NexusRoutingEvent.raw_reranker_score.isnot(None))
+            .order_by(NexusRoutingEvent.routed_at.desc())
+            .limit(1000)
+        )
+        events = result.scalars().all()
+
+        if len(events) < 10:
+            return {
+                "status": "insufficient_data",
+                "message": f"Need at least 10 scored events, got {len(events)}",
+            }
+
+        # Build training data: raw_score → binary label (band 0/1 = correct)
+        scores = []
+        labels = []
+        for ev in events:
+            scores.append(ev.raw_reranker_score)
+            labels.append(1.0 if ev.band <= 1 else 0.0)
+
+        # Fit Platt scaler
+        params = self.platt_scaler.fit(scores, labels)
+
+        # Persist calibration per zone
+        from app.nexus.config import ZONE_PREFIXES
+
+        fitted_count = 0
+        for zone in ZONE_PREFIXES:
+            # Deactivate old params
+            old = await session.execute(
+                select(NexusCalibrationParam).where(
+                    NexusCalibrationParam.zone == zone,
+                    NexusCalibrationParam.is_active.is_(True),
+                )
+            )
+            for old_row in old.scalars().all():
+                old_row.is_active = False
+
+            # Insert new
+            cal = NexusCalibrationParam(
+                zone=zone,
+                calibration_method="platt",
+                param_a=params.a,
+                param_b=params.b,
+                temperature=1.0,
+                ece_score=None,
+                fitted_on_samples=len(scores),
+                fitted_at=datetime.now(tz=UTC),
+                is_active=True,
+            )
+            session.add(cal)
+            fitted_count += 1
+
+        await session.commit()
+
+        return {
+            "status": "completed",
+            "fitted_on_samples": len(scores),
+            "param_a": params.a,
+            "param_b": params.b,
+            "zones_updated": fitted_count,
+        }
+
+    # ------------------------------------------------------------------
+    # Band Distribution (Sprint 5)
+    # ------------------------------------------------------------------
+
+    async def get_band_distribution(self, session: AsyncSession) -> dict:
+        """Get band distribution from routing events."""
+        result = await session.execute(
+            select(
+                NexusRoutingEvent.band,
+                func.count(NexusRoutingEvent.id),
+            ).group_by(NexusRoutingEvent.band)
+        )
+        rows = result.all()
+
+        distribution = [0, 0, 0, 0, 0]
+        for band, count in rows:
+            if 0 <= band <= 4:
+                distribution[band] = count
+
+        total = sum(distribution)
+        return {
+            "distribution": distribution,
+            "total": total,
+            "percentages": [
+                round(d / total * 100, 1) if total > 0 else 0 for d in distribution
+            ],
+        }
+
+    # ------------------------------------------------------------------
+    # Ledger Trend (Sprint 5)
+    # ------------------------------------------------------------------
+
+    async def get_ledger_trend(self, session: AsyncSession, *, days: int = 30) -> dict:
+        """Get metrics trend over time."""
+        from datetime import timedelta
+
+        from app.nexus.schemas import MetricsTrend
+
+        cutoff = datetime.now(tz=UTC) - timedelta(days=days)
+        result = await session.execute(
+            select(NexusPipelineMetric)
+            .where(NexusPipelineMetric.recorded_at >= cutoff)
+            .order_by(NexusPipelineMetric.recorded_at.asc())
+        )
+        rows = result.scalars().all()
+
+        data_points = []
+        for row in rows:
+            data_points.append(
+                {
+                    "date": row.recorded_at.isoformat() if row.recorded_at else None,
+                    "stage": row.stage_name,
+                    "precision_at_1": row.precision_at_1,
+                    "mrr_at_10": row.mrr_at_10,
+                }
+            )
+
+        return MetricsTrend(period_days=days, data_points=data_points)
+
+    # ------------------------------------------------------------------
+    # Auto Loop Run (Sprint 5)
+    # ------------------------------------------------------------------
+
+    async def run_auto_loop(self, session: AsyncSession) -> dict:
+        """Run a complete auto-loop iteration inline.
+
+        Steps: Load test cases → Route each → Compare → Cluster → Propose
+        """
+        import uuid
+
+        now = datetime.now(tz=UTC)
+
+        # Count existing runs
+        run_count = (
+            await session.scalar(select(func.count()).select_from(NexusAutoLoopRun))
+            or 0
+        )
+        loop_number = run_count + 1
+        run_id = uuid.uuid4()
+
+        # Create run record
+        db_run = NexusAutoLoopRun(
+            id=run_id,
+            loop_number=loop_number,
+            started_at=now,
+            status="running",
+        )
+        session.add(db_run)
+        await session.flush()
+
+        # Load test cases
+        result = await session.execute(select(NexusSyntheticCase).limit(200))
+        cases = result.scalars().all()
+
+        if not cases:
+            db_run.status = "failed"
+            db_run.completed_at = datetime.now(tz=UTC)
+            await session.commit()
+            return {
+                "status": "failed",
+                "run_id": str(run_id),
+                "message": "Inga testfall hittade. Kör forge/generate först.",
+            }
+
+        # Evaluate
+        total_tests = 0
+        failures = 0
+        failed_queries: list[dict] = []
+
+        for case in cases:
+            total_tests += 1
+            try:
+                decision = await self.route_query(case.question, session)
+                if case.expected_tool and decision.selected_tool != case.expected_tool:
+                    failures += 1
+                    failed_queries.append(
+                        {
+                            "query": case.question,
+                            "expected_tool": case.expected_tool,
+                            "got_tool": decision.selected_tool or "(none)",
+                        }
+                    )
+            except Exception as e:
+                failures += 1
+                logger.warning("Loop eval error: %s", e)
+
+        # Cluster failures and create proposals
+        clusters = self.auto_loop.cluster_failures(failed_queries)
+        proposals = self.auto_loop.create_proposals(clusters)
+
+        # Update run
+        db_run.total_tests = total_tests
+        db_run.failures = failures
+        db_run.metadata_proposals = {
+            "proposals": [
+                {"tool_id": p.tool_id, "field": p.field_name, "reason": p.reason}
+                for p in proposals
+            ]
+        }
+        db_run.approved_proposals = 0
+        db_run.status = "review" if proposals else "approved"
+        db_run.completed_at = datetime.now(tz=UTC)
+        await session.commit()
+
+        return {
+            "status": "completed",
+            "run_id": str(run_id),
+            "loop_number": loop_number,
+            "total_tests": total_tests,
+            "failures": failures,
+            "proposals": len(proposals),
+        }

@@ -369,6 +369,11 @@ class NexusApiService {
 	getRoutingEvents = (limit = 50) =>
 		fetchNexus<RoutingEventResponse[]>(`/routing/events?limit=${limit}`);
 
+	getBandDistribution = () =>
+		fetchNexus<{ distribution: number[]; total: number; percentages: number[] }>(
+			"/routing/band-distribution",
+		);
+
 	logFeedback = (eventId: string, feedback: { implicit?: string; explicit?: number }) =>
 		fetchNexus<Record<string, string>>(`/routing/events/${eventId}/feedback`, {
 			method: "POST",
