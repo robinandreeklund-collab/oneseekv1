@@ -2,7 +2,11 @@
 
 import numpy as np
 
-from app.nexus.layers.space_auditor import SpaceAuditor, ToolPoint, _cosine_similarity_matrix
+from app.nexus.layers.space_auditor import (
+    SpaceAuditor,
+    ToolPoint,
+    _cosine_similarity_matrix,
+)
 
 
 class TestCosineMatrix:
@@ -26,9 +30,15 @@ class TestSpaceAuditor:
     def _make_tools(self) -> list[ToolPoint]:
         """Create tool points with clearly separated zones."""
         return [
-            ToolPoint("smhi_weather", "tools/weather", "myndigheter", [1.0, 0.0, 0.0, 0.0]),
-            ToolPoint("smhi_brandrisk", "tools/weather", "myndigheter", [0.9, 0.1, 0.0, 0.0]),
-            ToolPoint("scb_pop", "tools/statistik", "myndigheter", [0.8, 0.2, 0.0, 0.0]),
+            ToolPoint(
+                "smhi_weather", "tools/weather", "myndigheter", [1.0, 0.0, 0.0, 0.0]
+            ),
+            ToolPoint(
+                "smhi_brandrisk", "tools/weather", "myndigheter", [0.9, 0.1, 0.0, 0.0]
+            ),
+            ToolPoint(
+                "scb_pop", "tools/statistik", "myndigheter", [0.8, 0.2, 0.0, 0.0]
+            ),
             ToolPoint("search_kb", "tools/knowledge", "kunskap", [0.0, 0.0, 1.0, 0.0]),
             ToolPoint("search_web", "tools/knowledge", "kunskap", [0.0, 0.0, 0.9, 0.1]),
             ToolPoint("sandbox", "tools/code", "handling", [0.0, 0.0, 0.0, 1.0]),

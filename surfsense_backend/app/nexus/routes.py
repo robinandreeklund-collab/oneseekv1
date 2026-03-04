@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import User, get_async_session
 from app.nexus.schemas import (
     AnalyzeQueryRequest,
+    AutoLoopRunResponse,
     ConfusionPair,
+    DarkMatterCluster,
+    ForgeGenerateRequest,
     HubnessReport,
+    MetricsTrend,
     NexusConfigResponse,
     NexusHealthResponse,
+    PipelineMetricsSummary,
     QueryAnalysis,
     RouteQueryRequest,
     RoutingDecision,
+    RoutingEventResponse,
     SpaceHealthReport,
     SpaceSnapshot,
+    SyntheticCaseResponse,
     ZoneConfigResponse,
 )
 from app.nexus.service import NexusService
@@ -160,7 +168,185 @@ async def get_zone_metrics(
     """Get detailed metrics for a specific zone."""
     result = await service.get_zone_metrics(zone, session)
     if result is None:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=404, detail=f"Zone '{zone}' not found")
     return result
+
+
+# ------------------------------------------------------------------
+# Synth Forge (Sprint 3)
+# ------------------------------------------------------------------
+
+
+@nexus_router.post("/forge/generate")
+async def forge_generate(
+    request: ForgeGenerateRequest,
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Trigger synthetic test case generation (background task placeholder)."""
+    from app.nexus.tasks import forge_generate_task
+
+    result = forge_generate_task(
+        tool_ids=request.tool_ids,
+        difficulties=request.difficulties,
+        questions_per_difficulty=request.questions_per_difficulty,
+    )
+    return result
+
+
+@nexus_router.get("/forge/cases", response_model=list[SyntheticCaseResponse])
+async def get_forge_cases(
+    tool_id: str | None = Query(None, description="Filter by tool ID"),
+    limit: int = Query(100, ge=1, le=500),
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get synthetic test cases, optionally filtered by tool."""
+    return await service.get_synthetic_cases(session, tool_id=tool_id, limit=limit)
+
+
+# ------------------------------------------------------------------
+# Auto Loop (Sprint 3)
+# ------------------------------------------------------------------
+
+
+@nexus_router.post("/loop/start")
+async def loop_start(
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Start an auto-improvement loop run (background task placeholder)."""
+    from app.nexus.tasks import auto_loop_task
+
+    result = auto_loop_task()
+    return result
+
+
+@nexus_router.get("/loop/runs", response_model=list[AutoLoopRunResponse])
+async def get_loop_runs(
+    limit: int = Query(20, ge=1, le=100),
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get auto-loop run history."""
+    return await service.get_loop_runs(session, limit=limit)
+
+
+class ApproveProposalRequest(BaseModel):
+    proposal_ids: list[int] | None = None
+
+
+@nexus_router.post("/loop/runs/{run_id}/approve")
+async def approve_loop_run(
+    run_id: str,
+    request: ApproveProposalRequest | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Approve proposals from an auto-loop run."""
+    return {
+        "status": "approved",
+        "run_id": run_id,
+        "message": "Placeholder — connect to AutoLoop in production",
+    }
+
+
+# ------------------------------------------------------------------
+# Eval Ledger (Sprint 3)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/ledger/metrics", response_model=PipelineMetricsSummary)
+async def get_ledger_metrics(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get pipeline metrics across all 5 stages."""
+    return await service.get_pipeline_metrics(session)
+
+
+@nexus_router.get("/ledger/trend", response_model=MetricsTrend)
+async def get_ledger_trend(
+    days: int = Query(30, ge=1, le=90),
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get metrics trend over time."""
+    return MetricsTrend(period_days=days, data_points=[])
+
+
+# ------------------------------------------------------------------
+# Dark Matter (Sprint 3)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/dark-matter/clusters", response_model=list[DarkMatterCluster])
+async def get_dark_matter_clusters(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get OOD query clusters (dark matter)."""
+    return await service.get_dark_matter_clusters(session)
+
+
+class ReviewDarkMatterRequest(BaseModel):
+    new_tool_candidate: str | None = None
+
+
+@nexus_router.post("/dark-matter/{cluster_id}/review")
+async def review_dark_matter(
+    cluster_id: int,
+    request: ReviewDarkMatterRequest | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Mark a dark matter cluster as reviewed."""
+    return {"status": "reviewed", "cluster_id": cluster_id}
+
+
+# ------------------------------------------------------------------
+# Routing Events & Feedback (Sprint 3)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/routing/events", response_model=list[RoutingEventResponse])
+async def get_routing_events(
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get recent routing events."""
+    return await service.get_routing_events(session, limit=limit)
+
+
+class FeedbackRequest(BaseModel):
+    implicit: str | None = None  # "reformulation" | "follow_up"
+    explicit: int | None = None  # -1, 0, 1
+
+
+@nexus_router.post("/routing/events/{event_id}/feedback")
+async def log_routing_feedback(
+    event_id: str,
+    request: FeedbackRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Log feedback for a routing event."""
+    success = await service.log_feedback(
+        session,
+        event_id,
+        implicit=request.implicit,
+        explicit=request.explicit,
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Event '{event_id}' not found")
+    return {"status": "ok", "event_id": event_id}

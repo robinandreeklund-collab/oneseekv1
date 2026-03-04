@@ -1,7 +1,5 @@
 """Tests for NEXUS Platt Scaling calibration."""
 
-import pytest
-
 from app.nexus.calibration.platt_scaler import PlattCalibratedReranker, PlattParams
 
 
@@ -20,10 +18,29 @@ class TestPlattScaler:
     def test_fit_with_data(self):
         scaler = PlattCalibratedReranker()
         # Simulate: high scores → correct, low scores → incorrect
-        raw_scores = [0.9, 0.85, 0.8, 0.75, 0.3, 0.2, 0.15, 0.1, 0.7, 0.6,
-                      0.95, 0.88, 0.25, 0.18, 0.5, 0.4, 0.92, 0.82, 0.12, 0.08]
-        labels = [1, 1, 1, 1, 0, 0, 0, 0, 1, 1,
-                  1, 1, 0, 0, 0, 0, 1, 1, 0, 0]
+        raw_scores = [
+            0.9,
+            0.85,
+            0.8,
+            0.75,
+            0.3,
+            0.2,
+            0.15,
+            0.1,
+            0.7,
+            0.6,
+            0.95,
+            0.88,
+            0.25,
+            0.18,
+            0.5,
+            0.4,
+            0.92,
+            0.82,
+            0.12,
+            0.08,
+        ]
+        labels = [1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0]
 
         params = scaler.fit(raw_scores, labels)
         assert params.fitted
@@ -45,10 +62,29 @@ class TestPlattScaler:
     def test_monotonicity_after_fit(self):
         """Higher raw scores should yield higher calibrated scores."""
         scaler = PlattCalibratedReranker()
-        raw_scores = [0.9, 0.85, 0.8, 0.75, 0.3, 0.2, 0.15, 0.1, 0.7, 0.6,
-                      0.95, 0.88, 0.25, 0.18, 0.5, 0.4, 0.92, 0.82, 0.12, 0.08]
-        labels = [1, 1, 1, 1, 0, 0, 0, 0, 1, 1,
-                  1, 1, 0, 0, 0, 0, 1, 1, 0, 0]
+        raw_scores = [
+            0.9,
+            0.85,
+            0.8,
+            0.75,
+            0.3,
+            0.2,
+            0.15,
+            0.1,
+            0.7,
+            0.6,
+            0.95,
+            0.88,
+            0.25,
+            0.18,
+            0.5,
+            0.4,
+            0.92,
+            0.82,
+            0.12,
+            0.08,
+        ]
+        labels = [1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0]
         scaler.fit(raw_scores, labels)
 
         low = scaler.calibrate(0.2)

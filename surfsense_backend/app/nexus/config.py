@@ -10,6 +10,7 @@ from enum import StrEnum
 # Zone Architecture
 # ---------------------------------------------------------------------------
 
+
 class Zone(StrEnum):
     """The four embedding zones that structure the vector space."""
 
@@ -44,6 +45,7 @@ NAMESPACE_ZONE_MAP: dict[str, Zone] = {
 # ---------------------------------------------------------------------------
 # Confidence Band Cascade
 # ---------------------------------------------------------------------------
+
 
 class Band(StrEnum):
     """Confidence bands — determines routing behavior."""
@@ -115,24 +117,61 @@ SWEDISH_NORMALIZATION_BANK: dict[str, str] = {
 # Domain hints — keywords that suggest specific zones
 DOMAIN_HINTS: dict[str, list[str]] = {
     Zone.MYNDIGHETER: [
-        "väder", "klimat", "vind", "regn", "snö", "temperatur",
-        "trafik", "väg", "järnväg", "tåg",
-        "riksdag", "proposition", "betänkande", "motion",
-        "befolkning", "statistik", "kommun", "region",
-        "skola", "utbildning", "kursplan",
-        "kolada", "nyckeltal",
+        "väder",
+        "klimat",
+        "vind",
+        "regn",
+        "snö",
+        "temperatur",
+        "trafik",
+        "väg",
+        "järnväg",
+        "tåg",
+        "riksdag",
+        "proposition",
+        "betänkande",
+        "motion",
+        "befolkning",
+        "statistik",
+        "kommun",
+        "region",
+        "skola",
+        "utbildning",
+        "kursplan",
+        "kolada",
+        "nyckeltal",
     ],
     Zone.KUNSKAP: [
-        "sök", "hitta", "information", "dokument", "artikel",
-        "köpa", "sälja", "pris", "marknad", "annons",
+        "sök",
+        "hitta",
+        "information",
+        "dokument",
+        "artikel",
+        "köpa",
+        "sälja",
+        "pris",
+        "marknad",
+        "annons",
     ],
     Zone.HANDLING: [
-        "skapa", "generera", "kör", "exekvera", "kod",
-        "podcast", "bild", "sandbox",
+        "skapa",
+        "generera",
+        "kör",
+        "exekvera",
+        "kod",
+        "podcast",
+        "bild",
+        "sandbox",
     ],
     Zone.JAMFORELSE: [
-        "jämför", "olika", "modeller", "ai", "gpt", "claude",
-        "grok", "gemini",
+        "jämför",
+        "olika",
+        "modeller",
+        "ai",
+        "gpt",
+        "claude",
+        "grok",
+        "gemini",
     ],
 }
 
@@ -153,6 +192,7 @@ PLATT_DEFAULT_B: float = 0.0
 # ---------------------------------------------------------------------------
 # Zone Health Targets
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ZoneHealthTargets:
@@ -177,6 +217,7 @@ ZONE_HEALTH_TARGETS = ZoneHealthTargets()
 # Pipeline Stages (Eval Ledger)
 # ---------------------------------------------------------------------------
 
+
 class PipelineStage(StrEnum):
     """The 5 stages of the precision routing pipeline."""
 
@@ -199,6 +240,7 @@ PIPELINE_STAGES: list[tuple[int, str]] = [
 # ---------------------------------------------------------------------------
 # Deploy Control — Triple Gate
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class DeployGateThresholds:

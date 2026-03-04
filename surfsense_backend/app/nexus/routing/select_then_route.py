@@ -101,9 +101,7 @@ class SelectThenRoute:
         candidates: list[RetrievalCandidate] = []
 
         for zone in zones:
-            zone_tools = [
-                t for t in tool_entries if t.get("zone") == zone
-            ]
+            zone_tools = [t for t in tool_entries if t.get("zone") == zone]
             # Sort by score descending, take top-k
             zone_tools.sort(key=lambda t: t.get("score", 0.0), reverse=True)
             for t in zone_tools[:per_zone_k]:
@@ -121,7 +119,9 @@ class SelectThenRoute:
         candidates.sort(key=lambda c: c.raw_score, reverse=True)
         return candidates[:RERANK_MAX_CANDIDATES]
 
-    def compute_margin(self, candidates: list[RetrievalCandidate]) -> tuple[float, float, float]:
+    def compute_margin(
+        self, candidates: list[RetrievalCandidate]
+    ) -> tuple[float, float, float]:
         """Compute top score, second score, and margin from candidates.
 
         Returns:
@@ -157,7 +157,10 @@ class SelectThenRoute:
         """
         zones = self.select_zones(zone_candidates, max_zones=max_zones)
         candidates = self.retrieve_per_zone(
-            query, zones, tool_entries, per_zone_k=per_zone_k,
+            query,
+            zones,
+            tool_entries,
+            per_zone_k=per_zone_k,
         )
         top, second, margin = self.compute_margin(candidates)
 

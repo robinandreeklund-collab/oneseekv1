@@ -36,6 +36,7 @@ def _genuuid():
 # 1. Syntetiska testfall (Synth Forge)
 # ---------------------------------------------------------------------------
 
+
 class NexusSyntheticCase(Base):
     __tablename__ = "nexus_synthetic_cases"
     __allow_unmapped__ = True
@@ -60,6 +61,7 @@ class NexusSyntheticCase(Base):
 # 2. Embedding-rymd snapshots (Space Auditor)
 # ---------------------------------------------------------------------------
 
+
 class NexusSpaceSnapshot(Base):
     __tablename__ = "nexus_space_snapshots"
     __allow_unmapped__ = True
@@ -83,6 +85,7 @@ class NexusSpaceSnapshot(Base):
 # 3. Auto-loop körningar
 # ---------------------------------------------------------------------------
 
+
 class NexusAutoLoopRun(Base):
     __tablename__ = "nexus_auto_loop_runs"
     __allow_unmapped__ = True
@@ -103,6 +106,7 @@ class NexusAutoLoopRun(Base):
 # 4. Pipeline-steg metriker (Eval Ledger)
 # ---------------------------------------------------------------------------
 
+
 class NexusPipelineMetric(Base):
     __tablename__ = "nexus_pipeline_metrics"
     __allow_unmapped__ = True
@@ -118,14 +122,13 @@ class NexusPipelineMetric(Base):
     ndcg_at_5 = Column(Float, nullable=True)
     hard_negative_precision = Column(Float, nullable=True)
     reranker_delta = Column(Float, nullable=True)
-    recorded_at = Column(
-        TIMESTAMP(timezone=True), nullable=False, default=_utcnow
-    )
+    recorded_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
 
 
 # ---------------------------------------------------------------------------
 # 5. Confidence calibration per zon
 # ---------------------------------------------------------------------------
+
 
 class NexusCalibrationParam(Base):
     __tablename__ = "nexus_calibration_params"
@@ -139,15 +142,14 @@ class NexusCalibrationParam(Base):
     temperature = Column(Float, nullable=True)
     ece_score = Column(Float, nullable=True)
     fitted_on_samples = Column(Integer, nullable=True)
-    fitted_at = Column(
-        TIMESTAMP(timezone=True), nullable=False, default=_utcnow
-    )
+    fitted_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
     is_active = Column(Boolean, default=True, nullable=False)
 
 
 # ---------------------------------------------------------------------------
 # 6. OOD / Dark Matter register
 # ---------------------------------------------------------------------------
+
 
 class NexusDarkMatterQuery(Base):
     __tablename__ = "nexus_dark_matter_queries"
@@ -161,14 +163,13 @@ class NexusDarkMatterQuery(Base):
     cluster_id = Column(Integer, nullable=True, index=True)
     reviewed = Column(Boolean, default=False, nullable=False, index=True)
     new_tool_candidate = Column(Text, nullable=True)
-    created_at = Column(
-        TIMESTAMP(timezone=True), nullable=False, default=_utcnow
-    )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
 
 
 # ---------------------------------------------------------------------------
 # 7. Hard negative bank
 # ---------------------------------------------------------------------------
+
 
 class NexusHardNegative(Base):
     __tablename__ = "nexus_hard_negatives"
@@ -182,9 +183,7 @@ class NexusHardNegative(Base):
     is_false_negative = Column(Boolean, default=False, nullable=False)
     adversarial_query = Column(Text, nullable=True)
     confusion_frequency = Column(Float, nullable=True)
-    added_at = Column(
-        TIMESTAMP(timezone=True), nullable=False, default=_utcnow
-    )
+    added_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
 
     __table_args__ = (
         UniqueConstraint("anchor_tool", "negative_tool", name="uq_nexus_hn_pair"),
@@ -194,6 +193,7 @@ class NexusHardNegative(Base):
 # ---------------------------------------------------------------------------
 # 8. Zone-konfiguration + hälsa
 # ---------------------------------------------------------------------------
+
 
 class NexusZoneConfig(Base):
     __tablename__ = "nexus_zone_config"
@@ -213,6 +213,7 @@ class NexusZoneConfig(Base):
 # ---------------------------------------------------------------------------
 # 9. Routing precision events
 # ---------------------------------------------------------------------------
+
 
 class NexusRoutingEvent(Base):
     __tablename__ = "nexus_routing_events"

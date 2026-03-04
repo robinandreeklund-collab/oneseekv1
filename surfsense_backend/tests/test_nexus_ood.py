@@ -1,7 +1,6 @@
 """Tests for NEXUS OOD (Out-of-Distribution) detection."""
 
 import numpy as np
-import pytest
 
 from app.nexus.routing.ood_detector import DarkMatterDetector
 

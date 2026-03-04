@@ -145,6 +145,101 @@ export interface SpaceSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// Synth Forge Types (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export interface SyntheticCaseResponse {
+	id: string;
+	tool_id: string;
+	namespace: string;
+	question: string;
+	difficulty: string;
+	expected_tool: string | null;
+	roundtrip_verified: boolean;
+	quality_score: number | null;
+	created_at: string;
+}
+
+export interface ForgeGenerateRequest {
+	tool_ids?: string[];
+	difficulties?: string[];
+	questions_per_difficulty?: number;
+}
+
+export interface ForgeRunResult {
+	run_id: string;
+	total_generated: number;
+	total_verified: number;
+	by_difficulty: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Loop Types (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export interface AutoLoopRunResponse {
+	id: string;
+	loop_number: number;
+	status: string;
+	started_at: string | null;
+	completed_at: string | null;
+	total_tests: number | null;
+	failures: number | null;
+	approved_proposals: number | null;
+	embedding_delta: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Eval Ledger Types (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export interface StageMetrics {
+	stage: number;
+	stage_name: string;
+	namespace: string | null;
+	precision_at_1: number | null;
+	precision_at_5: number | null;
+	mrr_at_10: number | null;
+	ndcg_at_5: number | null;
+	hard_negative_precision: number | null;
+	reranker_delta: number | null;
+	recorded_at: string | null;
+}
+
+export interface PipelineMetricsSummary {
+	stages: StageMetrics[];
+	overall_e2e: StageMetrics | null;
+}
+
+// ---------------------------------------------------------------------------
+// Dark Matter Types (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export interface DarkMatterCluster {
+	cluster_id: number;
+	query_count: number;
+	sample_queries: string[];
+	suggested_tool: string | null;
+	reviewed: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Routing Events Types (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export interface RoutingEventResponse {
+	id: string;
+	query_text: string | null;
+	band: number;
+	resolved_zone: string | null;
+	selected_tool: string | null;
+	calibrated_confidence: number | null;
+	is_multi_intent: boolean | null;
+	is_ood: boolean;
+	routed_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // API Methods
 // ---------------------------------------------------------------------------
 
@@ -180,6 +275,51 @@ class NexusApiService {
 
 	getZoneMetrics = (zone: string) =>
 		fetchNexus<ZoneConfigResponse>(`/zones/${zone}/metrics`);
+
+	// Synth Forge (Sprint 3)
+	forgeGenerate = (request: ForgeGenerateRequest) =>
+		fetchNexus<ForgeRunResult>("/forge/generate", {
+			method: "POST",
+			body: JSON.stringify(request),
+		});
+
+	getForgeCases = (toolId?: string) =>
+		fetchNexus<SyntheticCaseResponse[]>(
+			`/forge/cases${toolId ? `?tool_id=${toolId}` : ""}`,
+		);
+
+	// Auto Loop (Sprint 3)
+	startLoop = () =>
+		fetchNexus<Record<string, string>>("/loop/start", { method: "POST" });
+
+	getLoopRuns = () => fetchNexus<AutoLoopRunResponse[]>("/loop/runs");
+
+	approveLoopRun = (runId: string) =>
+		fetchNexus<Record<string, string>>(`/loop/runs/${runId}/approve`, {
+			method: "POST",
+			body: JSON.stringify({}),
+		});
+
+	// Eval Ledger (Sprint 3)
+	getLedgerMetrics = () =>
+		fetchNexus<PipelineMetricsSummary>("/ledger/metrics");
+
+	getLedgerTrend = (days = 30) =>
+		fetchNexus<Record<string, unknown>>(`/ledger/trend?days=${days}`);
+
+	// Dark Matter (Sprint 3)
+	getDarkMatterClusters = () =>
+		fetchNexus<DarkMatterCluster[]>("/dark-matter/clusters");
+
+	// Routing Events (Sprint 3)
+	getRoutingEvents = (limit = 50) =>
+		fetchNexus<RoutingEventResponse[]>(`/routing/events?limit=${limit}`);
+
+	logFeedback = (eventId: string, feedback: { implicit?: string; explicit?: number }) =>
+		fetchNexus<Record<string, string>>(`/routing/events/${eventId}/feedback`, {
+			method: "POST",
+			body: JSON.stringify(feedback),
+		});
 }
 
 export const nexusApiService = new NexusApiService();

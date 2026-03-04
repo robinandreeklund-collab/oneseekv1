@@ -46,7 +46,9 @@ class TestSchemaVerification:
             entities_locations=["Stockholm"],
         )
         assert result.verified is False
-        assert "origin" in result.missing_params or "destination" in result.missing_params
+        assert (
+            "origin" in result.missing_params or "destination" in result.missing_params
+        )
 
     def test_trafiklab_with_two_locations(self):
         result = self.sv.verify(

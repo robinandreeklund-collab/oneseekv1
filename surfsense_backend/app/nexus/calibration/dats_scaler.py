@@ -61,9 +61,7 @@ class ZonalTemperatureScaler:
         """Get temperature parameters for a zone (default if not set)."""
         return self._zone_temps.get(zone, ZoneTemperature(zone=zone))
 
-    def compute_temperature(
-        self, zone: str, distance_to_centroid: float
-    ) -> float:
+    def compute_temperature(self, zone: str, distance_to_centroid: float) -> float:
         """Compute effective temperature for a query at given distance.
 
         Args:
@@ -74,7 +72,9 @@ class ZonalTemperatureScaler:
             Effective temperature (clamped to [min_temp, max_temp]).
         """
         params = self.get_zone_temperature(zone)
-        raw_temp = params.base_temperature + params.distance_weight * distance_to_centroid
+        raw_temp = (
+            params.base_temperature + params.distance_weight * distance_to_centroid
+        )
         return max(params.min_temperature, min(params.max_temperature, raw_temp))
 
     def calibrate(
@@ -121,9 +121,7 @@ class ZonalTemperatureScaler:
         distance_to_centroid: float,
     ) -> list[DATSResult]:
         """Calibrate a batch of scores for the same zone/distance."""
-        return [
-            self.calibrate(s, zone, distance_to_centroid) for s in scores
-        ]
+        return [self.calibrate(s, zone, distance_to_centroid) for s in scores]
 
     def fit_from_data(
         self,
@@ -147,7 +145,9 @@ class ZonalTemperatureScaler:
             Fitted ZoneTemperature parameters.
         """
         if len(scores) < 10:
-            logger.warning("Too few samples (%d) to fit DATS for zone %s", len(scores), zone)
+            logger.warning(
+                "Too few samples (%d) to fit DATS for zone %s", len(scores), zone
+            )
             return self.get_zone_temperature(zone)
 
         best_params = ZoneTemperature(zone=zone)
@@ -177,6 +177,9 @@ class ZonalTemperatureScaler:
         self._zone_temps[zone] = best_params
         logger.info(
             "DATS fit for %s: base_T=%.2f, d_weight=%.2f, MSE=%.4f",
-            zone, best_params.base_temperature, best_params.distance_weight, best_error,
+            zone,
+            best_params.base_temperature,
+            best_params.distance_weight,
+            best_error,
         )
         return best_params

@@ -25,11 +25,11 @@ class BandClassification:
 
 # Band actions describe what the routing system should do
 BAND_ACTIONS: dict[int, str] = {
-    0: "direct",      # Direct route, no LLM needed
-    1: "verify",      # Quick namespace verification, minimal LLM
-    2: "top3_llm",    # Present top-3 candidates, LLM chooses
-    3: "decompose",   # Decompose or reformulate the query
-    4: "ood",         # OOD detection, generell fallback
+    0: "direct",  # Direct route, no LLM needed
+    1: "verify",  # Quick namespace verification, minimal LLM
+    2: "top3_llm",  # Present top-3 candidates, LLM chooses
+    3: "decompose",  # Decompose or reformulate the query
+    4: "ood",  # OOD detection, generell fallback
 }
 
 BAND_NAMES: dict[int, str] = {
@@ -139,9 +139,7 @@ class ConfidenceBandCascade:
             dist[c.band] += 1
         return dist
 
-    def compute_band0_rate(
-        self, classifications: list[BandClassification]
-    ) -> float:
+    def compute_band0_rate(self, classifications: list[BandClassification]) -> float:
         """Compute the Band-0 throughput rate (target: >80%)."""
         if not classifications:
             return 0.0

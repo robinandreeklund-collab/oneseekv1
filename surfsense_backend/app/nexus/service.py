@@ -17,31 +17,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.nexus.calibration.dats_scaler import ZonalTemperatureScaler
 from app.nexus.calibration.platt_scaler import PlattCalibratedReranker, PlattParams
+from app.nexus.layers.auto_loop import AutoLoop
+from app.nexus.layers.eval_ledger import EvalLedger
 from app.nexus.layers.space_auditor import SpaceAuditor, ToolPoint
+from app.nexus.layers.synth_forge import SynthForge
 from app.nexus.models import (
+    NexusAutoLoopRun,
     NexusCalibrationParam,
+    NexusDarkMatterQuery,
+    NexusPipelineMetric,
     NexusRoutingEvent,
     NexusSpaceSnapshot,
+    NexusSyntheticCase,
     NexusZoneConfig,
 )
 from app.nexus.routing.confidence_bands import ConfidenceBandCascade
+from app.nexus.routing.hard_negative_bank import HardNegativeMiner
 from app.nexus.routing.ood_detector import DarkMatterDetector
 from app.nexus.routing.qul import QueryUnderstandingLayer
 from app.nexus.routing.schema_verifier import SchemaVerifier
 from app.nexus.routing.select_then_route import SelectThenRoute
 from app.nexus.routing.zone_manager import ZoneManager
 from app.nexus.schemas import (
+    AutoLoopRunResponse,
     ConfusionPair,
+    DarkMatterCluster,
     HubnessReport,
     NexusConfigResponse,
     NexusHealthResponse,
     OODResult,
+    PipelineMetricsSummary,
     QueryAnalysis,
     QueryEntities,
     RoutingCandidate,
     RoutingDecision,
+    RoutingEventResponse,
     SpaceHealthReport,
     SpaceSnapshot,
+    StageMetrics,
+    SyntheticCaseResponse,
     ZoneConfigResponse,
 )
 
@@ -62,6 +76,11 @@ class NexusService:
         self.schema_verifier = SchemaVerifier()
         self.dats_scaler = ZonalTemperatureScaler()
         self.space_auditor = SpaceAuditor()
+        # Sprint 3 additions
+        self.synth_forge = SynthForge()
+        self.hard_negative_miner = HardNegativeMiner()
+        self.eval_ledger = EvalLedger()
+        self.auto_loop = AutoLoop()
 
     # ------------------------------------------------------------------
     # Health & Config
@@ -69,12 +88,13 @@ class NexusService:
 
     async def get_health(self, session: AsyncSession) -> NexusHealthResponse:
         """Return system health summary."""
-        zones_count = await session.scalar(
-            select(func.count()).select_from(NexusZoneConfig)
-        ) or 0
-        events_count = await session.scalar(
-            select(func.count()).select_from(NexusRoutingEvent)
-        ) or 0
+        zones_count = (
+            await session.scalar(select(func.count()).select_from(NexusZoneConfig)) or 0
+        )
+        events_count = (
+            await session.scalar(select(func.count()).select_from(NexusRoutingEvent))
+            or 0
+        )
 
         return NexusHealthResponse(
             status="ok",
@@ -195,7 +215,9 @@ class NexusService:
         if tool_entries:
             # Step 2: Select-Then-Route
             str_result = self.str_pipeline.run(
-                query, analysis.zone_candidates, tool_entries,
+                query,
+                analysis.zone_candidates,
+                tool_entries,
             )
             top_score = str_result.top_score
             second_score = str_result.second_score
@@ -216,7 +238,9 @@ class NexusService:
             if candidates:
                 raw_top_score = candidates[0].raw_score
                 top_score = candidates[0].calibrated_score
-                second_score = candidates[1].calibrated_score if len(candidates) > 1 else 0.0
+                second_score = (
+                    candidates[1].calibrated_score if len(candidates) > 1 else 0.0
+                )
                 selected_tool = candidates[0].tool_id
 
             # Step 4: Schema verification on top candidate
@@ -240,7 +264,8 @@ class NexusService:
 
         # Step 6: Band classification
         band_result = self.band_cascade.classify(
-            top_score=top_score, second_score=second_score,
+            top_score=top_score,
+            second_score=second_score,
         )
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -269,9 +294,7 @@ class NexusService:
     # Space Auditor (Sprint 2)
     # ------------------------------------------------------------------
 
-    async def get_space_health(
-        self, session: AsyncSession
-    ) -> SpaceHealthReport:
+    async def get_space_health(self, session: AsyncSession) -> SpaceHealthReport:
         """Compute space health from latest snapshot or live tool data."""
         # Try to get recent snapshots from DB
         result = await session.execute(
@@ -297,7 +320,9 @@ class NexusService:
                     ToolPoint(
                         tool_id=snap.tool_id,
                         namespace=snap.namespace,
-                        zone=snap.namespace.split("/")[1] if "/" in snap.namespace else "",
+                        zone=snap.namespace.split("/")[1]
+                        if "/" in snap.namespace
+                        else "",
                         embedding=[snap.umap_x, snap.umap_y],
                     )
                 )
@@ -333,9 +358,7 @@ class NexusService:
             total_tools=report.total_tools,
         )
 
-    async def get_space_snapshot(
-        self, session: AsyncSession
-    ) -> SpaceSnapshot:
+    async def get_space_snapshot(self, session: AsyncSession) -> SpaceSnapshot:
         """Get latest UMAP snapshot for visualization."""
         from datetime import datetime
 
@@ -354,13 +377,17 @@ class NexusService:
 
         points = []
         for snap in snapshots:
-            points.append({
-                "tool_id": snap.tool_id,
-                "x": snap.umap_x,
-                "y": snap.umap_y,
-                "zone": snap.namespace.split("/")[1] if "/" in snap.namespace else "",
-                "cluster": snap.cluster_label,
-            })
+            points.append(
+                {
+                    "tool_id": snap.tool_id,
+                    "x": snap.umap_x,
+                    "y": snap.umap_y,
+                    "zone": snap.namespace.split("/")[1]
+                    if "/" in snap.namespace
+                    else "",
+                    "cluster": snap.cluster_label,
+                }
+            )
 
         return SpaceSnapshot(
             snapshot_at=snapshots[0].snapshot_at,
@@ -403,6 +430,200 @@ class NexusService:
         )
 
     # ------------------------------------------------------------------
+    # Synth Forge (Sprint 3)
+    # ------------------------------------------------------------------
+
+    async def get_synthetic_cases(
+        self, session: AsyncSession, *, tool_id: str | None = None, limit: int = 100
+    ) -> list[SyntheticCaseResponse]:
+        """Get synthetic test cases from DB."""
+        q = select(NexusSyntheticCase).order_by(NexusSyntheticCase.created_at.desc())
+        if tool_id:
+            q = q.where(NexusSyntheticCase.tool_id == tool_id)
+        q = q.limit(limit)
+        result = await session.execute(q)
+        rows = result.scalars().all()
+        return [
+            SyntheticCaseResponse(
+                id=row.id,
+                tool_id=row.tool_id,
+                namespace=row.namespace,
+                question=row.question,
+                difficulty=row.difficulty,
+                expected_tool=row.expected_tool,
+                roundtrip_verified=row.roundtrip_verified,
+                quality_score=row.quality_score,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Auto Loop (Sprint 3)
+    # ------------------------------------------------------------------
+
+    async def get_loop_runs(
+        self, session: AsyncSession, *, limit: int = 20
+    ) -> list[AutoLoopRunResponse]:
+        """Get auto-loop run history from DB."""
+        result = await session.execute(
+            select(NexusAutoLoopRun)
+            .order_by(NexusAutoLoopRun.started_at.desc())
+            .limit(limit)
+        )
+        rows = result.scalars().all()
+        return [
+            AutoLoopRunResponse(
+                id=row.id,
+                loop_number=row.loop_number,
+                status=row.status,
+                started_at=row.started_at,
+                completed_at=row.completed_at,
+                total_tests=row.total_tests,
+                failures=row.failures,
+                approved_proposals=row.approved_proposals,
+                embedding_delta=row.embedding_delta,
+            )
+            for row in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Eval Ledger (Sprint 3)
+    # ------------------------------------------------------------------
+
+    async def get_pipeline_metrics(
+        self, session: AsyncSession
+    ) -> PipelineMetricsSummary:
+        """Get latest pipeline metrics from DB."""
+        result = await session.execute(
+            select(NexusPipelineMetric)
+            .order_by(NexusPipelineMetric.recorded_at.desc())
+            .limit(50)
+        )
+        rows = result.scalars().all()
+
+        stages = [
+            StageMetrics(
+                stage=row.stage,
+                stage_name=row.stage_name,
+                namespace=row.namespace,
+                precision_at_1=row.precision_at_1,
+                precision_at_5=row.precision_at_5,
+                mrr_at_10=row.mrr_at_10,
+                ndcg_at_5=row.ndcg_at_5,
+                hard_negative_precision=row.hard_negative_precision,
+                reranker_delta=row.reranker_delta,
+                recorded_at=row.recorded_at,
+            )
+            for row in rows
+        ]
+
+        e2e = next((s for s in stages if s.stage_name == "e2e"), None)
+        return PipelineMetricsSummary(stages=stages, overall_e2e=e2e)
+
+    # ------------------------------------------------------------------
+    # Dark Matter (Sprint 3)
+    # ------------------------------------------------------------------
+
+    async def get_dark_matter_clusters(
+        self, session: AsyncSession
+    ) -> list[DarkMatterCluster]:
+        """Get dark matter OOD query clusters."""
+        result = await session.execute(
+            select(NexusDarkMatterQuery)
+            .where(NexusDarkMatterQuery.reviewed.is_(False))
+            .order_by(NexusDarkMatterQuery.created_at.desc())
+            .limit(200)
+        )
+        rows = result.scalars().all()
+
+        if not rows:
+            return []
+
+        ood_queries = [
+            {"query_text": row.query_text, "energy_score": row.energy_score}
+            for row in rows
+        ]
+
+        raw_clusters = self.ood_detector.cluster_dark_matter(ood_queries)
+        return [
+            DarkMatterCluster(
+                cluster_id=c["cluster_id"],
+                query_count=c["query_count"],
+                sample_queries=c["sample_queries"],
+                suggested_tool=c.get("suggested_tool"),
+                reviewed=c.get("reviewed", False),
+            )
+            for c in raw_clusters
+        ]
+
+    # ------------------------------------------------------------------
+    # Routing Events (Sprint 3)
+    # ------------------------------------------------------------------
+
+    async def get_routing_events(
+        self, session: AsyncSession, *, limit: int = 50
+    ) -> list[RoutingEventResponse]:
+        """Get recent routing events."""
+        result = await session.execute(
+            select(NexusRoutingEvent)
+            .order_by(NexusRoutingEvent.routed_at.desc())
+            .limit(limit)
+        )
+        rows = result.scalars().all()
+        return [
+            RoutingEventResponse(
+                id=row.id,
+                query_text=row.query_text,
+                band=row.band,
+                resolved_zone=row.resolved_zone,
+                selected_tool=row.selected_tool,
+                calibrated_confidence=row.calibrated_confidence,
+                is_multi_intent=row.is_multi_intent,
+                is_ood=row.is_ood,
+                routed_at=row.routed_at,
+            )
+            for row in rows
+        ]
+
+    async def log_feedback(
+        self,
+        session: AsyncSession,
+        event_id: str,
+        *,
+        implicit: str | None = None,
+        explicit: int | None = None,
+    ) -> bool:
+        """Log feedback for a routing event.
+
+        Args:
+            event_id: UUID of the routing event.
+            implicit: 'reformulation' | 'follow_up' | None.
+            explicit: -1 (bad), 0 (neutral), 1 (good).
+        """
+        import uuid as uuid_mod
+
+        try:
+            uid = uuid_mod.UUID(event_id)
+        except ValueError:
+            return False
+
+        result = await session.execute(
+            select(NexusRoutingEvent).where(NexusRoutingEvent.id == uid)
+        )
+        event = result.scalars().first()
+        if not event:
+            return False
+
+        if implicit is not None:
+            event.implicit_feedback = implicit
+        if explicit is not None:
+            event.explicit_feedback = explicit
+
+        await session.flush()
+        return True
+
+    # ------------------------------------------------------------------
     # Calibration Loading
     # ------------------------------------------------------------------
 
@@ -424,7 +645,9 @@ class NexusService:
                     n_samples=row.fitted_on_samples or 0,
                 )
             )
-            logger.info("Loaded Platt calibration: A=%.4f, B=%.4f", row.param_a, row.param_b)
+            logger.info(
+                "Loaded Platt calibration: A=%.4f, B=%.4f", row.param_a, row.param_b
+            )
 
     # ------------------------------------------------------------------
     # Event Logging

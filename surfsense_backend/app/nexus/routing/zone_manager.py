@@ -37,7 +37,9 @@ class ZoneManager:
         # Zone centroids (loaded from DB or computed from tool embeddings)
         self._centroids: dict[str, np.ndarray] = {}
 
-    def resolve_zone_from_namespace(self, namespace: str | tuple[str, ...]) -> Zone | None:
+    def resolve_zone_from_namespace(
+        self, namespace: str | tuple[str, ...]
+    ) -> Zone | None:
         """Map a namespace (or namespace tuple) to a zone.
 
         Args:
@@ -139,9 +141,7 @@ class ZoneManager:
             return self.prefix_text_for_zone(description, zone)
         return description
 
-    def embed_query_with_hint(
-        self, query: str, zone_candidates: list[str]
-    ) -> str:
+    def embed_query_with_hint(self, query: str, zone_candidates: list[str]) -> str:
         """Prepend the most likely zone prefix to a query for embedding.
 
         If multiple zones are candidates, uses the first (highest priority).

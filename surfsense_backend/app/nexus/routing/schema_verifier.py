@@ -97,14 +97,28 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
 }
 
 # Geographic scope keywords
-_SWEDEN_INDICATORS = frozenset({
-    "sverige", "swedish", "svensk", "stockholm", "göteborg", "malmö",
-    "kommun", "län", "region",
-})
+_SWEDEN_INDICATORS = frozenset(
+    {
+        "sverige",
+        "swedish",
+        "svensk",
+        "stockholm",
+        "göteborg",
+        "malmö",
+        "kommun",
+        "län",
+        "region",
+    }
+)
 
-_GLOBAL_INDICATORS = frozenset({
-    "global", "world", "international", "internationell",
-})
+_GLOBAL_INDICATORS = frozenset(
+    {
+        "global",
+        "world",
+        "international",
+        "internationell",
+    }
+)
 
 
 class SchemaVerifier:
@@ -148,7 +162,9 @@ class SchemaVerifier:
 
         # Check required parameters
         for param in schema.required_params:
-            if (param in ("location", "municipality") and not locations) or (param in ("origin", "destination") and len(locations) < 2):
+            if (param in ("location", "municipality") and not locations) or (
+                param in ("origin", "destination") and len(locations) < 2
+            ):
                 missing_params.append(param)
                 penalty += 0.10
 
@@ -157,7 +173,13 @@ class SchemaVerifier:
             lower = query.lower()
             has_foreign = any(
                 kw in lower
-                for kw in ("utomlands", "utanför sverige", "europa", "usa", "medelhavet")
+                for kw in (
+                    "utomlands",
+                    "utanför sverige",
+                    "europa",
+                    "usa",
+                    "medelhavet",
+                )
             )
             if has_foreign:
                 scope_mismatch = "foreign_query_for_sweden_tool"
@@ -167,7 +189,9 @@ class SchemaVerifier:
         if schema.temporal_scope == "forecast" and times:
             # If query mentions historical dates, penalize
             lower = query.lower()
-            if any(kw in lower for kw in ("förra", "igår", "historisk", "1990", "1980")):
+            if any(
+                kw in lower for kw in ("förra", "igår", "historisk", "1990", "1980")
+            ):
                 scope_mismatch = scope_mismatch or "historical_query_for_forecast_tool"
                 penalty += 0.10
 

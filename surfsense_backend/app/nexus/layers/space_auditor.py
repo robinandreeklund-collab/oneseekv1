@@ -161,9 +161,7 @@ class SpaceAuditor:
         self.confusion_threshold = confusion_threshold
         self.hubness_threshold = hubness_threshold
 
-    def compute_separation_matrix(
-        self, tools: list[ToolPoint]
-    ) -> SeparationReport:
+    def compute_separation_matrix(self, tools: list[ToolPoint]) -> SeparationReport:
         """Compute full separation analysis.
 
         Args:
@@ -244,17 +242,20 @@ class SpaceAuditor:
         for i in range(len(tools)):
             for j in range(i + 1, len(tools)):
                 sim = float(sim_matrix[i, j])
-                if sim >= self.confusion_threshold and tools[i].namespace != tools[j].namespace:
-                        pairs.append(
-                            ConfusionPair(
-                                tool_a=tools[i].tool_id,
-                                tool_b=tools[j].tool_id,
-                                similarity=sim,
-                                zone_a=tools[i].zone,
-                                zone_b=tools[j].zone,
-                                is_cross_zone=tools[i].zone != tools[j].zone,
-                            )
+                if (
+                    sim >= self.confusion_threshold
+                    and tools[i].namespace != tools[j].namespace
+                ):
+                    pairs.append(
+                        ConfusionPair(
+                            tool_a=tools[i].tool_id,
+                            tool_b=tools[j].tool_id,
+                            similarity=sim,
+                            zone_a=tools[i].zone,
+                            zone_b=tools[j].zone,
+                            is_cross_zone=tools[i].zone != tools[j].zone,
                         )
+                    )
 
         # Sort by similarity descending
         pairs.sort(key=lambda p: p.similarity, reverse=True)
@@ -319,13 +320,12 @@ class SpaceAuditor:
         zone_list = sorted(centroids.keys())
 
         for i, z1 in enumerate(zone_list):
-            for z2 in zone_list[i + 1:]:
+            for z2 in zone_list[i + 1 :]:
                 # Cosine distance
                 c1 = centroids[z1]
                 c2 = centroids[z2]
                 sim = float(
-                    np.dot(c1, c2)
-                    / (np.linalg.norm(c1) * np.linalg.norm(c2) + 1e-10)
+                    np.dot(c1, c2) / (np.linalg.norm(c1) * np.linalg.norm(c2) + 1e-10)
                 )
                 distances[f"{z1}↔{z2}"] = 1.0 - sim
 
@@ -343,7 +343,9 @@ class SpaceAuditor:
         try:
             from umap import UMAP
 
-            reducer = UMAP(n_components=2, random_state=42, n_neighbors=min(15, len(tools) - 1))
+            reducer = UMAP(
+                n_components=2, random_state=42, n_neighbors=min(15, len(tools) - 1)
+            )
             coords = reducer.fit_transform(embeddings)
         except ImportError:
             logger.info("umap-learn not installed, falling back to PCA projection")

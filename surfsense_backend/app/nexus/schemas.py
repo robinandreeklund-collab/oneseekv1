@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 # Common
 # ---------------------------------------------------------------------------
 
+
 class NexusHealthResponse(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"
@@ -20,6 +21,7 @@ class NexusHealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # QUL — Query Understanding Layer
 # ---------------------------------------------------------------------------
+
 
 class QueryEntities(BaseModel):
     locations: list[str] = Field(default_factory=list)
@@ -50,6 +52,7 @@ class AnalyzeQueryRequest(BaseModel):
 # Routing
 # ---------------------------------------------------------------------------
 
+
 class RoutingCandidate(BaseModel):
     tool_id: str
     zone: str
@@ -79,6 +82,7 @@ class RouteQueryRequest(BaseModel):
 # Zone Config
 # ---------------------------------------------------------------------------
 
+
 class ZoneConfigResponse(BaseModel):
     zone: str
     prefix_token: str
@@ -101,6 +105,7 @@ class NexusConfigResponse(BaseModel):
 # Confidence Bands
 # ---------------------------------------------------------------------------
 
+
 class BandClassification(BaseModel):
     band: int
     band_name: str
@@ -113,6 +118,7 @@ class BandClassification(BaseModel):
 # OOD Detection
 # ---------------------------------------------------------------------------
 
+
 class OODResult(BaseModel):
     is_ood: bool
     method: str | None = None  # "energy" | "knn" | None
@@ -124,6 +130,7 @@ class OODResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Space Auditor
 # ---------------------------------------------------------------------------
+
 
 class ConfusionPair(BaseModel):
     tool_a: str
@@ -156,6 +163,7 @@ class SpaceSnapshot(BaseModel):
 # Synth Forge
 # ---------------------------------------------------------------------------
 
+
 class ForgeGenerateRequest(BaseModel):
     tool_ids: list[str] | None = None  # None = all tools
     difficulties: list[str] | None = None  # None = all 4
@@ -185,6 +193,7 @@ class ForgeRunResult(BaseModel):
 # Auto Loop
 # ---------------------------------------------------------------------------
 
+
 class AutoLoopRunResponse(BaseModel):
     id: UUID
     loop_number: int
@@ -204,6 +213,7 @@ class AutoLoopRunDetail(AutoLoopRunResponse):
 # ---------------------------------------------------------------------------
 # Eval Ledger
 # ---------------------------------------------------------------------------
+
 
 class StageMetrics(BaseModel):
     stage: int
@@ -231,6 +241,7 @@ class MetricsTrend(BaseModel):
 # ---------------------------------------------------------------------------
 # Deploy Control
 # ---------------------------------------------------------------------------
+
 
 class GateResult(BaseModel):
     gate_number: int
@@ -264,6 +275,7 @@ class RollbackResult(BaseModel):
 # Dark Matter
 # ---------------------------------------------------------------------------
 
+
 class DarkMatterCluster(BaseModel):
     cluster_id: int
     query_count: int
@@ -275,6 +287,7 @@ class DarkMatterCluster(BaseModel):
 # ---------------------------------------------------------------------------
 # Calibration
 # ---------------------------------------------------------------------------
+
 
 class CalibrationParamsResponse(BaseModel):
     id: UUID
@@ -297,6 +310,7 @@ class ECEReport(BaseModel):
 # ---------------------------------------------------------------------------
 # Routing Events
 # ---------------------------------------------------------------------------
+
 
 class RoutingEventResponse(BaseModel):
     id: UUID

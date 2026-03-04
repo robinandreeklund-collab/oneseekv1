@@ -20,6 +20,9 @@ import {
 import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
 import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
 import { SpaceTab } from "@/components/admin/nexus/tabs/space-tab";
+import { ForgeTab } from "@/components/admin/nexus/tabs/forge-tab";
+import { LoopTab } from "@/components/admin/nexus/tabs/loop-tab";
+import { LedgerTab } from "@/components/admin/nexus/tabs/ledger-tab";
 
 function TabFallback() {
 	return (
@@ -137,15 +140,15 @@ export function NexusDashboard() {
 				</TabsContent>
 
 				<TabsContent value="forge" className="mt-6">
-					<PlaceholderTab name="FORGE — Syntetisk Testgenerering" />
+					<ForgeTab />
 				</TabsContent>
 
 				<TabsContent value="loop" className="mt-6">
-					<PlaceholderTab name="LOOP — Auto-förbättringsloop" />
+					<LoopTab />
 				</TabsContent>
 
 				<TabsContent value="ledger" className="mt-6">
-					<PlaceholderTab name="LEDGER — Pipeline-metriker" />
+					<LedgerTab />
 				</TabsContent>
 
 				<TabsContent value="deploy" className="mt-6">

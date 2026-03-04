@@ -94,9 +94,7 @@ class PlattCalibratedReranker:
 
     def calibrate(self, raw_score: float) -> float:
         """Transform a raw reranker score into a calibrated probability."""
-        return float(
-            1.0 / (1.0 + np.exp(self.params.a * raw_score + self.params.b))
-        )
+        return float(1.0 / (1.0 + np.exp(self.params.a * raw_score + self.params.b)))
 
     def calibrate_batch(self, raw_scores: list[float]) -> list[float]:
         """Calibrate a batch of scores."""

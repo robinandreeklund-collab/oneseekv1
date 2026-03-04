@@ -101,6 +101,7 @@ MUNICIPALITY_GAZETTEER: dict[str, str] = {
 # Dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class QueryEntities:
     locations: list[str] = field(default_factory=list)
@@ -129,10 +130,18 @@ class QueryAnalysisResult:
 _TIME_PATTERNS = [
     re.compile(r"\b(imorgon|idag|igår|i ?övermorgon)\b", re.IGNORECASE),
     re.compile(r"\b(i ?helgen|nästa vecka|förra veckan)\b", re.IGNORECASE),
-    re.compile(r"\b(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag)\b", re.IGNORECASE),
-    re.compile(r"\b(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag)\b", re.IGNORECASE
+    ),
+    re.compile(
+        r"\b(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b"),
-    re.compile(r"\b\d{1,2}\s+(jan|feb|mar|apr|maj|jun|jul|aug|sep|okt|nov|dec)\b", re.IGNORECASE),
+    re.compile(
+        r"\b\d{1,2}\s+(jan|feb|mar|apr|maj|jun|jul|aug|sep|okt|nov|dec)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(senaste|kommande)\s+\d+\s+(dagar|veckor|månader)\b", re.IGNORECASE),
 ]
 
@@ -148,6 +157,7 @@ _MULTI_INTENT_CONJUNCTIONS = re.compile(
 # ---------------------------------------------------------------------------
 # QUL Class
 # ---------------------------------------------------------------------------
+
 
 class QueryUnderstandingLayer:
     """Pre-routing query analysis — no LLM, <5ms target."""
@@ -201,9 +211,7 @@ class QueryUnderstandingLayer:
             # Only replace if it's a whole word match
             pattern = rf"\b{re.escape(abbrev)}\b"
             if re.search(pattern, lower):
-                normalized = re.sub(
-                    pattern, expansion, normalized, flags=re.IGNORECASE
-                )
+                normalized = re.sub(pattern, expansion, normalized, flags=re.IGNORECASE)
                 lower = normalized.lower()
 
         return normalized
@@ -215,7 +223,10 @@ class QueryUnderstandingLayer:
 
         # Location extraction via gazetteer
         for key, canonical in MUNICIPALITY_GAZETTEER.items():
-            if re.search(rf"\b{re.escape(key)}\b", lower) and canonical not in entities.locations:
+            if (
+                re.search(rf"\b{re.escape(key)}\b", lower)
+                and canonical not in entities.locations
+            ):
                 entities.locations.append(canonical)
 
         # Time extraction via patterns
@@ -263,9 +274,7 @@ class QueryUnderstandingLayer:
 
         return [query]
 
-    def _score_domain_hints(
-        self, query: str, entities: QueryEntities
-    ) -> list[str]:
+    def _score_domain_hints(self, query: str, entities: QueryEntities) -> list[str]:
         """Score which domain zones are relevant based on keywords."""
         lower = query.lower()
         hints: list[str] = []

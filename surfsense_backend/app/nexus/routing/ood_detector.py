@@ -170,3 +170,69 @@ class DarkMatterDetector:
     @property
     def has_knn_index(self) -> bool:
         return self._knn_index is not None
+
+    # ------------------------------------------------------------------
+    # Dark Matter Clustering (Sprint 3)
+    # ------------------------------------------------------------------
+
+    def cluster_dark_matter(
+        self,
+        ood_queries: list[dict],
+    ) -> list[dict]:
+        """Cluster OOD queries to identify potential new tool categories.
+
+        Groups OOD queries by similarity to find patterns that suggest
+        missing tools in the routing system.
+
+        Args:
+            ood_queries: List of dicts with query_text, energy_score, etc.
+
+        Returns:
+            List of cluster dicts with cluster_id, queries, suggested_tool.
+        """
+        if not ood_queries or len(ood_queries) < 3:
+            return []
+
+        # Simple clustering: group by shared keywords
+        keyword_groups: dict[str, list[dict]] = {}
+        for q in ood_queries:
+            text = q.get("query_text", "").lower()
+            tokens = set(text.split())
+            # Use most distinctive token as cluster key
+            for token in tokens:
+                if len(token) > 3:
+                    keyword_groups.setdefault(token, []).append(q)
+                    break
+
+        clusters: list[dict] = []
+        cluster_id = 0
+        seen_queries: set[str] = set()
+
+        for _keyword, queries in sorted(
+            keyword_groups.items(), key=lambda x: len(x[1]), reverse=True
+        ):
+            unique_queries = [
+                q for q in queries if q.get("query_text", "") not in seen_queries
+            ]
+            if len(unique_queries) < 2:
+                continue
+
+            sample_texts = [q.get("query_text", "") for q in unique_queries[:5]]
+            for text in sample_texts:
+                seen_queries.add(text)
+
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "query_count": len(unique_queries),
+                    "sample_queries": sample_texts,
+                    "suggested_tool": None,
+                    "reviewed": False,
+                }
+            )
+            cluster_id += 1
+
+            if cluster_id >= 20:
+                break
+
+        return clusters
