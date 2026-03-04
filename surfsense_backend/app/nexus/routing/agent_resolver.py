@@ -44,15 +44,26 @@ class AgentResolutionResult:
     def top_agent(self) -> str | None:
         return self.selected_agents[0] if self.selected_agents else None
 
-    @property
-    def tool_namespaces(self) -> list[str]:
-        """Collect all primary_namespaces from selected agents."""
+    def get_tool_namespaces(
+        self, agent_by_name: dict[str, NexusAgent] | None = None
+    ) -> list[str]:
+        """Collect all primary_namespaces from selected agents.
+
+        Args:
+            agent_by_name: Dynamic agent lookup (from DB). Falls back to static config.
+        """
+        _agent_by_name = agent_by_name if agent_by_name is not None else AGENT_BY_NAME
         ns: list[str] = []
         for name in self.selected_agents:
-            agent = AGENT_BY_NAME.get(name)
+            agent = _agent_by_name.get(name)
             if agent:
                 ns.extend(agent.primary_namespaces)
         return ns
+
+    @property
+    def tool_namespaces(self) -> list[str]:
+        """Collect all primary_namespaces from selected agents (static fallback)."""
+        return self.get_tool_namespaces()
 
 
 class AgentResolver:
@@ -73,6 +84,8 @@ class AgentResolver:
         domain_hints: list[str] | None = None,
         organizations: list[str] | None = None,
         max_agents: int = 3,
+        agent_by_name: dict[str, NexusAgent] | None = None,
+        agents_by_zone: dict[Zone, list[NexusAgent]] | None = None,
     ) -> AgentResolutionResult:
         """Score and select agents for the query.
 
@@ -82,10 +95,15 @@ class AgentResolver:
             domain_hints: Domain keywords from QUL (zones + category hints).
             organizations: Organization entities from QUL.
             max_agents: Maximum number of agents to select.
+            agent_by_name: Dynamic agent lookup (from DB). Falls back to static config.
+            agents_by_zone: Dynamic zone-agent lookup (from DB). Falls back to static config.
 
         Returns:
             AgentResolutionResult with ranked candidates and selected agents.
         """
+        # Use provided dynamic lookups, or fall back to static config
+        _agents_by_zone = agents_by_zone if agents_by_zone is not None else AGENTS_BY_ZONE
+
         lower_query = query.lower()
         scored: list[AgentCandidate] = []
 
@@ -102,7 +120,7 @@ class AgentResolver:
                 zone = Zone(zone_name)
             except ValueError:
                 continue
-            candidate_agents.extend(AGENTS_BY_ZONE.get(zone, []))
+            candidate_agents.extend(_agents_by_zone.get(zone, []))
 
         # Deduplicate
         seen_names: set[str] = set()

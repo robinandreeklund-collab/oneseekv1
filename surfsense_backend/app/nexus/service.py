@@ -101,6 +101,34 @@ class NexusService:
         self.shadow_observer = ShadowObserver()
 
     # ------------------------------------------------------------------
+    # Dynamic Agent Loading (from admin flow DB)
+    # ------------------------------------------------------------------
+
+    async def _load_db_agents(
+        self, session: AsyncSession
+    ) -> tuple[dict | None, dict | None]:
+        """Load agent definitions from DB (admin flow routing).
+
+        Returns (agent_by_name, agents_by_zone) or (None, None) if no
+        overrides exist, in which case static config.py agents are used.
+        """
+        try:
+            from app.nexus.config import build_agents_from_metadata
+            from app.services.agent_metadata_service import (
+                get_effective_agent_metadata,
+            )
+
+            metadata = await get_effective_agent_metadata(session)
+            if not metadata:
+                return None, None
+            by_name, by_zone = build_agents_from_metadata(metadata)
+            if by_name:
+                return by_name, by_zone
+        except Exception as e:
+            logger.warning("Failed to load DB agents, using static config: %s", e)
+        return None, None
+
+    # ------------------------------------------------------------------
     # Health & Config
     # ------------------------------------------------------------------
 
@@ -278,13 +306,18 @@ class NexusService:
         analysis = self.analyze_query(query)
 
         # Step 2: Agent Resolution — narrow from zone to specific agent(s)
+        # Load agents dynamically from DB (admin flow) if available
+        db_agent_by_name, db_agents_by_zone = await self._load_db_agents(session)
+
         agent_result = self.agent_resolver.resolve(
             analysis.normalized_query,
             analysis.zone_candidates,
             domain_hints=analysis.domain_hints,
             organizations=analysis.entities.organizations,
+            agent_by_name=db_agent_by_name,
+            agents_by_zone=db_agents_by_zone,
         )
-        agent_namespaces = agent_result.tool_namespaces
+        agent_namespaces = agent_result.get_tool_namespaces(db_agent_by_name)
         selected_agent = agent_result.top_agent
 
         agent_resolution = AgentResolution(

@@ -185,11 +185,80 @@ NEXUS_AGENTS: tuple[NexusAgent, ...] = (
     ),
 )
 
-# Lookup helpers
+# Lookup helpers (static fallbacks — overridden at runtime by DB agents)
 AGENT_BY_NAME: dict[str, NexusAgent] = {a.name: a for a in NEXUS_AGENTS}
 AGENTS_BY_ZONE: dict[Zone, list[NexusAgent]] = {}
 for _a in NEXUS_AGENTS:
     AGENTS_BY_ZONE.setdefault(_a.zone, []).append(_a)
+
+
+def build_agents_from_metadata(
+    agent_metadata_list: list[dict],
+) -> tuple[dict[str, NexusAgent], dict[Zone, list[NexusAgent]]]:
+    """Build NEXUS agent lookups from DB-backed agent metadata.
+
+    Converts the output of get_effective_agent_metadata() into NexusAgent
+    objects and lookup dicts, enabling dynamic agent resolution.
+
+    Args:
+        agent_metadata_list: List of agent metadata dicts from
+            agent_metadata_service.get_effective_agent_metadata().
+
+    Returns:
+        Tuple of (agent_by_name, agents_by_zone) dicts.
+    """
+    agents: list[NexusAgent] = []
+
+    for meta in agent_metadata_list:
+        agent_id = meta.get("agent_id", "")
+        if not agent_id:
+            continue
+
+        # Map routes (intent names) to Zone enum values
+        routes = meta.get("routes", [])
+        zone = Zone.KUNSKAP  # default
+        for route_name in routes:
+            try:
+                zone = Zone(route_name)
+                break  # Use first valid zone
+            except ValueError:
+                continue
+
+        # Build namespace tuple from metadata namespace field
+        # Admin stores as list like ["agents", "weather"] → "tools/weather"
+        ns_parts = meta.get("namespace", [])
+        primary_namespaces: tuple[str, ...] = ()
+        if isinstance(ns_parts, list) and len(ns_parts) >= 2:
+            # Map "agents/X" style to "tools/X" for NEXUS compatibility
+            ns_prefix = ns_parts[0] if ns_parts[0] != "agents" else "tools"
+            primary_namespaces = (f"{ns_prefix}/{ns_parts[1]}",)
+        elif isinstance(ns_parts, str) and ns_parts:
+            primary_namespaces = (ns_parts,)
+
+        # Keywords
+        keywords = meta.get("keywords", [])
+        if isinstance(keywords, list):
+            keywords_tuple = tuple(str(k) for k in keywords)
+        else:
+            keywords_tuple = ()
+
+        agents.append(
+            NexusAgent(
+                name=agent_id,
+                zone=zone,
+                description=meta.get("description", ""),
+                primary_namespaces=primary_namespaces,
+                keywords=keywords_tuple,
+            )
+        )
+
+    # Build lookup dicts
+    by_name: dict[str, NexusAgent] = {a.name: a for a in agents}
+    by_zone: dict[Zone, list[NexusAgent]] = {}
+    for a in agents:
+        by_zone.setdefault(a.zone, []).append(a)
+
+    return by_name, by_zone
 
 
 # ---------------------------------------------------------------------------
