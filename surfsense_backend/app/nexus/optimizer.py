@@ -14,6 +14,7 @@ Flow:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -394,7 +395,21 @@ class MetadataOptimizer:
         )
 
         response = await litellm.acompletion(**kwargs)
-        content = response.choices[0].message.content or ""
+
+        # Handle response — content may be string or list of content blocks
+        raw_content = response.choices[0].message.content
+        if isinstance(raw_content, list):
+            # Extract text from content blocks (skip thinking blocks)
+            text_parts = []
+            for block in raw_content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            content = "\n".join(text_parts)
+        else:
+            content = raw_content or ""
 
         logger.info("Optimizer LLM response: len=%d", len(content))
         return model_string, content
@@ -408,17 +423,41 @@ class MetadataOptimizer:
         # Build lookup for current metadata
         current_by_id = {m["tool_id"]: m for m in current_meta}
 
-        # Extract JSON from response (handle markdown code blocks)
         text = response_text.strip()
-        # Try to extract from ```json ... ``` blocks
-        json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+
+        # Strategy 1: Extract from ```json ... ``` or ``` ... ``` blocks
+        json_match = re.search(
+            r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL
+        )
         if json_match:
             text = json_match.group(1).strip()
 
-        try:
+        # Strategy 2: Find the outermost JSON array [ ... ]
+        parsed = None
+        with contextlib.suppress(json.JSONDecodeError):
             parsed = json.loads(text)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse LLM response as JSON")
+
+        if parsed is None:
+            # Try to locate the first '[' and last ']'
+            start = text.find("[")
+            end = text.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                with contextlib.suppress(json.JSONDecodeError):
+                    parsed = json.loads(text[start : end + 1])
+
+        if parsed is None:
+            # Strategy 3: Find the first '{' and last '}'
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                with contextlib.suppress(json.JSONDecodeError):
+                    parsed = json.loads(text[start : end + 1])
+
+        if parsed is None:
+            logger.warning(
+                "Failed to parse LLM response as JSON. First 500 chars: %s",
+                response_text[:500],
+            )
             return []
 
         if not isinstance(parsed, list):
