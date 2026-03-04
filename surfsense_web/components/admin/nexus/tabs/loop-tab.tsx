@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
 	AlertCircle,
 	Beaker,
 	CheckCircle2,
+	ChevronDown,
+	ChevronUp,
 	Clock,
 	Loader2,
 	Play,
@@ -12,15 +14,17 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
 	nexusApiService,
 	type AutoLoopRunResponse,
+	type LoopRunDetail,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 
 const CATEGORY_LABELS: Record<string, string> = {
 	"": "Alla kategorier",
-	smhi: "SMHI (Väder)",
+	smhi: "SMHI (Vader)",
 	scb: "SCB (Statistik)",
 	kolada: "Kolada (Nyckeltal)",
 	riksdagen: "Riksdagen",
@@ -32,6 +36,8 @@ const CATEGORY_LABELS: Record<string, string> = {
 	geoapify: "Kartor (Geoapify)",
 };
 
+const BAND_LABELS = ["Band 0 (Exakt)", "Band 1 (Hog)", "Band 2 (Medel)", "Band 3 (Lag)"];
+
 export function LoopTab() {
 	const [runs, setRuns] = useState<AutoLoopRunResponse[]>([]);
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
@@ -40,6 +46,10 @@ export function LoopTab() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
+	const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+	const [runDetails, setRunDetails] = useState<Record<string, LoopRunDetail>>({});
+	const [detailLoading, setDetailLoading] = useState<string | null>(null);
+	const [approving, setApproving] = useState<string | null>(null);
 
 	const loadRuns = () => {
 		setLoading(true);
@@ -79,11 +89,55 @@ export function LoopTab() {
 			.finally(() => setStarting(false));
 	};
 
+	const handleToggleExpand = useCallback(
+		(runId: string) => {
+			if (expandedRunId === runId) {
+				setExpandedRunId(null);
+				return;
+			}
+			setExpandedRunId(runId);
+			if (!runDetails[runId]) {
+				setDetailLoading(runId);
+				nexusApiService
+					.getLoopRunDetail(runId)
+					.then((detail) => {
+						setRunDetails((prev) => ({ ...prev, [runId]: detail }));
+					})
+					.catch((err) => setError(err.message))
+					.finally(() => setDetailLoading(null));
+			}
+		},
+		[expandedRunId, runDetails],
+	);
+
+	const handleApprove = useCallback((runId: string) => {
+		setApproving(runId);
+		nexusApiService
+			.approveLoopRun(runId)
+			.then(() => {
+				loadRuns();
+				setRunDetails((prev) => {
+					const detail = prev[runId];
+					if (detail) {
+						return { ...prev, [runId]: { ...detail, status: "approved" } };
+					}
+					return prev;
+				});
+			})
+			.catch((err) => setError(err.message))
+			.finally(() => setApproving(null));
+	}, []);
+
+	const totalHardNegatives = runs.reduce(
+		(sum, r) => sum + (r.failures || 0),
+		0,
+	);
+
 	if (loading) {
 		return (
 			<div className="flex items-center gap-2 text-muted-foreground p-4">
 				<Loader2 className="h-4 w-4 animate-spin" />
-				Laddar loop-körningar...
+				Laddar loop-korningar...
 			</div>
 		);
 	}
@@ -104,7 +158,7 @@ export function LoopTab() {
 				<div>
 					<h3 className="text-lg font-semibold flex items-center gap-2">
 						<Beaker className="h-5 w-5" />
-						Auto Loop — Självförbättring
+						Auto Loop -- Sjalvforbattring
 					</h3>
 					<p className="text-sm text-muted-foreground">
 						7-stegs pipeline: generera, eval, kluster, root cause, test, review, deploy
@@ -133,74 +187,281 @@ export function LoopTab() {
 							<Play className="h-4 w-4 mr-2" />
 						)}
 						{starting
-							? "Kör loop..."
+							? "Kor loop..."
 							: selectedCategory
-								? `Kör loop för ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
+								? `Kor loop for ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
 								: "Starta loop"}
 					</Button>
 				</div>
 			</div>
 
 			{/* Stats */}
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-				<StatCard label="Totalt körningar" value={String(runs.length)} />
+			<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+				<StatCard label="Totalt korningar" value={String(runs.length)} />
 				<StatCard
-					label="Godkända förslag"
+					label="Godkanda forslag"
 					value={String(
 						runs.reduce((sum, r) => sum + (r.approved_proposals || 0), 0),
 					)}
 				/>
 				<StatCard
+					label="Hard negatives"
+					value={String(totalHardNegatives)}
+				/>
+				<StatCard
 					label="Senaste status"
-					value={runs.length > 0 ? runs[0].status : "—"}
+					value={runs.length > 0 ? runs[0].status : "--"}
 				/>
 			</div>
 
 			{/* Run history */}
 			{runs.length === 0 ? (
 				<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-					Inga loop-körningar ännu. Klicka &quot;Starta loop&quot; för att börja.
+					Inga loop-korningar annu. Klicka &quot;Starta loop&quot; for att borja.
 				</div>
 			) : (
 				<div className="rounded-lg border bg-card">
 					<div className="p-4 border-b">
-						<h4 className="font-semibold">Körningshistorik</h4>
+						<h4 className="font-semibold">Korningshistorik</h4>
 					</div>
 					<div className="divide-y">
-						{runs.map((run) => (
-							<div
-								key={run.id}
-								className="flex items-center justify-between p-4"
-							>
-								<div className="flex items-center gap-3">
-									<StatusIcon status={run.status} />
-									<div>
-										<p className="text-sm font-medium">
-											Loop #{run.loop_number}
-										</p>
-										<p className="text-xs text-muted-foreground">
-											{run.started_at
-												? new Date(run.started_at).toLocaleString("sv-SE")
-												: "Ej startad"}
-										</p>
+						{runs.map((run) => {
+							const isExpanded = expandedRunId === run.id;
+							const detail = runDetails[run.id];
+							const isLoadingDetail = detailLoading === run.id;
+
+							return (
+								<div key={run.id}>
+									<div
+										className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+										onClick={() => handleToggleExpand(run.id)}
+									>
+										<div className="flex items-center gap-3">
+											<StatusIcon status={run.status} />
+											<div>
+												<p className="text-sm font-medium">
+													Loop #{run.loop_number}
+												</p>
+												<p className="text-xs text-muted-foreground">
+													{run.started_at
+														? new Date(run.started_at).toLocaleString("sv-SE")
+														: "Ej startad"}
+												</p>
+											</div>
+										</div>
+										<div className="flex items-center gap-4 text-sm">
+											{run.total_tests !== null && (
+												<span className="text-muted-foreground">
+													{run.failures || 0}/{run.total_tests} fel
+												</span>
+											)}
+											{run.approved_proposals !== null &&
+												run.approved_proposals > 0 && (
+													<span className="text-green-600 font-medium">
+														{run.approved_proposals} godkanda
+													</span>
+												)}
+											<StatusBadge status={run.status} />
+											{isExpanded ? (
+												<ChevronUp className="h-4 w-4 text-muted-foreground" />
+											) : (
+												<ChevronDown className="h-4 w-4 text-muted-foreground" />
+											)}
+										</div>
 									</div>
-								</div>
-								<div className="flex items-center gap-4 text-sm">
-									{run.total_tests !== null && (
-										<span className="text-muted-foreground">
-											{run.failures || 0}/{run.total_tests} fel
-										</span>
+
+									{/* Expanded detail section */}
+									{isExpanded && (
+										<div className="border-t bg-muted/30 p-4 space-y-4">
+											{isLoadingDetail ? (
+												<div className="flex items-center gap-2 text-muted-foreground">
+													<Loader2 className="h-4 w-4 animate-spin" />
+													Laddar detaljer...
+												</div>
+											) : detail ? (
+												<>
+													{/* Approve button */}
+													<div className="flex items-center justify-between">
+														<h5 className="text-sm font-semibold">
+															Korningsdetaljer -- Loop #{detail.loop_number}
+														</h5>
+														<Button
+															size="sm"
+															onClick={(e) => {
+																e.stopPropagation();
+																handleApprove(run.id);
+															}}
+															disabled={
+																run.status !== "review" ||
+																approving === run.id
+															}
+														>
+															{approving === run.id ? (
+																<Loader2 className="h-4 w-4 animate-spin mr-2" />
+															) : (
+																<CheckCircle2 className="h-4 w-4 mr-2" />
+															)}
+															Godkann alla
+														</Button>
+													</div>
+
+													<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+														{/* Proposals */}
+														<Card>
+															<CardHeader className="py-3 px-4">
+																<CardTitle className="text-sm">
+																	Forslag ({detail.proposals.length})
+																</CardTitle>
+															</CardHeader>
+															<CardContent className="px-4 pb-4">
+																{detail.proposals.length === 0 ? (
+																	<p className="text-sm text-muted-foreground">
+																		Inga forslag i denna korning.
+																	</p>
+																) : (
+																	<div className="space-y-3">
+																		{detail.proposals.map((proposal, idx) => (
+																			<div
+																				key={`${proposal.tool_id}-${proposal.field}-${idx}`}
+																				className="rounded-md border bg-background p-3 text-sm space-y-1"
+																			>
+																				<p>
+																					<span className="font-medium text-muted-foreground">
+																						Tool:
+																					</span>{" "}
+																					{proposal.tool_id}
+																				</p>
+																				<p>
+																					<span className="font-medium text-muted-foreground">
+																						Falt:
+																					</span>{" "}
+																					{proposal.field}
+																				</p>
+																				<p>
+																					<span className="font-medium text-muted-foreground">
+																						Anledning:
+																					</span>{" "}
+																					{proposal.reason}
+																				</p>
+																			</div>
+																		))}
+																	</div>
+																)}
+															</CardContent>
+														</Card>
+
+														{/* Band distribution + Platform stats */}
+														<div className="space-y-4">
+															<Card>
+																<CardHeader className="py-3 px-4">
+																	<CardTitle className="text-sm">
+																		Band-fordelning
+																	</CardTitle>
+																</CardHeader>
+																<CardContent className="px-4 pb-4">
+																	{detail.band_distribution.length === 0 ? (
+																		<p className="text-sm text-muted-foreground">
+																			Ingen data.
+																		</p>
+																	) : (
+																		<div className="space-y-2">
+																			{detail.band_distribution.map(
+																				(count, bandIdx) => {
+																					const total =
+																						detail.band_distribution.reduce(
+																							(a, b) => a + b,
+																							0,
+																						);
+																					const pct =
+																						total > 0
+																							? Math.round(
+																									(count / total) * 100,
+																								)
+																							: 0;
+																					return (
+																						<div
+																							key={bandIdx}
+																							className="flex items-center gap-3 text-sm"
+																						>
+																							<span className="w-28 text-muted-foreground">
+																								{BAND_LABELS[bandIdx] ||
+																									`Band ${bandIdx}`}
+																							</span>
+																							<div className="flex-1 h-4 bg-muted rounded overflow-hidden">
+																								<div
+																									className="h-full bg-primary rounded"
+																									style={{
+																										width: `${pct}%`,
+																									}}
+																								/>
+																							</div>
+																							<span className="w-16 text-right tabular-nums">
+																								{count} ({pct}%)
+																							</span>
+																						</div>
+																					);
+																				},
+																			)}
+																		</div>
+																	)}
+																</CardContent>
+															</Card>
+
+															<Card>
+																<CardHeader className="py-3 px-4">
+																	<CardTitle className="text-sm">
+																		Plattformsjamforelse
+																	</CardTitle>
+																</CardHeader>
+																<CardContent className="px-4 pb-4">
+																	<div className="grid grid-cols-2 gap-4 text-sm">
+																		<div>
+																			<p className="text-muted-foreground">
+																				Jamforelser
+																			</p>
+																			<p className="text-lg font-bold">
+																				{detail.platform_comparisons}
+																			</p>
+																		</div>
+																		<div>
+																			<p className="text-muted-foreground">
+																				Overensstammelser
+																			</p>
+																			<p className="text-lg font-bold">
+																				{detail.platform_agreements}
+																			</p>
+																		</div>
+																		{detail.platform_comparisons > 0 && (
+																			<div className="col-span-2">
+																				<p className="text-muted-foreground">
+																					Overensstammelsegrad
+																				</p>
+																				<p className="text-lg font-bold">
+																					{Math.round(
+																						(detail.platform_agreements /
+																							detail.platform_comparisons) *
+																							100,
+																					)}
+																					%
+																				</p>
+																			</div>
+																		)}
+																	</div>
+																</CardContent>
+															</Card>
+														</div>
+													</div>
+												</>
+											) : (
+												<p className="text-sm text-muted-foreground">
+													Kunde inte ladda detaljer.
+												</p>
+											)}
+										</div>
 									)}
-									{run.approved_proposals !== null &&
-										run.approved_proposals > 0 && (
-											<span className="text-green-600 font-medium">
-												{run.approved_proposals} godkända
-											</span>
-										)}
-									<StatusBadge status={run.status} />
 								</div>
-							</div>
-						))}
+							);
+						})}
 					</div>
 				</div>
 			)}

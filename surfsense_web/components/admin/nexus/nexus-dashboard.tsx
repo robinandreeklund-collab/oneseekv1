@@ -17,7 +17,14 @@ import {
 	nexusApiService,
 	type NexusHealthResponse,
 	type OverviewMetricsResponse,
+	type RoutingEventResponse,
+	type ECEReportResponse,
+	type CalibrationParamsResponse,
 } from "@/lib/apis/nexus-api.service";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { DarkMatterPanel } from "@/components/admin/nexus/shared/dark-matter-panel";
 import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
 import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
 import { SpaceTab } from "@/components/admin/nexus/tabs/space-tab";
@@ -256,7 +263,261 @@ function OverviewTab() {
 
 			<ZoneHealthCard />
 			<BandDistribution />
+			<RoutingEventsPanel />
+			<CalibrationPanel />
+			<DarkMatterPanel />
 		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Routing Events Panel — last 20 routing events with feedback
+// ---------------------------------------------------------------------------
+
+const BAND_COLORS: Record<number, string> = {
+	0: "text-green-600 bg-green-50",
+	1: "text-blue-600 bg-blue-50",
+	2: "text-amber-600 bg-amber-50",
+	3: "text-orange-600 bg-orange-50",
+	4: "text-red-600 bg-red-50",
+};
+
+function RoutingEventsPanel() {
+	const [events, setEvents] = useState<RoutingEventResponse[]>([]);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		nexusApiService
+			.getRoutingEvents(20)
+			.then(setEvents)
+			.catch(() => {})
+			.finally(() => setLoading(false));
+	}, []);
+
+	const handleFeedback = (eventId: string, value: number) => {
+		nexusApiService.logFeedback(eventId, { explicit: value }).catch(() => {});
+	};
+
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>Senaste routing-händelser</CardTitle>
+			</CardHeader>
+			<CardContent>
+				{loading ? (
+					<div className="flex items-center gap-2 text-muted-foreground">
+						<Loader2 className="h-4 w-4 animate-spin" />
+						Laddar händelser...
+					</div>
+				) : events.length === 0 ? (
+					<p className="text-sm text-muted-foreground">
+						Inga routing-händelser registrerade ännu.
+					</p>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="w-full text-sm">
+							<thead>
+								<tr className="border-b text-left text-muted-foreground">
+									<th className="pb-2 pr-4">Fråga</th>
+									<th className="pb-2 pr-4">Band</th>
+									<th className="pb-2 pr-4">Zon</th>
+									<th className="pb-2 pr-4">Verktyg</th>
+									<th className="pb-2 pr-4">Confidence</th>
+									<th className="pb-2 pr-4">OOD</th>
+									<th className="pb-2 pr-4">Tid</th>
+									<th className="pb-2" />
+								</tr>
+							</thead>
+							<tbody>
+								{events.map((evt) => (
+									<tr key={evt.id} className="border-b last:border-0">
+										<td className="py-2 pr-4 max-w-[300px] truncate" title={evt.query_text ?? ""}>
+											{evt.query_text
+												? evt.query_text.length > 60
+													? `${evt.query_text.slice(0, 60)}…`
+													: evt.query_text
+												: "—"}
+										</td>
+										<td className="py-2 pr-4">
+											<span
+												className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${BAND_COLORS[evt.band] ?? ""}`}
+											>
+												{evt.band}
+											</span>
+										</td>
+										<td className="py-2 pr-4">{evt.resolved_zone ?? "—"}</td>
+										<td className="py-2 pr-4">{evt.selected_tool ?? "—"}</td>
+										<td className="py-2 pr-4">
+											{evt.calibrated_confidence != null
+												? evt.calibrated_confidence.toFixed(3)
+												: "—"}
+										</td>
+										<td className="py-2 pr-4">
+											{evt.is_ood ? (
+												<span className="text-red-600 font-medium">Ja</span>
+											) : (
+												"Nej"
+											)}
+										</td>
+										<td className="py-2 pr-4 whitespace-nowrap">
+											{new Date(evt.routed_at).toLocaleString("sv-SE")}
+										</td>
+										<td className="py-2">
+											<div className="flex items-center gap-1">
+												<button
+													type="button"
+													className="p-1 rounded hover:bg-green-100 transition-colors"
+													onClick={() => handleFeedback(evt.id, 1)}
+													title="Bra routing"
+												>
+													<ThumbsUp className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
+												</button>
+												<button
+													type="button"
+													className="p-1 rounded hover:bg-red-100 transition-colors"
+													onClick={() => handleFeedback(evt.id, -1)}
+													title="Dålig routing"
+												>
+													<ThumbsDown className="h-3.5 w-3.5 text-muted-foreground hover:text-red-600" />
+												</button>
+											</div>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Calibration Panel — ECE per zone + Platt fitting
+// ---------------------------------------------------------------------------
+
+function CalibrationPanel() {
+	const [ece, setEce] = useState<ECEReportResponse | null>(null);
+	const [params, setParams] = useState<CalibrationParamsResponse[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [fitting, setFitting] = useState(false);
+
+	const fetchData = () => {
+		setLoading(true);
+		Promise.all([
+			nexusApiService.getCalibrationECE(),
+			nexusApiService.getCalibrationParams(),
+		])
+			.then(([eceData, paramsData]) => {
+				setEce(eceData);
+				setParams(paramsData);
+			})
+			.catch(() => {})
+			.finally(() => setLoading(false));
+	};
+
+	useEffect(() => {
+		fetchData();
+	}, []);
+
+	const handleFit = () => {
+		setFitting(true);
+		nexusApiService
+			.fitCalibration()
+			.then(() => fetchData())
+			.catch(() => {})
+			.finally(() => setFitting(false));
+	};
+
+	return (
+		<Card>
+			<CardHeader className="flex flex-row items-center justify-between">
+				<CardTitle>Kalibrering</CardTitle>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={handleFit}
+					disabled={fitting}
+				>
+					{fitting ? (
+						<>
+							<Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+							Kalibrerar...
+						</>
+					) : (
+						"Kalibrera Platt"
+					)}
+				</Button>
+			</CardHeader>
+			<CardContent>
+				{loading ? (
+					<div className="flex items-center gap-2 text-muted-foreground">
+						<Loader2 className="h-4 w-4 animate-spin" />
+						Laddar kalibreringsdata...
+					</div>
+				) : (
+					<div className="space-y-4">
+						{/* Global ECE */}
+						<div>
+							<p className="text-sm text-muted-foreground">Global ECE</p>
+							<p className="text-2xl font-bold">
+								{ece?.global_ece != null ? ece.global_ece.toFixed(4) : "—"}
+							</p>
+						</div>
+
+						{/* Per-zone ECE */}
+						{ece && Object.keys(ece.per_zone).length > 0 && (
+							<div>
+								<p className="text-sm font-medium mb-2">ECE per zon</p>
+								<div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+									{Object.entries(ece.per_zone).map(([zone, value]) => (
+										<div
+											key={zone}
+											className="rounded border px-3 py-2"
+										>
+											<p className="text-xs text-muted-foreground">{zone}</p>
+											<p className="text-sm font-mono font-medium">
+												{value.toFixed(4)}
+											</p>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+
+						{/* Platt params */}
+						{params.length > 0 && (
+							<div>
+								<p className="text-sm font-medium mb-2">Platt-parametrar</p>
+								<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+									{params.map((p) => (
+										<div
+											key={p.id}
+											className="rounded border px-3 py-2 text-sm"
+										>
+											<div className="flex items-center justify-between">
+												<span className="font-medium">{p.zone}</span>
+												{p.is_active && (
+													<span className="text-xs text-green-600 bg-green-50 rounded px-1.5 py-0.5">
+														Aktiv
+													</span>
+												)}
+											</div>
+											<div className="mt-1 text-muted-foreground text-xs space-y-0.5">
+												<p>A: {p.param_a != null ? p.param_a.toFixed(4) : "—"} · B: {p.param_b != null ? p.param_b.toFixed(4) : "—"}</p>
+												<p>ECE: {p.ece_score != null ? p.ece_score.toFixed(4) : "—"} · Samples: {p.fitted_on_samples ?? "—"}</p>
+												<p>Metod: {p.calibration_method} · Fittad: {new Date(p.fitted_at).toLocaleString("sv-SE")}</p>
+											</div>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+					</div>
+				)}
+			</CardContent>
+		</Card>
 	);
 }
 

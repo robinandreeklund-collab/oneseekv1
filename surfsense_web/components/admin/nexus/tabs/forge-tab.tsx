@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, Loader2, Sparkles, Play, CheckCircle2, XCircle } from "lucide-react";
+import { AlertCircle, Loader2, Sparkles, Play, CheckCircle2, XCircle, Trash2, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
 	nexusApiService,
 	type SyntheticCaseResponse,
@@ -12,7 +14,7 @@ import {
 
 const CATEGORY_LABELS: Record<string, string> = {
 	"": "Alla kategorier",
-	smhi: "SMHI (Väder)",
+	smhi: "SMHI (V\u00e4der)",
 	scb: "SCB (Statistik)",
 	kolada: "Kolada (Nyckeltal)",
 	riksdagen: "Riksdagen",
@@ -32,6 +34,8 @@ export function ForgeTab() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [generating, setGenerating] = useState(false);
+	const [searchQuery, setSearchQuery] = useState<string>("");
+	const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
 	const loadCases = () => {
 		setLoading(true);
@@ -71,13 +75,40 @@ export function ForgeTab() {
 			.finally(() => setGenerating(false));
 	};
 
+	const handleDelete = (caseId: string) => {
+		setDeletingIds((prev) => new Set(prev).add(caseId));
+		nexusApiService
+			.deleteForgeCase(caseId)
+			.then(() => {
+				setCases((prev) => prev.filter((c) => c.id !== caseId));
+			})
+			.catch((err) => setError(err.message))
+			.finally(() => {
+				setDeletingIds((prev) => {
+					const next = new Set(prev);
+					next.delete(caseId);
+					return next;
+				});
+			});
+	};
+
 	// Filter displayed cases by selected category
-	const filteredCases = selectedCategory
+	const categoryFiltered = selectedCategory
 		? cases.filter((c) => {
 				const tool = platformTools.find((t) => t.tool_id === c.tool_id);
 				return tool?.category === selectedCategory;
 			})
 		: cases;
+
+	// Filter by search query (question or tool_id)
+	const query = searchQuery.trim().toLowerCase();
+	const filteredCases = query
+		? categoryFiltered.filter(
+				(c) =>
+					c.question.toLowerCase().includes(query) ||
+					c.tool_id.toLowerCase().includes(query),
+			)
+		: categoryFiltered;
 
 	const toolCount = new Set(
 		(selectedCategory ? filteredCases : cases).map((c) => c.tool_id),
@@ -114,7 +145,7 @@ export function ForgeTab() {
 						Synth Forge — Testgenerering
 					</h3>
 					<p className="text-sm text-muted-foreground">
-						LLM-genererade testfrågor vid 4 svårighetsgrader per verktyg
+						LLM-genererade testfr&aring;gor vid 4 sv&aring;righetsgrader per verktyg
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
@@ -142,10 +173,21 @@ export function ForgeTab() {
 						{generating
 							? "Genererar..."
 							: selectedCategory
-								? `Generera för ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
+								? `Generera f\u00f6r ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
 								: "Generera testfall"}
 					</Button>
 				</div>
+			</div>
+
+			{/* Search */}
+			<div className="relative">
+				<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+				<Input
+					placeholder="S\u00f6k p\u00e5 fr\u00e5ga eller verktygs-ID..."
+					value={searchQuery}
+					onChange={(e) => setSearchQuery(e.target.value)}
+					className="pl-9"
+				/>
 			</div>
 
 			{/* Stats */}
@@ -163,8 +205,10 @@ export function ForgeTab() {
 			{filteredCases.length === 0 ? (
 				<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
 					{selectedCategory
-						? `Inga testfall för ${CATEGORY_LABELS[selectedCategory] || selectedCategory}. Klicka "Generera" för att skapa.`
-						: 'Inga syntetiska testfall genererade ännu. Klicka "Generera testfall" för att börja.'}
+						? `Inga testfall f\u00f6r ${CATEGORY_LABELS[selectedCategory] || selectedCategory}. Klicka "Generera" f\u00f6r att skapa.`
+						: query
+							? "Inga testfall matchar din s\u00f6kning."
+							: 'Inga syntetiska testfall genererade \u00e4nnu. Klicka "Generera testfall" f\u00f6r att b\u00f6rja.'}
 				</div>
 			) : (
 				<div className="rounded-lg border bg-card">
@@ -181,12 +225,31 @@ export function ForgeTab() {
 									</p>
 								</div>
 								<div className="flex items-center gap-2 shrink-0">
+									<Badge variant="outline" className="text-xs font-mono">
+										{c.quality_score != null
+											? c.quality_score.toFixed(1)
+											: "\u2014"}
+									</Badge>
 									<DifficultyBadge difficulty={c.difficulty} />
 									{c.roundtrip_verified ? (
 										<CheckCircle2 className="h-4 w-4 text-green-600" />
 									) : (
 										<XCircle className="h-4 w-4 text-muted-foreground" />
 									)}
+									<Button
+										variant="ghost"
+										size="icon"
+										className="h-7 w-7 text-muted-foreground hover:text-destructive"
+										disabled={deletingIds.has(c.id)}
+										onClick={() => handleDelete(c.id)}
+										title="Ta bort testfall"
+									>
+										{deletingIds.has(c.id) ? (
+											<Loader2 className="h-3.5 w-3.5 animate-spin" />
+										) : (
+											<Trash2 className="h-3.5 w-3.5" />
+										)}
+									</Button>
 								</div>
 							</div>
 						))}
@@ -209,8 +272,8 @@ function StatCard({ label, value }: { label: string; value: string }) {
 function DifficultyBadge({ difficulty }: { difficulty: string }) {
 	const colors: Record<string, string> = {
 		easy: "bg-green-100 text-green-700",
-		medium: "bg-yellow-100 text-yellow-700",
-		hard: "bg-orange-100 text-orange-700",
+		medium: "bg-blue-100 text-blue-700",
+		hard: "bg-amber-100 text-amber-700",
 		adversarial: "bg-red-100 text-red-700",
 	};
 	const color = colors[difficulty] || "bg-gray-100 text-gray-700";

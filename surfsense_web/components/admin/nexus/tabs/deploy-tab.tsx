@@ -5,6 +5,8 @@ import {
 	AlertCircle,
 	ArrowRight,
 	CheckCircle2,
+	ChevronDown,
+	ChevronUp,
 	Loader2,
 	Rocket,
 	RotateCcw,
@@ -13,6 +15,18 @@ import {
 	XCircle,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	nexusApiService,
@@ -33,12 +47,45 @@ const CATEGORY_LABELS: Record<string, string> = {
 	geoapify: "Kartor (Geoapify)",
 };
 
+const STAGE_LABELS: Record<string, string> = {
+	review: "REVIEW",
+	staging: "STAGING",
+	live: "LIVE",
+	rolled_back: "ROLLED BACK",
+};
+
+const STAGE_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+	review: "outline",
+	staging: "secondary",
+	live: "default",
+	rolled_back: "destructive",
+};
+
+const GATE_REQUIREMENTS: Record<number, { requirement: string; thresholdExplanation: string; howToPass: string }> = {
+	1: {
+		requirement: "Separation-gate: Verktygets kod och konfiguration måste vara korrekt separerade från andra verktyg. Inga hårda beroenden till andra moduler.",
+		thresholdExplanation: "Poängen mäter graden av kodmässig separation. Värden över tröskeln indikerar tillräcklig isolation.",
+		howToPass: "Se till att verktyget har egen konfiguration, inga cirkulära beroenden, och att det kan laddas oberoende av andra verktyg.",
+	},
+	2: {
+		requirement: "Eval-gate: Verktyget måste klara automatiserade utvärderingstester med tillräckligt högt resultat.",
+		thresholdExplanation: "Poängen baseras på hur många eval-testfall verktyget klarar. Tröskeln anger minimikravet för godkänt.",
+		howToPass: "Kör eval-sviten och åtgärda eventuella felaktiga svar. Kontrollera att verktygets output matchar förväntade resultat.",
+	},
+	3: {
+		requirement: "LLM-judge-gate: En LLM-baserad bedömare utvärderar verktygets svar kvalitativt — relevans, korrekthet och användbarhet.",
+		thresholdExplanation: "LLM-bedömaren ger ett kvalitetspoäng. Tröskeln anger den lägsta acceptabla kvalitetsnivån.",
+		howToPass: "Förbättra verktygets prompter och svarsformat. Se till att svaren är tydliga, korrekta och relevanta för användarens fråga.",
+	},
+};
+
 export function DeployTab() {
 	const [toolId, setToolId] = useState("");
 	const [gateStatus, setGateStatus] = useState<GateStatusResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [actionMessage, setActionMessage] = useState<string | null>(null);
+	const [expandedGates, setExpandedGates] = useState<Record<number, boolean>>({});
 
 	// Platform tools for the tool picker
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
@@ -67,6 +114,7 @@ export function DeployTab() {
 		setLoading(true);
 		setError(null);
 		setActionMessage(null);
+		setExpandedGates({});
 		nexusApiService
 			.getDeployGates(tid)
 			.then(setGateStatus)
@@ -95,6 +143,17 @@ export function DeployTab() {
 			})
 			.catch((err) => setError(err.message));
 	};
+
+	const toggleGateExpanded = (gateNumber: number) => {
+		setExpandedGates((prev) => ({
+			...prev,
+			[gateNumber]: !prev[gateNumber],
+		}));
+	};
+
+	// Get the current lifecycle stage from the selected tool
+	const selectedTool = platformTools.find((t) => t.tool_id === toolId);
+	const currentStage = selectedTool?.zone?.toLowerCase() || "";
 
 	// Filter tools by category and search
 	const filteredTools = platformTools.filter((t) => {
@@ -233,7 +292,16 @@ export function DeployTab() {
 						<div className="flex items-center justify-between">
 							<div>
 								<p className="text-sm text-muted-foreground">Verktyg</p>
-								<p className="text-lg font-mono font-bold">{gateStatus.tool_id}</p>
+								<div className="flex items-center gap-3">
+									<p className="text-lg font-mono font-bold">{gateStatus.tool_id}</p>
+									{/* Current lifecycle stage badge */}
+									{currentStage && (
+										<Badge variant={STAGE_VARIANTS[currentStage] || "outline"}>
+											<Shield className="h-3 w-3" />
+											{STAGE_LABELS[currentStage] || currentStage.toUpperCase()}
+										</Badge>
+									)}
+								</div>
 							</div>
 							<div className="flex items-center gap-3">
 								<RecommendationBadge recommendation={gateStatus.recommendation} />
@@ -246,41 +314,109 @@ export function DeployTab() {
 									<ArrowRight className="h-4 w-4 mr-1" />
 									Promote
 								</Button>
-								<Button variant="outline" size="sm" onClick={handleRollback}>
-									<RotateCcw className="h-4 w-4 mr-1" />
-									Rollback
-								</Button>
+								{/* Rollback with confirmation dialog */}
+								<AlertDialog>
+									<AlertDialogTrigger asChild>
+										<Button variant="outline" size="sm">
+											<RotateCcw className="h-4 w-4 mr-1" />
+											Rollback
+										</Button>
+									</AlertDialogTrigger>
+									<AlertDialogContent>
+										<AlertDialogHeader>
+											<AlertDialogTitle>Är du säker?</AlertDialogTitle>
+											<AlertDialogDescription>
+												Du håller på att rulla tillbaka verktyget{" "}
+												<span className="font-mono font-semibold">{gateStatus.tool_id}</span>.
+												Detta kommer att flytta verktyget till ROLLED BACK-stadiet och det
+												kommer inte längre vara tillgängligt i sin nuvarande fas.
+											</AlertDialogDescription>
+										</AlertDialogHeader>
+										<AlertDialogFooter>
+											<AlertDialogCancel>Avbryt</AlertDialogCancel>
+											<AlertDialogAction onClick={handleRollback}>
+												Bekräfta rollback
+											</AlertDialogAction>
+										</AlertDialogFooter>
+									</AlertDialogContent>
+								</AlertDialog>
 							</div>
 						</div>
 					</div>
 
 					{/* Gates */}
 					<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-						{gateStatus.gates.map((gate) => (
-							<div key={gate.gate_number} className="rounded-lg border bg-card p-4">
-								<div className="flex items-center gap-2 mb-2">
-									{gate.passed ? (
-										<CheckCircle2 className="h-5 w-5 text-green-600" />
-									) : (
-										<XCircle className="h-5 w-5 text-red-600" />
+						{gateStatus.gates.map((gate) => {
+							const isExpanded = expandedGates[gate.gate_number] || false;
+							const gateInfo = GATE_REQUIREMENTS[gate.gate_number];
+
+							return (
+								<div key={gate.gate_number} className="rounded-lg border bg-card p-4">
+									<button
+										type="button"
+										onClick={() => toggleGateExpanded(gate.gate_number)}
+										className="w-full text-left"
+									>
+										<div className="flex items-center justify-between mb-2">
+											<div className="flex items-center gap-2">
+												{gate.passed ? (
+													<CheckCircle2 className="h-5 w-5 text-green-600" />
+												) : (
+													<XCircle className="h-5 w-5 text-red-600" />
+												)}
+												<h4 className="font-semibold text-sm">
+													Gate {gate.gate_number}: {gate.gate_name}
+												</h4>
+											</div>
+											{isExpanded ? (
+												<ChevronUp className="h-4 w-4 text-muted-foreground" />
+											) : (
+												<ChevronDown className="h-4 w-4 text-muted-foreground" />
+											)}
+										</div>
+									</button>
+									{gate.score !== null && gate.score !== undefined && (
+										<p className="text-2xl font-bold font-mono">
+											{gate.score.toFixed(3)}
+										</p>
 									)}
-									<h4 className="font-semibold text-sm">
-										Gate {gate.gate_number}: {gate.gate_name}
-									</h4>
+									{gate.threshold !== null && gate.threshold !== undefined && (
+										<p className="text-xs text-muted-foreground">
+											Tröskel: {gate.threshold}
+										</p>
+									)}
+									<p className="text-xs text-muted-foreground mt-1">{gate.details}</p>
+
+									{/* Expandable gate details */}
+									{isExpanded && gateInfo && (
+										<div className="mt-3 pt-3 border-t space-y-2">
+											<div>
+												<p className="text-xs font-semibold text-foreground">Krav</p>
+												<p className="text-xs text-muted-foreground">
+													{gateInfo.requirement}
+												</p>
+											</div>
+											<div>
+												<p className="text-xs font-semibold text-foreground">
+													Tröskelförklaring
+												</p>
+												<p className="text-xs text-muted-foreground">
+													{gateInfo.thresholdExplanation}
+												</p>
+											</div>
+											<div>
+												<p className="text-xs font-semibold text-foreground">
+													Vad krävs för att passera
+												</p>
+												<p className="text-xs text-muted-foreground">
+													{gateInfo.howToPass}
+												</p>
+											</div>
+										</div>
+									)}
 								</div>
-								{gate.score !== null && gate.score !== undefined && (
-									<p className="text-2xl font-bold font-mono">
-										{gate.score.toFixed(3)}
-									</p>
-								)}
-								{gate.threshold !== null && gate.threshold !== undefined && (
-									<p className="text-xs text-muted-foreground">
-										Tröskel: {gate.threshold}
-									</p>
-								)}
-								<p className="text-xs text-muted-foreground mt-1">{gate.details}</p>
-							</div>
-						))}
+							);
+						})}
 					</div>
 				</div>
 			)}

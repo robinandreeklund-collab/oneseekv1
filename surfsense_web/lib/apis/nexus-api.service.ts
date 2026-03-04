@@ -322,6 +322,54 @@ export interface ECEReportResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Metrics Trend Types
+// ---------------------------------------------------------------------------
+
+export interface MetricsTrendPoint {
+	date: string | null;
+	stage: string;
+	precision_at_1: number | null;
+	mrr_at_10: number | null;
+}
+
+export interface MetricsTrend {
+	period_days: number;
+	data_points: MetricsTrendPoint[];
+}
+
+// ---------------------------------------------------------------------------
+// Loop Run Detail Types
+// ---------------------------------------------------------------------------
+
+export interface LoopRunDetail {
+	id: string;
+	loop_number: number;
+	status: string;
+	started_at: string | null;
+	completed_at: string | null;
+	total_tests: number | null;
+	failures: number | null;
+	approved_proposals: number | null;
+	embedding_delta: number | null;
+	proposals: { tool_id: string; field: string; reason: string }[];
+	band_distribution: number[];
+	platform_comparisons: number;
+	platform_agreements: number;
+}
+
+// ---------------------------------------------------------------------------
+// Shadow Observer Types
+// ---------------------------------------------------------------------------
+
+export interface ShadowReportResponse {
+	feedback_store: {
+		total_patterns: number;
+		sample_rows: Record<string, unknown>[];
+	};
+	live_routing: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
 // API Methods
 // ---------------------------------------------------------------------------
 
@@ -444,6 +492,29 @@ class NexusApiService {
 	// Overview Metrics
 	getOverviewMetrics = () =>
 		fetchNexus<OverviewMetricsResponse>("/overview/metrics");
+
+	// Forge: Delete case
+	deleteForgeCase = (caseId: string) =>
+		fetchNexus<{ status: string }>(`/forge/cases/${caseId}`, { method: "DELETE" });
+
+	// Loop: Run detail
+	getLoopRunDetail = (runId: string) =>
+		fetchNexus<LoopRunDetail>(`/loop/runs/${runId}`);
+
+	// Ledger: Trend
+	getLedgerTrendTyped = (days = 30) =>
+		fetchNexus<MetricsTrend>(`/ledger/trend?days=${days}`);
+
+	// Shadow Observer
+	getShadowReport = () =>
+		fetchNexus<ShadowReportResponse>("/shadow/report");
+
+	// Dark Matter: Review cluster
+	reviewDarkMatter = (clusterId: number, newToolCandidate?: string) =>
+		fetchNexus<{ status: string }>(`/dark-matter/${clusterId}/review`, {
+			method: "POST",
+			body: JSON.stringify({ new_tool_candidate: newToolCandidate }),
+		});
 }
 
 export const nexusApiService = new NexusApiService();

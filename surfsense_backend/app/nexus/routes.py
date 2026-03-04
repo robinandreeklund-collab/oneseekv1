@@ -397,6 +397,32 @@ async def get_forge_cases(
     return await service.get_synthetic_cases(session, tool_id=tool_id, limit=limit)
 
 
+@nexus_router.delete("/forge/cases/{case_id}")
+async def delete_forge_case(
+    case_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Delete a synthetic test case."""
+    from app.nexus.models import NexusSyntheticCase
+
+    try:
+        uid = uuid_mod.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid case_id format") from None
+
+    result = await session.execute(
+        select(NexusSyntheticCase).where(NexusSyntheticCase.id == uid)
+    )
+    case = result.scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found")
+
+    await session.delete(case)
+    await session.commit()
+    return {"status": "deleted", "case_id": case_id}
+
+
 # ------------------------------------------------------------------
 # Auto Loop (Sprint 3)
 # ------------------------------------------------------------------
@@ -433,6 +459,47 @@ async def get_loop_runs(
 ):
     """Get auto-loop run history."""
     return await service.get_loop_runs(session, limit=limit)
+
+
+@nexus_router.get("/loop/runs/{run_id}")
+async def get_loop_run_detail(
+    run_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Get detailed info for a single auto-loop run.
+
+    Returns proposals, band distribution, platform comparisons,
+    and hard negative count from the run's metadata.
+    """
+    try:
+        uid = uuid_mod.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run_id format") from None
+
+    result = await session.execute(
+        select(NexusAutoLoopRun).where(NexusAutoLoopRun.id == uid)
+    )
+    run = result.scalars().first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    meta = run.metadata_proposals or {}
+    return {
+        "id": str(run.id),
+        "loop_number": run.loop_number,
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "total_tests": run.total_tests,
+        "failures": run.failures,
+        "approved_proposals": run.approved_proposals,
+        "embedding_delta": run.embedding_delta,
+        "proposals": meta.get("proposals", []),
+        "band_distribution": meta.get("band_distribution", []),
+        "platform_comparisons": meta.get("platform_comparisons", 0),
+        "platform_agreements": meta.get("platform_agreements", 0),
+    }
 
 
 class ApproveProposalRequest(BaseModel):

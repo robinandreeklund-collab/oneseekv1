@@ -140,8 +140,8 @@ class NexusService:
     async def get_zones(self, session: AsyncSession) -> list[ZoneConfigResponse]:
         """Return all zone configurations from DB.
 
-        Filters out stale zone names (e.g. old 'myndigheter', 'handling')
-        that no longer match the current ZONE_PREFIXES config.
+        Auto-seeds missing zones into DB so that all 4 zones always appear.
+        Filters out stale zone names (e.g. old 'myndigheter', 'handling').
         """
         from app.nexus.config import ZONE_PREFIXES
 
@@ -151,17 +151,24 @@ class NexusService:
         rows = result.scalars().all()
 
         # Filter to only valid current zones
-        valid_rows = [r for r in rows if r.zone in valid_zones]
+        existing_zones = {r.zone for r in rows if r.zone in valid_zones}
 
-        if not valid_rows:
-            # Return default zone config if DB is empty or all stale
-            return [
-                ZoneConfigResponse(
-                    zone=z["zone"],
-                    prefix_token=z["prefix_token"],
-                )
-                for z in self.zone_manager.get_zone_config_data()
-            ]
+        # Auto-seed any missing zones into DB
+        missing_zones = valid_zones - existing_zones
+        if missing_zones:
+            for zone_data in self.zone_manager.get_zone_config_data():
+                if zone_data["zone"] in missing_zones:
+                    new_zone = NexusZoneConfig(
+                        zone=zone_data["zone"],
+                        prefix_token=zone_data["prefix_token"],
+                    )
+                    await session.merge(new_zone)
+            await session.flush()
+            # Re-query to get all rows
+            result = await session.execute(select(NexusZoneConfig))
+            rows = result.scalars().all()
+
+        valid_rows = [r for r in rows if r.zone in valid_zones]
 
         return [
             ZoneConfigResponse(

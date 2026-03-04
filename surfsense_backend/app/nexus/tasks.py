@@ -229,31 +229,47 @@ def _get_llm_model_name() -> str | None:
         return None
 
 
-def forge_generate_task(
-    tool_ids: list[str] | None = None,
-    difficulties: list[str] | None = None,
-    questions_per_difficulty: int = 4,
-) -> dict:
-    """Background task: generate synthetic test cases via Synth Forge.
+try:
+    from app.celery_app import celery_app
 
-    Calls the configured LLM to generate test questions, then persists
-    results to the nexus_synthetic_cases table.
-    """
-    logger.info(
-        "Forge generation task started: tools=%s, difficulties=%s",
-        tool_ids or "all",
-        difficulties or "all",
-    )
-    return _run_async(
-        _forge_generate_async(tool_ids, difficulties, questions_per_difficulty)
-    )
+    @celery_app.task(name="nexus.forge_generate", bind=True, max_retries=1)
+    def forge_generate_task(
+        self,
+        tool_ids: list[str] | None = None,
+        difficulties: list[str] | None = None,
+        questions_per_difficulty: int = 4,
+    ) -> dict:
+        """Background task: generate synthetic test cases via Synth Forge."""
+        logger.info(
+            "Forge generation task started: tools=%s, difficulties=%s",
+            tool_ids or "all",
+            difficulties or "all",
+        )
+        return _run_async(
+            _forge_generate_async(tool_ids, difficulties, questions_per_difficulty)
+        )
 
+    @celery_app.task(name="nexus.auto_loop", bind=True, max_retries=1)
+    def auto_loop_task(self) -> dict:
+        """Background task: run the auto-improvement loop."""
+        logger.info("Auto-loop task started")
+        return _run_async(_auto_loop_async())
 
-def auto_loop_task() -> dict:
-    """Background task: run the auto-improvement loop.
+except ImportError:
+    logger.warning("Celery not available — NEXUS tasks will run inline only")
 
-    Loads synthetic test cases, runs them through routing, clusters
-    failures, creates proposals, and stores results for human review.
-    """
-    logger.info("Auto-loop task started")
-    return _run_async(_auto_loop_async())
+    def forge_generate_task(
+        tool_ids: list[str] | None = None,
+        difficulties: list[str] | None = None,
+        questions_per_difficulty: int = 4,
+    ) -> dict:
+        """Inline fallback: generate synthetic test cases via Synth Forge."""
+        logger.info("Forge generation (inline): tools=%s", tool_ids or "all")
+        return _run_async(
+            _forge_generate_async(tool_ids, difficulties, questions_per_difficulty)
+        )
+
+    def auto_loop_task() -> dict:
+        """Inline fallback: run the auto-improvement loop."""
+        logger.info("Auto-loop (inline)")
+        return _run_async(_auto_loop_async())
