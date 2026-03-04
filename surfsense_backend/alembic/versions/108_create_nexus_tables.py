@@ -157,13 +157,13 @@ def upgrade() -> None:
     # Add vector column via raw SQL (pgvector requires special type)
     op.execute("ALTER TABLE nexus_zone_config ADD COLUMN centroid_embedding vector(768)")
 
-    # Seed default zone configurations
+    # Seed default zone configurations (aligned with config.py Zone enum)
     op.execute("""
         INSERT INTO nexus_zone_config (zone, prefix_token, ood_energy_threshold) VALUES
         ('kunskap', '[KUNSK] ', -5.0),
-        ('myndigheter', '[MYNDG] ', -5.0),
-        ('handling', '[HANDL] ', -5.0),
-        ('jämförelse', '[JAMFR] ', -5.0)
+        ('skapande', '[SKAP] ', -5.0),
+        ('jämförelse', '[JAMFR] ', -5.0),
+        ('konversation', '[KONV] ', -5.0)
         ON CONFLICT (zone) DO NOTHING
     """)
 

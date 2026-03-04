@@ -172,33 +172,191 @@ class DarkMatterDetector:
         return self._knn_index is not None
 
     # ------------------------------------------------------------------
-    # Dark Matter Clustering (Sprint 3)
+    # UAEval4RAG — 6 OOD Query Categories
+    # ------------------------------------------------------------------
+
+    def classify_ood_category(
+        self,
+        query: str,
+        *,
+        entities_locations: list[str] | None = None,
+        entities_times: list[str] | None = None,
+        zone_candidates: list[str] | None = None,
+        tool_count: int = 0,
+    ) -> str:
+        """Classify an OOD query into one of 6 UAEval4RAG categories.
+
+        Categories:
+            no_tool: No matching tool exists in the system
+            geo_scope: Query is outside geographic scope (e.g. "weather in Paris")
+            temporal_scope: Query is outside temporal scope (e.g. "1987")
+            ambiguous: Multiple interpretations possible
+            conflicting: Contradictory requirements in query
+            underspecified: Missing necessary information
+        """
+        import re
+
+        query_lower = query.lower()
+        locations = entities_locations or []
+        _times = entities_times or []  # reserved for future temporal analysis
+        zones = zone_candidates or []
+
+        # no_tool: No candidates found at all
+        if tool_count == 0 and not zones:
+            return "no_tool"
+
+        # geo_scope: Foreign locations detected
+        foreign_indicators = [
+            "paris",
+            "london",
+            "berlin",
+            "new york",
+            "tokyo",
+            "los angeles",
+            "madrid",
+            "rom",
+            "amsterdam",
+            "bangkok",
+            "dubai",
+            "sydney",
+            "europa",
+            "asien",
+            "afrika",
+            "usa",
+            "kina",
+            "japan",
+            "indien",
+            "utomlands",
+            "internationell",
+        ]
+        for loc in locations:
+            if loc.lower() in foreign_indicators:
+                return "geo_scope"
+        for word in foreign_indicators:
+            if word in query_lower:
+                return "geo_scope"
+
+        # temporal_scope: Historical or far-future dates
+        year_match = re.search(r"\b(1[89]\d{2}|20[0-1]\d)\b", query_lower)
+        if year_match:
+            year = int(year_match.group(1))
+            if year < 2020:
+                return "temporal_scope"
+        historical_words = ["historisk", "förr", "1900-tal", "medeltid", "antiken"]
+        if any(w in query_lower for w in historical_words):
+            return "temporal_scope"
+
+        # conflicting: Contradictory signals
+        if len(zones) >= 2 and zones[0] != zones[1]:
+            conflict_pairs = [
+                ("jämför", "skapa"),
+                ("sök", "generera"),
+                ("statistik", "karta"),
+                ("väder", "bolag"),
+            ]
+            for a, b in conflict_pairs:
+                if a in query_lower and b in query_lower:
+                    return "conflicting"
+
+        # ambiguous: Multiple possible interpretations
+        ambig_words = [
+            "det",
+            "den",
+            "saker",
+            "grejer",
+            "information",
+            "data",
+            "hjälp",
+            "visa",
+        ]
+        if len(query_lower.split()) <= 3 and any(
+            w in query_lower.split() for w in ambig_words
+        ):
+            return "ambiguous"
+
+        # underspecified: Too vague or missing key info
+        if len(query_lower.split()) <= 2:
+            return "underspecified"
+        vague_patterns = ["hur gör man", "berätta om", "vad finns det"]
+        if any(p in query_lower for p in vague_patterns):
+            return "underspecified"
+
+        return "no_tool"
+
+    # ------------------------------------------------------------------
+    # Dark Matter Clustering (DBSCAN when embeddings available)
     # ------------------------------------------------------------------
 
     def cluster_dark_matter(
         self,
         ood_queries: list[dict],
+        *,
+        embeddings: list[list[float]] | None = None,
     ) -> list[dict]:
-        """Cluster OOD queries to identify potential new tool categories.
-
-        Groups OOD queries by similarity to find patterns that suggest
-        missing tools in the routing system.
-
-        Args:
-            ood_queries: List of dicts with query_text, energy_score, etc.
-
-        Returns:
-            List of cluster dicts with cluster_id, queries, suggested_tool.
+        """Cluster OOD queries using DBSCAN on embeddings when available,
+        falling back to keyword grouping otherwise.
         """
         if not ood_queries or len(ood_queries) < 3:
             return []
 
-        # Simple clustering: group by shared keywords
+        if embeddings and len(embeddings) == len(ood_queries):
+            return self._cluster_dbscan(ood_queries, embeddings)
+
+        return self._cluster_keywords(ood_queries)
+
+    def _cluster_dbscan(
+        self,
+        ood_queries: list[dict],
+        embeddings: list[list[float]],
+    ) -> list[dict]:
+        """Cluster using DBSCAN on embedding vectors."""
+        try:
+            from sklearn.cluster import DBSCAN
+        except ImportError:
+            logger.info(
+                "scikit-learn not installed, falling back to keyword clustering"
+            )
+            return self._cluster_keywords(ood_queries)
+
+        arr = np.array(embeddings, dtype=np.float32)
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-10)
+        arr_norm = arr / norms
+
+        clustering = DBSCAN(eps=0.3, min_samples=2, metric="cosine").fit(arr_norm)
+        labels = clustering.labels_
+
+        cluster_map: dict[int, list[dict]] = {}
+        for i, label in enumerate(labels):
+            if label == -1:
+                continue
+            cluster_map.setdefault(label, []).append(ood_queries[i])
+
+        clusters: list[dict] = []
+        for cluster_id, queries in sorted(
+            cluster_map.items(), key=lambda x: len(x[1]), reverse=True
+        ):
+            sample_texts = [q.get("query_text", "") for q in queries[:5]]
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "query_count": len(queries),
+                    "sample_queries": sample_texts,
+                    "suggested_tool": None,
+                    "reviewed": False,
+                }
+            )
+            if len(clusters) >= 20:
+                break
+
+        return clusters
+
+    def _cluster_keywords(self, ood_queries: list[dict]) -> list[dict]:
+        """Fallback clustering by shared keywords."""
         keyword_groups: dict[str, list[dict]] = {}
         for q in ood_queries:
             text = q.get("query_text", "").lower()
             tokens = set(text.split())
-            # Use most distinctive token as cluster key
             for token in tokens:
                 if len(token) > 3:
                     keyword_groups.setdefault(token, []).append(q)

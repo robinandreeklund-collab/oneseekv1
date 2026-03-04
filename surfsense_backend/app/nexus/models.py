@@ -236,3 +236,25 @@ class NexusRoutingEvent(Base):
     routed_at = Column(
         TIMESTAMP(timezone=True), nullable=False, default=_utcnow, index=True
     )
+
+
+# ---------------------------------------------------------------------------
+# 10. Deploy lifecycle state (persisted — survives restarts)
+# ---------------------------------------------------------------------------
+
+
+class NexusDeployState(Base):
+    __tablename__ = "nexus_deploy_state"
+    __allow_unmapped__ = True
+
+    tool_id = Column(Text, primary_key=True)
+    stage = Column(
+        String(20), nullable=False, default="review"
+    )  # review|staging|live|rolled_back
+    promoted_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    promoted_by = Column(Text, nullable=True)
+    gate1_score = Column(Float, nullable=True)
+    gate2_score = Column(Float, nullable=True)
+    gate3_score = Column(Float, nullable=True)
+    gate3_details = Column(JSONB, nullable=True)  # LLM judge output
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)

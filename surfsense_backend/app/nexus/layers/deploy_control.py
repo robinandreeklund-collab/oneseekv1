@@ -3,11 +3,15 @@
 Three gates must pass before a tool can be promoted:
 1. Separation Gate: silhouette score >= threshold
 2. Eval Gate: success rate, hard negative precision, adversarial precision
-3. LLM Judge Gate: description clarity, keyword relevance, disambiguation quality
+3. LLM Judge Gate: real LLM evaluation of description clarity, keyword relevance,
+   disambiguation quality (no heuristics)
+
+Lifecycle state is DB-persisted via NexusDeployState — survives restarts.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -15,6 +19,51 @@ from enum import StrEnum
 from app.nexus.config import DEPLOY_GATE_THRESHOLDS, DeployGateThresholds
 
 logger = logging.getLogger(__name__)
+
+# LLM Judge prompt for Gate 3
+LLM_JUDGE_PROMPT = """Du är en kvalitetsgranskare för AI-verktygsmetadata.
+
+Bedöm följande verktyg på tre kriterier (skala 1-5):
+
+Verktyg: {tool_id}
+Namn: {tool_name}
+Beskrivning: {description}
+Nyckelord: {keywords}
+Namespace: {namespace}
+Kategori: {category}
+Liknande verktyg i samma zon: {similar_tools}
+
+Bedömningskriterier:
+
+1. DESCRIPTION_CLARITY (1-5):
+   - 5: Helt tydlig, förklarar exakt vad verktyget gör, vilken data det returnerar
+   - 4: Bra men saknar viss detalj om output/format
+   - 3: Grundläggande korrekt men vag
+   - 2: Förvirrande eller inkomplett
+   - 1: Saknas eller meningslös
+
+2. KEYWORD_RELEVANCE (1-5):
+   - 5: Alla nyckelord är relevanta, täcker alla viktiga söktermer
+   - 4: Bra täckning, max 1 onödig eller saknad term
+   - 3: Vissa nyckelord saknas eller är irrelevanta
+   - 2: Flera irrelevanta nyckelord eller stora luckor
+   - 1: Nyckelorden matchar inte verktyget
+
+3. DISAMBIGUATION_QUALITY (1-5):
+   - 5: Klart differentierat från liknande verktyg, inga förväxlingsrisker
+   - 4: Bra, minor overlap med 1 verktyg
+   - 3: Viss förväxlingsrisk med liknande verktyg
+   - 2: Stor förväxlingsrisk
+   - 1: Kan inte skiljas från andra verktyg
+
+Svara ENBART med JSON:
+{{
+  "description_clarity": <1-5>,
+  "keyword_relevance": <1-5>,
+  "disambiguation_quality": <1-5>,
+  "reasoning": "<kort motivering>"
+}}
+"""
 
 
 class ToolLifecycle(StrEnum):
@@ -75,6 +124,10 @@ class DeployControl:
 
     Manages tool promotion through REVIEW → STAGING → LIVE stages,
     requiring all three gates to pass for promotion.
+
+    State is DB-persisted via NexusDeployState — use the async methods
+    in NexusService for DB operations. The in-memory cache is used
+    as a read-through layer for performance.
     """
 
     def __init__(
@@ -83,14 +136,37 @@ class DeployControl:
     ):
         self.thresholds = thresholds or DEPLOY_GATE_THRESHOLDS
         self._tool_stages: dict[str, ToolLifecycle] = {}
+        self._loaded_from_db = False
 
     def get_stage(self, tool_id: str) -> ToolLifecycle:
-        """Get the current lifecycle stage for a tool."""
+        """Get the current lifecycle stage for a tool (from cache)."""
         return self._tool_stages.get(tool_id, ToolLifecycle.REVIEW)
 
     def set_stage(self, tool_id: str, stage: ToolLifecycle) -> None:
-        """Set the lifecycle stage for a tool."""
+        """Set the lifecycle stage in cache. Must also persist to DB."""
         self._tool_stages[tool_id] = stage
+
+    def load_from_db_rows(self, rows: list[dict]) -> None:
+        """Load lifecycle state from DB rows into cache.
+
+        Called by NexusService on startup or when state is needed.
+        """
+        self._tool_stages.clear()
+        for row in rows:
+            tool_id = row.get("tool_id", "")
+            stage = row.get("stage", "review")
+            try:
+                self._tool_stages[tool_id] = ToolLifecycle(stage)
+            except ValueError:
+                self._tool_stages[tool_id] = ToolLifecycle.REVIEW
+        self._loaded_from_db = True
+        logger.info(
+            "Deploy control loaded %d tool states from DB", len(self._tool_stages)
+        )
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._loaded_from_db
 
     # ------------------------------------------------------------------
     # Gate 1: Separation
@@ -103,11 +179,7 @@ class DeployControl:
         silhouette_score: float | None = None,
         inter_zone_distance: float | None = None,
     ) -> GateResult:
-        """Gate 1: Separation score check.
-
-        Verifies that the tool's embedding is well-separated from
-        other tools in the vector space.
-        """
+        """Gate 1: Separation score check."""
         if silhouette_score is None:
             return GateResult(
                 gate_number=1,
@@ -138,11 +210,7 @@ class DeployControl:
         hard_negative_rate: float | None = None,
         adversarial_rate: float | None = None,
     ) -> GateResult:
-        """Gate 2: Eval metrics check.
-
-        Verifies that the tool passes success rate, hard negative,
-        and adversarial precision thresholds.
-        """
+        """Gate 2: Eval metrics check."""
         if success_rate is None:
             return GateResult(
                 gate_number=2,
@@ -178,7 +246,6 @@ class DeployControl:
             )
             all_pass = False
 
-        # Use success_rate as the primary score
         return GateResult(
             gate_number=2,
             gate_name="eval",
@@ -189,7 +256,7 @@ class DeployControl:
         )
 
     # ------------------------------------------------------------------
-    # Gate 3: LLM Judge
+    # Gate 3: LLM Judge (REAL — no heuristics)
     # ------------------------------------------------------------------
 
     def evaluate_gate_3(
@@ -202,15 +269,15 @@ class DeployControl:
     ) -> GateResult:
         """Gate 3: LLM Judge quality check.
 
-        Verifies that the tool's metadata quality meets minimum standards
-        as assessed by an LLM judge.
+        Scores must come from actual LLM evaluation — not heuristics.
+        Use evaluate_gate_3_with_llm() to get real scores.
         """
         if description_clarity is None:
             return GateResult(
                 gate_number=3,
                 gate_name="llm_judge",
                 passed=False,
-                details="LLM judge scores not available",
+                details="LLM judge scores not available — run LLM evaluation first",
             )
 
         checks = []
@@ -240,7 +307,6 @@ class DeployControl:
             )
             all_pass = False
 
-        # Average of available scores
         scores = [
             s
             for s in [description_clarity, keyword_relevance, disambiguation_quality]
@@ -256,6 +322,53 @@ class DeployControl:
             threshold=self.thresholds.min_description_clarity,
             details="; ".join(checks) if checks else "All LLM judge scores met",
         )
+
+    def build_llm_judge_prompt(
+        self,
+        tool_id: str,
+        tool_name: str,
+        description: str,
+        keywords: list[str],
+        namespace: str,
+        category: str,
+        similar_tools: list[str],
+    ) -> str:
+        """Build the LLM judge prompt for Gate 3 evaluation."""
+        return LLM_JUDGE_PROMPT.format(
+            tool_id=tool_id,
+            tool_name=tool_name,
+            description=description,
+            keywords=", ".join(keywords),
+            namespace=namespace,
+            category=category,
+            similar_tools=", ".join(similar_tools[:5]) if similar_tools else "(inga)",
+        )
+
+    def parse_llm_judge_response(self, response_text: str) -> dict[str, float | str]:
+        """Parse LLM judge JSON response into scores."""
+        try:
+            text = response_text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            data = json.loads(text)
+            return {
+                "description_clarity": float(data.get("description_clarity", 0)),
+                "keyword_relevance": float(data.get("keyword_relevance", 0)),
+                "disambiguation_quality": float(data.get("disambiguation_quality", 0)),
+                "reasoning": str(data.get("reasoning", "")),
+            }
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            logger.warning("Failed to parse LLM judge response: %s", e)
+            return {
+                "description_clarity": 0.0,
+                "keyword_relevance": 0.0,
+                "disambiguation_quality": 0.0,
+                "reasoning": f"Parse error: {e}",
+            }
 
     # ------------------------------------------------------------------
     # Full evaluation
@@ -315,10 +428,7 @@ class DeployControl:
     # ------------------------------------------------------------------
 
     def promote(self, tool_id: str, *, force: bool = False) -> PromotionResult:
-        """Promote a tool to the next lifecycle stage.
-
-        REVIEW → STAGING → LIVE. Requires all gates to pass unless force=True.
-        """
+        """Promote a tool to the next lifecycle stage."""
         current = self.get_stage(tool_id)
 
         if current == ToolLifecycle.LIVE:

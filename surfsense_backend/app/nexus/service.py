@@ -26,6 +26,8 @@ from app.nexus.models import (
     NexusAutoLoopRun,
     NexusCalibrationParam,
     NexusDarkMatterQuery,
+    NexusDeployState,
+    NexusHardNegative,
     NexusPipelineMetric,
     NexusRoutingEvent,
     NexusSpaceSnapshot,
@@ -99,8 +101,19 @@ class NexusService:
     # ------------------------------------------------------------------
 
     async def get_health(self, session: AsyncSession) -> NexusHealthResponse:
-        """Return system health summary including model info."""
+        """Return system health summary including model info.
+
+        Also auto-loads calibration and deploy state on first call.
+        """
         from app.nexus.embeddings import get_embedding_info, get_reranker_info
+
+        # Auto-load Platt calibration from DB if not fitted
+        if not self.platt_scaler.is_fitted:
+            await self.load_calibration(session)
+
+        # Auto-load deploy state from DB
+        if not self.deploy_control.is_loaded:
+            await self._ensure_deploy_state_loaded(session)
 
         zones_count = (
             await session.scalar(select(func.count()).select_from(NexusZoneConfig)) or 0
@@ -116,7 +129,7 @@ class NexusService:
 
         return NexusHealthResponse(
             status="ok",
-            version="2.0.0",
+            version="2.1.0",
             zones_configured=zones_count,
             total_routing_events=events_count,
             total_synthetic_cases=synth_count,
@@ -908,7 +921,10 @@ class NexusService:
         decision: RoutingDecision,
         raw_score: float | None = None,
     ) -> None:
-        """Persist a routing decision to the database."""
+        """Persist a routing decision to the database.
+
+        If OOD, also logs a dark matter query with UAEval4RAG category.
+        """
         event = NexusRoutingEvent(
             query_text=query,
             query_hash=hashlib.sha256(query.encode()).hexdigest()[:16],
@@ -923,6 +939,23 @@ class NexusService:
             is_ood=decision.is_ood,
         )
         session.add(event)
+
+        # If OOD, classify with UAEval4RAG and log dark matter query
+        if decision.is_ood:
+            uaq_category = self.ood_detector.classify_ood_category(
+                query,
+                entities_locations=decision.query_analysis.entities.locations,
+                entities_times=decision.query_analysis.entities.times,
+                zone_candidates=decision.query_analysis.zone_candidates,
+                tool_count=len(decision.candidates),
+            )
+            dm_query = NexusDarkMatterQuery(
+                query_text=query,
+                energy_score=0.0,
+                uaq_category=uaq_category,
+            )
+            session.add(dm_query)
+
         await session.flush()
 
     # ------------------------------------------------------------------
@@ -1084,9 +1117,7 @@ class NexusService:
     # Deploy Control (Sprint 4)
     # ------------------------------------------------------------------
 
-    async def _compute_gate_metrics(
-        self, tool_id: str, session: AsyncSession
-    ) -> dict:
+    async def _compute_gate_metrics(self, tool_id: str, session: AsyncSession) -> dict:
         """Compute real metrics for deploy gates from DB and platform data."""
         # Gate 1: Silhouette score from space snapshots
         silhouette_score: float | None = None
@@ -1116,19 +1147,23 @@ class NexusService:
         # Gate 2: Success rate from routing events
         success_rate: float | None = None
         total_events = await session.scalar(
-            select(func.count()).select_from(NexusRoutingEvent).where(
-                NexusRoutingEvent.selected_tool == tool_id
-            )
+            select(func.count())
+            .select_from(NexusRoutingEvent)
+            .where(NexusRoutingEvent.selected_tool == tool_id)
         )
         if total_events and total_events > 0:
             positive_events = await session.scalar(
-                select(func.count()).select_from(NexusRoutingEvent).where(
+                select(func.count())
+                .select_from(NexusRoutingEvent)
+                .where(
                     NexusRoutingEvent.selected_tool == tool_id,
                     NexusRoutingEvent.explicit_feedback == 1,
                 )
             )
             negative_events = await session.scalar(
-                select(func.count()).select_from(NexusRoutingEvent).where(
+                select(func.count())
+                .select_from(NexusRoutingEvent)
+                .where(
                     NexusRoutingEvent.selected_tool == tool_id,
                     NexusRoutingEvent.explicit_feedback == -1,
                 )
@@ -1139,7 +1174,9 @@ class NexusService:
             else:
                 # No explicit feedback — use band-0 rate as proxy
                 band0_events = await session.scalar(
-                    select(func.count()).select_from(NexusRoutingEvent).where(
+                    select(func.count())
+                    .select_from(NexusRoutingEvent)
+                    .where(
                         NexusRoutingEvent.selected_tool == tool_id,
                         NexusRoutingEvent.band == 0,
                     )
@@ -1160,47 +1197,96 @@ class NexusService:
             if pm_row is not None:
                 success_rate = float(pm_row)
 
-        # Gate 3: Description clarity from platform tool metadata
+        # Gate 3: Real LLM judge evaluation (no heuristics)
         description_clarity: float | None = None
         keyword_relevance: float | None = None
-        try:
-            from app.nexus.platform_bridge import get_platform_tools
+        disambiguation_quality: float | None = None
 
-            pt_tools = get_platform_tools()
-            tool_meta = next((t for t in pt_tools if t.tool_id == tool_id), None)
-            if tool_meta:
-                desc = tool_meta.description or ""
-                kws = tool_meta.keywords or []
-                # Heuristic scoring (0-5 scale):
-                # Description clarity: based on length and specificity
-                desc_len = len(desc)
-                if desc_len > 100:
-                    description_clarity = 4.5
-                elif desc_len > 50:
-                    description_clarity = 4.0
-                elif desc_len > 20:
-                    description_clarity = 3.5
-                elif desc_len > 0:
-                    description_clarity = 2.5
-                else:
-                    description_clarity = 1.0
-                # Keyword relevance: based on keyword count
-                if len(kws) >= 5:
-                    keyword_relevance = 4.5
-                elif len(kws) >= 3:
-                    keyword_relevance = 4.0
-                elif len(kws) >= 1:
-                    keyword_relevance = 3.5
-                else:
-                    keyword_relevance = 2.0
-        except Exception:
-            pass
+        # First check if we already have cached LLM judge scores in deploy state
+        deploy_state = await session.execute(
+            select(NexusDeployState).where(NexusDeployState.tool_id == tool_id)
+        )
+        deploy_row = deploy_state.scalars().first()
+        if deploy_row and deploy_row.gate3_details:
+            g3 = deploy_row.gate3_details
+            description_clarity = g3.get("description_clarity")
+            keyword_relevance = g3.get("keyword_relevance")
+            disambiguation_quality = g3.get("disambiguation_quality")
+        else:
+            # Run real LLM judge evaluation
+            try:
+                from app.nexus.llm import nexus_llm_call
+                from app.nexus.platform_bridge import get_platform_tools
+
+                pt_tools = get_platform_tools()
+                tool_meta = next((t for t in pt_tools if t.tool_id == tool_id), None)
+                if tool_meta:
+                    # Find similar tools in same zone for disambiguation check
+                    similar = [
+                        t.tool_id
+                        for t in pt_tools
+                        if t.zone == tool_meta.zone and t.tool_id != tool_id
+                    ][:5]
+
+                    prompt = self.deploy_control.build_llm_judge_prompt(
+                        tool_id=tool_id,
+                        tool_name=tool_meta.name,
+                        description=tool_meta.description,
+                        keywords=tool_meta.keywords,
+                        namespace="/".join(tool_meta.namespace),
+                        category=tool_meta.category,
+                        similar_tools=similar,
+                    )
+                    response = await nexus_llm_call(prompt)
+                    scores = self.deploy_control.parse_llm_judge_response(response)
+                    description_clarity = scores.get("description_clarity")
+                    keyword_relevance = scores.get("keyword_relevance")
+                    disambiguation_quality = scores.get("disambiguation_quality")
+
+                    # Cache the LLM judge results in deploy state
+                    if deploy_row:
+                        deploy_row.gate3_score = (
+                            sum(
+                                s
+                                for s in [
+                                    description_clarity,
+                                    keyword_relevance,
+                                    disambiguation_quality,
+                                ]
+                                if s
+                            )
+                            / 3.0
+                        )
+                        deploy_row.gate3_details = scores
+                    else:
+                        new_state = NexusDeployState(
+                            tool_id=tool_id,
+                            stage="review",
+                            gate3_score=(
+                                sum(
+                                    s
+                                    for s in [
+                                        description_clarity,
+                                        keyword_relevance,
+                                        disambiguation_quality,
+                                    ]
+                                    if s
+                                )
+                                / 3.0
+                            ),
+                            gate3_details=scores,
+                        )
+                        session.add(new_state)
+                    await session.flush()
+            except Exception as e:
+                logger.warning("LLM judge evaluation failed for %s: %s", tool_id, e)
 
         return {
             "silhouette_score": silhouette_score,
             "success_rate": success_rate,
             "description_clarity": description_clarity,
             "keyword_relevance": keyword_relevance,
+            "disambiguation_quality": disambiguation_quality,
         }
 
     async def get_gate_status(
@@ -1214,6 +1300,7 @@ class NexusService:
             success_rate=metrics["success_rate"],
             description_clarity=metrics["description_clarity"],
             keyword_relevance=metrics.get("keyword_relevance"),
+            disambiguation_quality=metrics.get("disambiguation_quality"),
         )
         return GateStatusSchema(
             tool_id=gate_status.tool_id,
@@ -1235,8 +1322,13 @@ class NexusService:
     async def promote_tool(
         self, tool_id: str, session: AsyncSession
     ) -> PromotionResultSchema:
-        """Promote a tool to the next lifecycle stage."""
+        """Promote a tool to the next lifecycle stage. Persists to DB."""
+        # Load deploy state from DB if not loaded
+        await self._ensure_deploy_state_loaded(session)
+
         result = self.deploy_control.promote(tool_id)
+        if result.success:
+            await self._persist_deploy_state(session, tool_id, result.to_stage)
         return PromotionResultSchema(
             tool_id=result.tool_id,
             success=result.success,
@@ -1246,13 +1338,47 @@ class NexusService:
     async def rollback_tool(
         self, tool_id: str, session: AsyncSession
     ) -> RollbackResultSchema:
-        """Rollback a tool to ROLLED_BACK stage."""
+        """Rollback a tool to ROLLED_BACK stage. Persists to DB."""
+        await self._ensure_deploy_state_loaded(session)
+
         result = self.deploy_control.rollback(tool_id)
+        if result.success:
+            await self._persist_deploy_state(session, tool_id, result.to_stage)
         return RollbackResultSchema(
             tool_id=result.tool_id,
             success=result.success,
             message=result.message,
         )
+
+    async def _ensure_deploy_state_loaded(self, session: AsyncSession) -> None:
+        """Load deploy state from DB into DeployControl cache if not loaded."""
+        if self.deploy_control.is_loaded:
+            return
+        result = await session.execute(select(NexusDeployState))
+        rows = result.scalars().all()
+        db_rows = [{"tool_id": r.tool_id, "stage": r.stage} for r in rows]
+        self.deploy_control.load_from_db_rows(db_rows)
+
+    async def _persist_deploy_state(
+        self, session: AsyncSession, tool_id: str, stage: str
+    ) -> None:
+        """Persist a deploy state change to DB."""
+        result = await session.execute(
+            select(NexusDeployState).where(NexusDeployState.tool_id == tool_id)
+        )
+        existing = result.scalars().first()
+        if existing:
+            existing.stage = stage
+            existing.promoted_at = datetime.now(tz=UTC)
+        else:
+            session.add(
+                NexusDeployState(
+                    tool_id=tool_id,
+                    stage=stage,
+                    promoted_at=datetime.now(tz=UTC),
+                )
+            )
+        await session.flush()
 
     # ------------------------------------------------------------------
     # Calibration (Sprint 4)
@@ -1401,6 +1527,79 @@ class NexusService:
             "percentages": [
                 round(d / total * 100, 1) if total > 0 else 0 for d in distribution
             ],
+        }
+
+    # ------------------------------------------------------------------
+    # Overview Metrics (ECE, Band-0, OOD rate, namespace purity)
+    # ------------------------------------------------------------------
+
+    async def get_overview_metrics(self, session: AsyncSession) -> dict:
+        """Get key metrics for the overview tab.
+
+        Returns:
+            Dict with band0_rate, ece_global, ood_rate, namespace_purity,
+            platt_calibrated, total_events, total_tools, total_hard_negatives.
+        """
+        # Band distribution
+        band_dist = await self.get_band_distribution(session)
+        total = band_dist["total"]
+        band0_rate = band_dist["percentages"][0] / 100.0 if total > 0 else 0.0
+
+        # OOD rate
+        ood_count = (
+            await session.scalar(
+                select(func.count())
+                .select_from(NexusRoutingEvent)
+                .where(NexusRoutingEvent.is_ood.is_(True))
+            )
+            or 0
+        )
+        ood_rate = ood_count / total if total > 0 else 0.0
+
+        # ECE from calibration
+        ece_report = await self.get_ece_report(session)
+
+        # Schema verification rate (namespace purity proxy)
+        schema_verified_count = (
+            await session.scalar(
+                select(func.count())
+                .select_from(NexusRoutingEvent)
+                .where(NexusRoutingEvent.schema_verified.is_(True))
+            )
+            or 0
+        )
+        non_ood_count = total - ood_count
+        namespace_purity = (
+            schema_verified_count / non_ood_count if non_ood_count > 0 else 0.0
+        )
+
+        # Hard negatives count
+        hn_count = (
+            await session.scalar(select(func.count()).select_from(NexusHardNegative))
+            or 0
+        )
+
+        # Tool count from platform
+        try:
+            from app.nexus.platform_bridge import get_platform_tools
+
+            tool_count = len(
+                [t for t in get_platform_tools() if t.category != "external_model"]
+            )
+        except Exception:
+            tool_count = 0
+
+        return {
+            "band0_rate": round(band0_rate, 4),
+            "ece_global": ece_report.global_ece,
+            "ood_rate": round(ood_rate, 4),
+            "namespace_purity": round(namespace_purity, 4),
+            "platt_calibrated": self.platt_scaler.is_fitted,
+            "total_events": total,
+            "total_tools": tool_count,
+            "total_hard_negatives": hn_count,
+            "band_distribution": band_dist["distribution"],
+            "band_percentages": band_dist["percentages"],
         }
 
     # ------------------------------------------------------------------
@@ -1563,12 +1762,108 @@ class NexusService:
 
         # Cluster failures and create proposals
         clusters = self.auto_loop.cluster_failures(failed_queries)
-        proposals = self.auto_loop.create_proposals(clusters)
+
+        # LLM root cause analysis per cluster
+        root_causes: list[str] = []
+        try:
+            from app.nexus.llm import nexus_llm_call
+
+            for cluster in clusters:
+                if not cluster.sample_queries:
+                    root_causes.append("")
+                    continue
+                rc_prompt = (
+                    f"Analysera varför dessa frågor routades fel.\n"
+                    f"Förväntade verktyg: {', '.join(cluster.tool_ids)}\n"
+                    f"Exempelfrågor:\n"
+                    + "\n".join(f"- {q}" for q in cluster.sample_queries[:3])
+                    + "\n\nSvara med EN mening som förklarar rotorsaken."
+                )
+                try:
+                    root_cause = await nexus_llm_call(rc_prompt)
+                    root_causes.append(root_cause.strip())
+                except Exception as e:
+                    logger.warning(
+                        "LLM root cause failed for cluster %d: %s",
+                        cluster.cluster_id,
+                        e,
+                    )
+                    root_causes.append("")
+        except ImportError:
+            logger.warning("LLM not available for root cause analysis")
+
+        proposals = self.auto_loop.create_proposals(
+            clusters, root_causes=root_causes or None
+        )
+
+        # Compute real embedding delta for each proposal
+        try:
+            from app.nexus.embeddings import nexus_embed_score
+
+            for proposal in proposals:
+                if proposal.current_value and proposal.proposed_value:
+                    current_score = nexus_embed_score(
+                        proposal.tool_id, proposal.current_value
+                    )
+                    proposed_score = nexus_embed_score(
+                        proposal.tool_id, proposal.proposed_value
+                    )
+                    if current_score is not None and proposed_score is not None:
+                        proposal.embedding_delta = proposed_score - current_score
+        except Exception as e:
+            logger.warning("Embedding delta computation failed: %s", e)
+
+        # Mine hard negatives from confusion pairs in failures
+        if failed_queries:
+            confusion_data = [
+                {
+                    "tool_a": fq.get("expected_tool", ""),
+                    "tool_b": fq.get("got_tool", ""),
+                    "similarity": 0.85,
+                }
+                for fq in failed_queries
+                if fq.get("expected_tool") and fq.get("got_tool")
+            ]
+            hn_result = self.hard_negative_miner.mine_from_confusion(confusion_data)
+            logger.info(
+                "Hard negative mining: %d total, %d new pairs",
+                hn_result.total_pairs,
+                hn_result.new_pairs,
+            )
+
+            # Persist hard negatives to DB
+            for pair in self.hard_negative_miner.pairs:
+                try:
+                    existing = await session.execute(
+                        select(NexusHardNegative).where(
+                            NexusHardNegative.anchor_tool == pair.anchor_tool,
+                            NexusHardNegative.negative_tool == pair.negative_tool,
+                        )
+                    )
+                    if not existing.scalars().first():
+                        session.add(
+                            NexusHardNegative(
+                                anchor_tool=pair.anchor_tool,
+                                negative_tool=pair.negative_tool,
+                                mining_method=pair.mining_method,
+                                similarity_score=pair.similarity_score,
+                                confusion_frequency=pair.confusion_frequency,
+                            )
+                        )
+                except Exception:
+                    pass  # Unique constraint violation — already exists
 
         # Compute pipeline metrics
         p_at_1 = correct_at_1 / total_tests if total_tests > 0 else 0.0
         p_at_5 = correct_at_5 / total_tests if total_tests > 0 else 0.0
         mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
+
+        # Compute overall embedding delta
+        total_embedding_delta = (
+            sum(p.embedding_delta for p in proposals) / len(proposals)
+            if proposals
+            else 0.0
+        )
 
         # Persist pipeline metrics to the ledger only if we have enough data
         # to produce meaningful metrics (avoid overwriting good seed data with 0s)
@@ -1620,6 +1915,7 @@ class NexusService:
             "band_distribution": band_counts,
         }
         db_run.approved_proposals = 0
+        db_run.embedding_delta = total_embedding_delta
         db_run.status = "review" if proposals else "approved"
         db_run.completed_at = datetime.now(tz=UTC)
         await session.commit()
@@ -1631,6 +1927,11 @@ class NexusService:
             "total_tests": total_tests,
             "failures": failures,
             "proposals": len(proposals),
+            "embedding_delta": round(total_embedding_delta, 4),
+            "root_causes": root_causes,
+            "hard_negatives_mined": self.hard_negative_miner.get_stats().get(
+                "total_pairs", 0
+            ),
             "platform_comparisons": platform_comparisons,
             "platform_agreements": platform_agreements,
             "platform_agreement_rate": (

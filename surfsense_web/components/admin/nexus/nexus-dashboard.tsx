@@ -16,6 +16,7 @@ import {
 import {
 	nexusApiService,
 	type NexusHealthResponse,
+	type OverviewMetricsResponse,
 } from "@/lib/apis/nexus-api.service";
 import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
 import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
@@ -165,8 +166,94 @@ export function NexusDashboard() {
 // ---------------------------------------------------------------------------
 
 function OverviewTab() {
+	const [metrics, setMetrics] = useState<OverviewMetricsResponse | null>(null);
+	const [metricsLoading, setMetricsLoading] = useState(true);
+
+	useEffect(() => {
+		nexusApiService
+			.getOverviewMetrics()
+			.then(setMetrics)
+			.catch(() => {})
+			.finally(() => setMetricsLoading(false));
+	}, []);
+
 	return (
 		<div className="space-y-6">
+			{/* Key Performance Metrics */}
+			{metricsLoading ? (
+				<div className="flex items-center gap-2 text-muted-foreground">
+					<Loader2 className="h-4 w-4 animate-spin" />
+					Laddar metriker...
+				</div>
+			) : metrics ? (
+				<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+					<StatusCard
+						label="Band-0 Throughput"
+						value={
+							metrics.band0_rate != null
+								? `${(metrics.band0_rate * 100).toFixed(1)}%`
+								: "—"
+						}
+						color={
+							metrics.band0_rate != null && metrics.band0_rate >= 0.8
+								? "green"
+								: undefined
+						}
+					/>
+					<StatusCard
+						label="ECE Global"
+						value={
+							metrics.ece_global != null
+								? metrics.ece_global.toFixed(4)
+								: "—"
+						}
+						color={
+							metrics.ece_global != null && metrics.ece_global < 0.05
+								? "green"
+								: undefined
+						}
+					/>
+					<StatusCard
+						label="OOD Rate"
+						value={
+							metrics.ood_rate != null
+								? `${(metrics.ood_rate * 100).toFixed(1)}%`
+								: "—"
+						}
+						color={
+							metrics.ood_rate != null && metrics.ood_rate < 0.03
+								? "green"
+								: metrics.ood_rate != null && metrics.ood_rate >= 0.03
+									? "red"
+									: undefined
+						}
+					/>
+					<StatusCard
+						label="Platt-kalibrerad"
+						value={metrics.platt_calibrated ? "Ja" : "Nej"}
+						color={metrics.platt_calibrated ? "green" : "red"}
+					/>
+				</div>
+			) : null}
+
+			{/* Additional counts */}
+			{metrics ? (
+				<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+					<StatusCard
+						label="Totala routing-händelser"
+						value={String(metrics.total_events)}
+					/>
+					<StatusCard
+						label="Verktyg indexerade"
+						value={String(metrics.total_tools)}
+					/>
+					<StatusCard
+						label="Hard negatives"
+						value={String(metrics.total_hard_negatives)}
+					/>
+				</div>
+			) : null}
+
 			<ZoneHealthCard />
 			<BandDistribution />
 		</div>

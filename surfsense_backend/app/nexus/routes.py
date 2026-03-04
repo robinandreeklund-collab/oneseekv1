@@ -87,6 +87,16 @@ async def get_nexus_config(
     return await service.get_config(session)
 
 
+@nexus_router.get("/overview/metrics")
+async def get_overview_metrics(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get overview metrics: Band-0 rate, ECE, OOD rate, namespace purity."""
+    return await service.get_overview_metrics(session)
+
+
 # ------------------------------------------------------------------
 # Platform Tools Registry
 # ------------------------------------------------------------------

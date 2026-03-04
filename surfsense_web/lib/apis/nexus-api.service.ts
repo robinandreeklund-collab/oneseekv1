@@ -253,6 +253,21 @@ export interface RoutingEventResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Overview Metrics Types
+// ---------------------------------------------------------------------------
+
+export interface OverviewMetricsResponse {
+	band0_rate: number | null;
+	ece_global: number | null;
+	ood_rate: number | null;
+	namespace_purity: number | null;
+	platt_calibrated: boolean;
+	total_events: number;
+	total_tools: number;
+	total_hard_negatives: number;
+}
+
+// ---------------------------------------------------------------------------
 // Deploy Control Types (Sprint 4)
 // ---------------------------------------------------------------------------
 
@@ -425,6 +440,10 @@ class NexusApiService {
 
 	getCalibrationECE = () =>
 		fetchNexus<ECEReportResponse>("/calibration/ece");
+
+	// Overview Metrics
+	getOverviewMetrics = () =>
+		fetchNexus<OverviewMetricsResponse>("/overview/metrics");
 }
 
 export const nexusApiService = new NexusApiService();

@@ -291,7 +291,9 @@ def get_platform_intents() -> dict[str, dict[str, Any]]:
 # Agent definitions from real platform
 # ---------------------------------------------------------------------------
 
-PLATFORM_AGENTS: list[dict[str, str]] = [
+_PLATFORM_AGENTS_CACHE: list[dict[str, str]] | None = None
+
+_STATIC_FALLBACK_AGENTS: list[dict[str, str]] = [
     {
         "name": "åtgärd",
         "zone": "kunskap",
@@ -334,6 +336,44 @@ PLATFORM_AGENTS: list[dict[str, str]] = [
     {"name": "kod", "zone": "skapande", "description": "Sandbox-kodexekvering"},
     {"name": "syntes", "zone": "kunskap", "description": "Sammanfattning och syntes"},
 ]
+
+
+def get_platform_agents() -> list[dict[str, str]]:
+    """Load agent definitions dynamically from the real platform.
+
+    Uses _EVAL_AGENT_CHOICES and _EVAL_AGENT_DESCRIPTIONS from
+    tool_evaluation_service as the source of truth for agent names.
+    Falls back to static list if dynamic import fails.
+    """
+    global _PLATFORM_AGENTS_CACHE
+    if _PLATFORM_AGENTS_CACHE is not None:
+        return _PLATFORM_AGENTS_CACHE
+
+    try:
+        from app.services.tool_evaluation_service import (
+            _EVAL_AGENT_CHOICES,
+            _EVAL_AGENT_DESCRIPTIONS,
+        )
+
+        agents: list[dict[str, str]] = []
+        for name in _EVAL_AGENT_CHOICES:
+            zone = _AGENT_TO_ZONE.get(name, "kunskap")
+            desc = _EVAL_AGENT_DESCRIPTIONS.get(name, name)
+            agents.append({"name": name, "zone": zone, "description": desc})
+
+        if agents:
+            logger.info("Platform agents loaded dynamically: %d agents", len(agents))
+            _PLATFORM_AGENTS_CACHE = agents
+            return agents
+    except (ImportError, AttributeError) as e:
+        logger.warning("Could not load dynamic agents: %s, using static fallback", e)
+
+    _PLATFORM_AGENTS_CACHE = _STATIC_FALLBACK_AGENTS
+    return _PLATFORM_AGENTS_CACHE
+
+
+# Backward compatibility alias
+PLATFORM_AGENTS = _STATIC_FALLBACK_AGENTS
 
 
 # ---------------------------------------------------------------------------
