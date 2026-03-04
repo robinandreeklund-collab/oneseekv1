@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
 	nexusApiService,
+	type ForgeGenerateRequest,
 	type SyntheticCaseResponse,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
@@ -26,16 +27,33 @@ const CATEGORY_LABELS: Record<string, string> = {
 	geoapify: "Kartor (Geoapify)",
 };
 
+type FilterMode = "all" | "category" | "namespace" | "tool";
+
 export function ForgeTab() {
 	const [cases, setCases] = useState<SyntheticCaseResponse[]>([]);
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
+	const [filterMode, setFilterMode] = useState<FilterMode>("all");
 	const [selectedCategory, setSelectedCategory] = useState<string>("");
+	const [selectedNamespace, setSelectedNamespace] = useState<string>("");
+	const [selectedToolId, setSelectedToolId] = useState<string>("");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [generating, setGenerating] = useState(false);
 	const [searchQuery, setSearchQuery] = useState<string>("");
 	const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+
+	// Derive unique namespace prefixes from tools (first 2 segments)
+	const namespaces = Array.from(
+		new Set(
+			platformTools
+				.map((t) => {
+					const parts = t.namespace.split("/");
+					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
+				})
+				.filter(Boolean),
+		),
+	).sort();
 
 	const loadCases = () => {
 		setLoading(true);
@@ -65,7 +83,14 @@ export function ForgeTab() {
 
 	const handleGenerate = () => {
 		setGenerating(true);
-		const request = selectedCategory ? { category: selectedCategory } : {};
+		let request: ForgeGenerateRequest = {};
+		if (filterMode === "category" && selectedCategory) {
+			request = { category: selectedCategory };
+		} else if (filterMode === "namespace" && selectedNamespace) {
+			request = { namespace: selectedNamespace };
+		} else if (filterMode === "tool" && selectedToolId) {
+			request = { tool_ids: [selectedToolId] };
+		}
 		nexusApiService
 			.forgeGenerate(request)
 			.then(() => {
@@ -74,6 +99,19 @@ export function ForgeTab() {
 			.catch((err) => setError(err.message))
 			.finally(() => setGenerating(false));
 	};
+
+	const filterLabel = (() => {
+		if (filterMode === "category" && selectedCategory) {
+			return CATEGORY_LABELS[selectedCategory] || selectedCategory;
+		}
+		if (filterMode === "namespace" && selectedNamespace) {
+			return selectedNamespace;
+		}
+		if (filterMode === "tool" && selectedToolId) {
+			return selectedToolId;
+		}
+		return null;
+	})();
 
 	const handleDelete = (caseId: string) => {
 		setDeletingIds((prev) => new Set(prev).add(caseId));
@@ -92,30 +130,49 @@ export function ForgeTab() {
 			});
 	};
 
-	// Filter displayed cases by selected category
-	const categoryFiltered = selectedCategory
-		? cases.filter((c) => {
+	// Filter displayed cases by selected filter
+	const modeFiltered = (() => {
+		if (filterMode === "category" && selectedCategory) {
+			return cases.filter((c) => {
 				const tool = platformTools.find((t) => t.tool_id === c.tool_id);
 				return tool?.category === selectedCategory;
-			})
-		: cases;
+			});
+		}
+		if (filterMode === "namespace" && selectedNamespace) {
+			return cases.filter((c) => c.namespace.startsWith(selectedNamespace));
+		}
+		if (filterMode === "tool" && selectedToolId) {
+			return cases.filter((c) => c.tool_id === selectedToolId);
+		}
+		return cases;
+	})();
 
 	// Filter by search query (question or tool_id)
 	const query = searchQuery.trim().toLowerCase();
 	const filteredCases = query
-		? categoryFiltered.filter(
+		? modeFiltered.filter(
 				(c) =>
 					c.question.toLowerCase().includes(query) ||
 					c.tool_id.toLowerCase().includes(query),
 			)
-		: categoryFiltered;
+		: modeFiltered;
 
+	const hasFilter = filterMode !== "all" && (selectedCategory || selectedNamespace || selectedToolId);
 	const toolCount = new Set(
-		(selectedCategory ? filteredCases : cases).map((c) => c.tool_id),
+		(hasFilter ? filteredCases : cases).map((c) => c.tool_id),
 	).size;
-	const platformToolCount = selectedCategory
-		? platformTools.filter((t) => t.category === selectedCategory).length
-		: platformTools.length;
+	const platformToolCount = (() => {
+		if (filterMode === "category" && selectedCategory) {
+			return platformTools.filter((t) => t.category === selectedCategory).length;
+		}
+		if (filterMode === "namespace" && selectedNamespace) {
+			return platformTools.filter((t) => t.namespace.startsWith(selectedNamespace)).length;
+		}
+		if (filterMode === "tool" && selectedToolId) {
+			return platformTools.filter((t) => t.tool_id === selectedToolId).length;
+		}
+		return platformTools.length;
+	})();
 
 	if (loading) {
 		return (
@@ -148,22 +205,74 @@ export function ForgeTab() {
 						LLM-genererade testfr&aring;gor vid 4 sv&aring;righetsgrader per verktyg
 					</p>
 				</div>
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-2 flex-wrap">
+					{/* Filter mode selector */}
 					<select
-						value={selectedCategory}
-						onChange={(e) => setSelectedCategory(e.target.value)}
+						value={filterMode}
+						onChange={(e) => setFilterMode(e.target.value as FilterMode)}
 						className="rounded-md border bg-background px-3 py-2 text-sm"
 					>
-						<option value="">Alla kategorier ({platformTools.length} verktyg)</option>
-						{categories
-							.filter((c) => c !== "external_model")
-							.map((cat) => (
-								<option key={cat} value={cat}>
-									{CATEGORY_LABELS[cat] || cat} (
-									{platformTools.filter((t) => t.category === cat).length})
+						<option value="all">Alla ({platformTools.length})</option>
+						<option value="category">Kategori</option>
+						<option value="namespace">Namespace</option>
+						<option value="tool">Verktyg</option>
+					</select>
+
+					{/* Category selector */}
+					{filterMode === "category" && (
+						<select
+							value={selectedCategory}
+							onChange={(e) => setSelectedCategory(e.target.value)}
+							className="rounded-md border bg-background px-3 py-2 text-sm"
+						>
+							<option value="">Välj kategori...</option>
+							{categories
+								.filter((c) => c !== "external_model")
+								.map((cat) => (
+									<option key={cat} value={cat}>
+										{CATEGORY_LABELS[cat] || cat} (
+										{platformTools.filter((t) => t.category === cat).length})
+									</option>
+								))}
+						</select>
+					)}
+
+					{/* Namespace selector */}
+					{filterMode === "namespace" && (
+						<select
+							value={selectedNamespace}
+							onChange={(e) => setSelectedNamespace(e.target.value)}
+							className="rounded-md border bg-background px-3 py-2 text-sm"
+						>
+							<option value="">Välj namespace...</option>
+							{namespaces.map((ns) => (
+								<option key={ns} value={ns}>
+									{ns} (
+									{platformTools.filter((t) => t.namespace.startsWith(ns)).length})
 								</option>
 							))}
-					</select>
+						</select>
+					)}
+
+					{/* Tool selector */}
+					{filterMode === "tool" && (
+						<select
+							value={selectedToolId}
+							onChange={(e) => setSelectedToolId(e.target.value)}
+							className="rounded-md border bg-background px-3 py-2 text-sm max-w-xs"
+						>
+							<option value="">Välj verktyg...</option>
+							{platformTools
+								.filter((t) => t.category !== "external_model")
+								.sort((a, b) => a.tool_id.localeCompare(b.tool_id))
+								.map((t) => (
+									<option key={t.tool_id} value={t.tool_id}>
+										{t.tool_id}
+									</option>
+								))}
+						</select>
+					)}
+
 					<Button onClick={handleGenerate} disabled={generating}>
 						{generating ? (
 							<Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -172,8 +281,8 @@ export function ForgeTab() {
 						)}
 						{generating
 							? "Genererar..."
-							: selectedCategory
-								? `Generera f\u00f6r ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
+							: filterLabel
+								? `Generera för ${filterLabel}`
 								: "Generera testfall"}
 					</Button>
 				</div>
@@ -204,11 +313,11 @@ export function ForgeTab() {
 			{/* Cases grouped by tool, then by difficulty */}
 			{filteredCases.length === 0 ? (
 				<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-					{selectedCategory
-						? `Inga testfall for ${CATEGORY_LABELS[selectedCategory] || selectedCategory}. Klicka "Generera" for att skapa.`
+					{filterLabel
+						? `Inga testfall för ${filterLabel}. Klicka "Generera" för att skapa.`
 						: query
-							? "Inga testfall matchar din sokning."
-							: 'Inga syntetiska testfall genererade annu. Klicka "Generera testfall" for att borja.'}
+							? "Inga testfall matchar din sökning."
+							: 'Inga syntetiska testfall genererade ännu. Klicka "Generera testfall" för att börja.'}
 				</div>
 			) : (
 				<ToolGroupedCases cases={filteredCases} deletingIds={deletingIds} onDelete={handleDelete} />
