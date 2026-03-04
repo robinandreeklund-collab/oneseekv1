@@ -2115,6 +2115,12 @@ class NexusService:
                                     "got_tool": nexus_tool or "(none)",
                                     "platform_tool": platform_tool or "(none)",
                                     "case_id": str(case.id),
+                                    # Routing context for UI
+                                    "resolved_zone": decision.resolved_zone or "",
+                                    "selected_agent": decision.selected_agent or "",
+                                    "band": decision.band,
+                                    "confidence": round(decision.calibrated_confidence, 3),
+                                    "difficulty": getattr(case, "difficulty", ""),
                                 }
                             )
                     except Exception as e:
@@ -2313,11 +2319,38 @@ class NexusService:
         # Update run
         db_run.total_tests = final_total_tests
         db_run.failures = final_failures
+        # Build enriched proposals with failed queries per tool
+        enriched_proposals = []
+        for p in cumulative_proposals:
+            # Find failed queries related to this proposal's tool
+            related_queries = [
+                fq for fq in cumulative_failed_queries
+                if fq.get("expected_tool") == p.tool_id or fq.get("got_tool") == p.tool_id
+            ]
+            enriched_proposals.append({
+                "tool_id": p.tool_id,
+                "field": p.field_name,
+                "reason": p.reason,
+                "current_value": p.current_value or "",
+                "proposed_value": p.proposed_value or "",
+                "embedding_delta": round(p.embedding_delta, 4) if p.embedding_delta else 0.0,
+                "failed_queries": [
+                    {
+                        "query": fq.get("query", ""),
+                        "expected_tool": fq.get("expected_tool", ""),
+                        "got_tool": fq.get("got_tool", ""),
+                        "resolved_zone": fq.get("resolved_zone", ""),
+                        "selected_agent": fq.get("selected_agent", ""),
+                        "band": fq.get("band", -1),
+                        "confidence": fq.get("confidence", 0.0),
+                        "difficulty": fq.get("difficulty", ""),
+                    }
+                    for fq in related_queries[:10]  # Cap at 10 queries per proposal
+                ],
+            })
+
         db_run.metadata_proposals = {
-            "proposals": [
-                {"tool_id": p.tool_id, "field": p.field_name, "reason": p.reason}
-                for p in cumulative_proposals
-            ],
+            "proposals": enriched_proposals,
             "platform_comparisons": final_platform_comparisons,
             "platform_agreements": final_platform_agreements,
             "band_distribution": final_band_counts,

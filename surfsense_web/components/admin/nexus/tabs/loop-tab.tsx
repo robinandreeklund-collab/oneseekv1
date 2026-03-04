@@ -17,10 +17,12 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
 	nexusApiService,
 	type AutoLoopRunResponse,
 	type LoopRunDetail,
+	type LoopProposal,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 
@@ -41,6 +43,202 @@ const CATEGORY_LABELS: Record<string, string> = {
 const BAND_LABELS = ["Band 0 (Exakt)", "Band 1 (Hog)", "Band 2 (Medel)", "Band 3 (Lag)"];
 
 type FilterMode = "all" | "category" | "namespace" | "tool";
+
+const BAND_COLORS: Record<number, string> = {
+	0: "bg-green-100 text-green-700",
+	1: "bg-blue-100 text-blue-700",
+	2: "bg-amber-100 text-amber-700",
+	3: "bg-orange-100 text-orange-700",
+	4: "bg-red-100 text-red-700",
+};
+
+// ---------------------------------------------------------------------------
+// ProposalCard — enriched proposal with diff + failed queries
+// ---------------------------------------------------------------------------
+
+function ProposalCard({
+	proposal,
+	showActions,
+}: {
+	proposal: LoopProposal;
+	showActions: boolean;
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const hasDiff = proposal.current_value || proposal.proposed_value;
+	const hasQueries = proposal.failed_queries && proposal.failed_queries.length > 0;
+
+	return (
+		<div className="rounded-md border bg-background text-sm">
+			{/* Header */}
+			<button
+				type="button"
+				className="w-full p-3 text-left flex items-start justify-between gap-2"
+				onClick={() => setExpanded(!expanded)}
+			>
+				<div className="space-y-1 flex-1 min-w-0">
+					<div className="flex items-center gap-2 flex-wrap">
+						<span className="font-mono font-medium text-xs">
+							{proposal.tool_id}
+						</span>
+						<Badge variant="outline" className="text-xs py-0">
+							{proposal.field}
+						</Badge>
+						{proposal.embedding_delta !== 0 && (
+							<span
+								className={`text-xs font-mono px-1.5 py-0.5 rounded ${
+									proposal.embedding_delta > 0
+										? "bg-green-100 text-green-700"
+										: "bg-red-100 text-red-700"
+								}`}
+							>
+								{proposal.embedding_delta > 0 ? "+" : ""}
+								{(proposal.embedding_delta * 100).toFixed(1)}pp
+							</span>
+						)}
+						{hasQueries && (
+							<span className="text-xs text-muted-foreground">
+								{proposal.failed_queries.length} felaktiga fragor
+							</span>
+						)}
+					</div>
+					<p className="text-muted-foreground text-xs truncate">
+						{proposal.reason}
+					</p>
+				</div>
+				<div className="flex items-center gap-1 shrink-0">
+					{showActions && (
+						<>
+							<button
+								type="button"
+								className="p-1 rounded hover:bg-green-100 transition-colors"
+								title="Godkann forslag"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<ThumbsUp className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
+							</button>
+							<button
+								type="button"
+								className="p-1 rounded hover:bg-red-100 transition-colors"
+								title="Avvisa forslag"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<ThumbsDown className="h-3.5 w-3.5 text-muted-foreground hover:text-red-600" />
+							</button>
+						</>
+					)}
+					{expanded ? (
+						<ChevronUp className="h-4 w-4 text-muted-foreground" />
+					) : (
+						<ChevronDown className="h-4 w-4 text-muted-foreground" />
+					)}
+				</div>
+			</button>
+
+			{/* Expanded content */}
+			{expanded && (
+				<div className="border-t px-3 pb-3 space-y-3">
+					{/* Diff view */}
+					{hasDiff && (
+						<div className="pt-3 space-y-1.5">
+							<p className="text-xs font-medium text-muted-foreground">
+								Metadata-diff ({proposal.field})
+							</p>
+							<div className="grid grid-cols-2 gap-2">
+								{proposal.current_value && (
+									<div className="rounded border border-red-200 bg-red-50 p-2 text-xs dark:border-red-900 dark:bg-red-950">
+										<p className="text-red-600 dark:text-red-400 font-medium mb-0.5">
+											Nuvarande
+										</p>
+										<p className="break-words whitespace-pre-wrap">
+											{proposal.current_value}
+										</p>
+									</div>
+								)}
+								{proposal.proposed_value && (
+									<div className="rounded border border-green-200 bg-green-50 p-2 text-xs dark:border-green-900 dark:bg-green-950">
+										<p className="text-green-600 dark:text-green-400 font-medium mb-0.5">
+											Foreslagen
+										</p>
+										<p className="break-words whitespace-pre-wrap">
+											{proposal.proposed_value}
+										</p>
+									</div>
+								)}
+							</div>
+						</div>
+					)}
+
+					{/* Failed queries table */}
+					{hasQueries && (
+						<div className="pt-2 space-y-1.5">
+							<p className="text-xs font-medium text-muted-foreground">
+								Felaktiga fragor ({proposal.failed_queries.length})
+							</p>
+							<div className="overflow-x-auto">
+								<table className="w-full text-xs">
+									<thead>
+										<tr className="border-b text-left text-muted-foreground">
+											<th className="pb-1.5 pr-2">Fraga</th>
+											<th className="pb-1.5 pr-2">Forvantad</th>
+											<th className="pb-1.5 pr-2">Fick</th>
+											<th className="pb-1.5 pr-2">Intent/Zon</th>
+											<th className="pb-1.5 pr-2">Agent</th>
+											<th className="pb-1.5 pr-2">Band</th>
+											<th className="pb-1.5">Conf</th>
+										</tr>
+									</thead>
+									<tbody>
+										{proposal.failed_queries.map((fq, fqIdx) => (
+											<tr
+												key={`fq-${fqIdx}`}
+												className="border-b last:border-0"
+											>
+												<td
+													className="py-1.5 pr-2 max-w-[200px] truncate"
+													title={fq.query}
+												>
+													{fq.query}
+												</td>
+												<td className="py-1.5 pr-2 font-mono text-green-700">
+													{fq.expected_tool}
+												</td>
+												<td className="py-1.5 pr-2 font-mono text-red-600">
+													{fq.got_tool}
+												</td>
+												<td className="py-1.5 pr-2">
+													{fq.resolved_zone || "—"}
+												</td>
+												<td className="py-1.5 pr-2">
+													{fq.selected_agent ? (
+														<span className="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1 py-0.5">
+															{fq.selected_agent}
+														</span>
+													) : (
+														"—"
+													)}
+												</td>
+												<td className="py-1.5 pr-2">
+													<span
+														className={`inline-flex items-center rounded px-1 py-0.5 font-medium ${BAND_COLORS[fq.band] ?? ""}`}
+													>
+														{fq.band}
+													</span>
+												</td>
+												<td className="py-1.5 tabular-nums">
+													{fq.confidence?.toFixed(3) ?? "—"}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
 
 export function LoopTab() {
 	const [runs, setRuns] = useState<AutoLoopRunResponse[]>([]);
@@ -436,7 +634,7 @@ export function LoopTab() {
 													</div>
 
 													<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-														{/* Proposals with per-proposal actions */}
+														{/* Enriched Proposals */}
 														<Card>
 															<CardHeader className="py-3 px-4">
 																<CardTitle className="text-sm">
@@ -449,47 +647,13 @@ export function LoopTab() {
 																		Inga forslag i denna korning.
 																	</p>
 																) : (
-																	<div className="space-y-3">
+																	<div className="space-y-4">
 																		{detail.proposals.map((proposal, idx) => (
-																			<div
+																			<ProposalCard
 																				key={`${proposal.tool_id}-${proposal.field}-${idx}`}
-																				className="rounded-md border bg-background p-3 text-sm space-y-2"
-																			>
-																				<div className="flex items-start justify-between gap-2">
-																					<div className="space-y-1 flex-1">
-																						<p className="font-mono font-medium text-xs">
-																							{proposal.tool_id}
-																						</p>
-																						<p>
-																							<span className="text-muted-foreground">
-																								Falt:
-																							</span>{" "}
-																							<span className="font-medium">{proposal.field}</span>
-																						</p>
-																						<p className="text-muted-foreground text-xs">
-																							{proposal.reason}
-																						</p>
-																					</div>
-																					{run.status === "review" && (
-																						<div className="flex gap-1 shrink-0">
-																							<button
-																								type="button"
-																								className="p-1 rounded hover:bg-green-100 transition-colors"
-																								title="Godkann forslag"
-																							>
-																								<ThumbsUp className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
-																							</button>
-																							<button
-																								type="button"
-																								className="p-1 rounded hover:bg-red-100 transition-colors"
-																								title="Avvisa forslag"
-																							>
-																								<ThumbsDown className="h-3.5 w-3.5 text-muted-foreground hover:text-red-600" />
-																							</button>
-																						</div>
-																					)}
-																				</div>
-																			</div>
+																				proposal={proposal}
+																				showActions={run.status === "review"}
+																			/>
 																		))}
 																	</div>
 																)}

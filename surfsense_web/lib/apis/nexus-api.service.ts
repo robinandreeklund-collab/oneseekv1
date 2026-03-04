@@ -379,6 +379,27 @@ export interface LoopIterationDetail {
 	platform_agreements: number;
 }
 
+export interface LoopProposalFailedQuery {
+	query: string;
+	expected_tool: string;
+	got_tool: string;
+	resolved_zone: string;
+	selected_agent: string;
+	band: number;
+	confidence: number;
+	difficulty: string;
+}
+
+export interface LoopProposal {
+	tool_id: string;
+	field: string;
+	reason: string;
+	current_value: string;
+	proposed_value: string;
+	embedding_delta: number;
+	failed_queries: LoopProposalFailedQuery[];
+}
+
 export interface LoopRunDetail {
 	id: string;
 	loop_number: number;
@@ -389,7 +410,7 @@ export interface LoopRunDetail {
 	failures: number | null;
 	approved_proposals: number | null;
 	embedding_delta: number | null;
-	proposals: { tool_id: string; field: string; reason: string }[];
+	proposals: LoopProposal[];
 	band_distribution: number[];
 	platform_comparisons: number;
 	platform_agreements: number;
