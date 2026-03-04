@@ -42,7 +42,7 @@ export function ConfusionMatrix() {
 	if (pairs.length === 0) {
 		return (
 			<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-				Inga confusion-par hittade. Kör en space-snapshot för att generera data.
+				Inga confusion-par hittade. Alla verktyg har tillräcklig separation.
 			</div>
 		);
 	}

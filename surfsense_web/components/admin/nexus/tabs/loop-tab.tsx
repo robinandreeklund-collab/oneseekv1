@@ -15,10 +15,28 @@ import { Button } from "@/components/ui/button";
 import {
 	nexusApiService,
 	type AutoLoopRunResponse,
+	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
+
+const CATEGORY_LABELS: Record<string, string> = {
+	"": "Alla kategorier",
+	smhi: "SMHI (Väder)",
+	scb: "SCB (Statistik)",
+	kolada: "Kolada (Nyckeltal)",
+	riksdagen: "Riksdagen",
+	trafikverket: "Trafikverket",
+	bolagsverket: "Bolagsverket",
+	marketplace: "Marknadsplats",
+	skolverket: "Skolverket",
+	builtin: "Inbyggda verktyg",
+	geoapify: "Kartor (Geoapify)",
+};
 
 export function LoopTab() {
 	const [runs, setRuns] = useState<AutoLoopRunResponse[]>([]);
+	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
+	const [categories, setCategories] = useState<string[]>([]);
+	const [selectedCategory, setSelectedCategory] = useState<string>("");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
@@ -32,14 +50,28 @@ export function LoopTab() {
 			.finally(() => setLoading(false));
 	};
 
+	const loadPlatformTools = () => {
+		nexusApiService
+			.getPlatformTools()
+			.then((data) => {
+				setPlatformTools(data.tools || []);
+				setCategories(data.categories || []);
+			})
+			.catch(() => {
+				/* non-critical */
+			});
+	};
+
 	useEffect(() => {
 		loadRuns();
+		loadPlatformTools();
 	}, []);
 
 	const handleStart = () => {
 		setStarting(true);
+		const request = selectedCategory ? { category: selectedCategory } : {};
 		nexusApiService
-			.startLoop()
+			.startLoop(request)
 			.then(() => {
 				loadRuns();
 			})
@@ -67,7 +99,7 @@ export function LoopTab() {
 
 	return (
 		<div className="space-y-6">
-			{/* Header */}
+			{/* Header + Category Filter + Start Button */}
 			<div className="flex items-center justify-between">
 				<div>
 					<h3 className="text-lg font-semibold flex items-center gap-2">
@@ -78,14 +110,35 @@ export function LoopTab() {
 						7-stegs pipeline: generera, eval, kluster, root cause, test, review, deploy
 					</p>
 				</div>
-				<Button onClick={handleStart} disabled={starting}>
-					{starting ? (
-						<Loader2 className="h-4 w-4 animate-spin mr-2" />
-					) : (
-						<Play className="h-4 w-4 mr-2" />
-					)}
-					{starting ? "Startar..." : "Starta loop"}
-				</Button>
+				<div className="flex items-center gap-3">
+					<select
+						value={selectedCategory}
+						onChange={(e) => setSelectedCategory(e.target.value)}
+						className="rounded-md border bg-background px-3 py-2 text-sm"
+					>
+						<option value="">Alla kategorier ({platformTools.length} verktyg)</option>
+						{categories
+							.filter((c) => c !== "external_model")
+							.map((cat) => (
+								<option key={cat} value={cat}>
+									{CATEGORY_LABELS[cat] || cat} (
+									{platformTools.filter((t) => t.category === cat).length})
+								</option>
+							))}
+					</select>
+					<Button onClick={handleStart} disabled={starting}>
+						{starting ? (
+							<Loader2 className="h-4 w-4 animate-spin mr-2" />
+						) : (
+							<Play className="h-4 w-4 mr-2" />
+						)}
+						{starting
+							? "Kör loop..."
+							: selectedCategory
+								? `Kör loop för ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
+								: "Starta loop"}
+					</Button>
+				</div>
 			</div>
 
 			{/* Stats */}
@@ -106,7 +159,7 @@ export function LoopTab() {
 			{/* Run history */}
 			{runs.length === 0 ? (
 				<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-					Inga loop-körningar ännu. Klicka "Starta loop" för att börja.
+					Inga loop-körningar ännu. Klicka &quot;Starta loop&quot; för att börja.
 				</div>
 			) : (
 				<div className="rounded-lg border bg-card">

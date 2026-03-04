@@ -162,6 +162,9 @@ export interface SyntheticCaseResponse {
 
 export interface ForgeGenerateRequest {
 	tool_ids?: string[];
+	category?: string;
+	namespace?: string;
+	zone?: string;
 	difficulties?: string[];
 	questions_per_difficulty?: number;
 }
@@ -171,6 +174,16 @@ export interface ForgeRunResult {
 	total_generated: number;
 	total_verified: number;
 	by_difficulty: Record<string, number>;
+}
+
+export interface PlatformToolResponse {
+	tool_id: string;
+	name: string;
+	description: string;
+	category: string;
+	namespace: string;
+	zone: string;
+	keywords: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +343,12 @@ class NexusApiService {
 	getZoneMetrics = (zone: string) =>
 		fetchNexus<ZoneConfigResponse>(`/zones/${zone}/metrics`);
 
+	// Platform Tools
+	getPlatformTools = (category?: string) =>
+		fetchNexus<{ tools: PlatformToolResponse[]; categories: string[] }>(
+			`/tools${category ? `?category=${category}` : ""}`,
+		);
+
 	// Synth Forge (Sprint 3)
 	forgeGenerate = (request: ForgeGenerateRequest) =>
 		fetchNexus<ForgeRunResult>("/forge/generate", {
@@ -343,8 +362,11 @@ class NexusApiService {
 		);
 
 	// Auto Loop (Sprint 3)
-	startLoop = () =>
-		fetchNexus<Record<string, string>>("/loop/start", { method: "POST" });
+	startLoop = (request?: { category?: string }) =>
+		fetchNexus<Record<string, string>>("/loop/start", {
+			method: "POST",
+			body: JSON.stringify(request || {}),
+		});
 
 	getLoopRuns = () => fetchNexus<AutoLoopRunResponse[]>("/loop/runs");
 

@@ -392,8 +392,13 @@ async def get_forge_cases(
 # ------------------------------------------------------------------
 
 
+class LoopStartRequest(BaseModel):
+    category: str | None = None
+
+
 @nexus_router.post("/loop/start")
 async def loop_start(
+    request: LoopStartRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
@@ -402,8 +407,11 @@ async def loop_start(
 
     Runs synchronously: loads test cases, evaluates routing, clusters
     failures, creates proposals, and returns results.
+
+    Pass `category` to run only on test cases for a specific domain (e.g. "smhi").
     """
-    return await service.run_auto_loop(session)
+    cat = request.category if request else None
+    return await service.run_auto_loop(session, category=cat)
 
 
 @nexus_router.get("/loop/runs", response_model=list[AutoLoopRunResponse])

@@ -7,10 +7,28 @@ import { Button } from "@/components/ui/button";
 import {
 	nexusApiService,
 	type SyntheticCaseResponse,
+	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
+
+const CATEGORY_LABELS: Record<string, string> = {
+	"": "Alla kategorier",
+	smhi: "SMHI (Väder)",
+	scb: "SCB (Statistik)",
+	kolada: "Kolada (Nyckeltal)",
+	riksdagen: "Riksdagen",
+	trafikverket: "Trafikverket",
+	bolagsverket: "Bolagsverket",
+	marketplace: "Marknadsplats",
+	skolverket: "Skolverket",
+	builtin: "Inbyggda verktyg",
+	geoapify: "Kartor (Geoapify)",
+};
 
 export function ForgeTab() {
 	const [cases, setCases] = useState<SyntheticCaseResponse[]>([]);
+	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
+	const [categories, setCategories] = useState<string[]>([]);
+	const [selectedCategory, setSelectedCategory] = useState<string>("");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [generating, setGenerating] = useState(false);
@@ -24,20 +42,49 @@ export function ForgeTab() {
 			.finally(() => setLoading(false));
 	};
 
+	const loadPlatformTools = () => {
+		nexusApiService
+			.getPlatformTools()
+			.then((data) => {
+				setPlatformTools(data.tools || []);
+				setCategories(data.categories || []);
+			})
+			.catch(() => {
+				/* non-critical */
+			});
+	};
+
 	useEffect(() => {
 		loadCases();
+		loadPlatformTools();
 	}, []);
 
 	const handleGenerate = () => {
 		setGenerating(true);
+		const request = selectedCategory ? { category: selectedCategory } : {};
 		nexusApiService
-			.forgeGenerate({})
+			.forgeGenerate(request)
 			.then(() => {
 				loadCases();
 			})
 			.catch((err) => setError(err.message))
 			.finally(() => setGenerating(false));
 	};
+
+	// Filter displayed cases by selected category
+	const filteredCases = selectedCategory
+		? cases.filter((c) => {
+				const tool = platformTools.find((t) => t.tool_id === c.tool_id);
+				return tool?.category === selectedCategory;
+			})
+		: cases;
+
+	const toolCount = new Set(
+		(selectedCategory ? filteredCases : cases).map((c) => c.tool_id),
+	).size;
+	const platformToolCount = selectedCategory
+		? platformTools.filter((t) => t.category === selectedCategory).length
+		: platformTools.length;
 
 	if (loading) {
 		return (
@@ -59,7 +106,7 @@ export function ForgeTab() {
 
 	return (
 		<div className="space-y-6">
-			{/* Header + Generate Button */}
+			{/* Header + Category Filter + Generate Button */}
 			<div className="flex items-center justify-between">
 				<div>
 					<h3 className="text-lg font-semibold flex items-center gap-2">
@@ -70,56 +117,65 @@ export function ForgeTab() {
 						LLM-genererade testfrågor vid 4 svårighetsgrader per verktyg
 					</p>
 				</div>
-				<Button onClick={handleGenerate} disabled={generating}>
-					{generating ? (
-						<Loader2 className="h-4 w-4 animate-spin mr-2" />
-					) : (
-						<Play className="h-4 w-4 mr-2" />
-					)}
-					{generating ? "Genererar..." : "Generera testfall"}
-				</Button>
+				<div className="flex items-center gap-3">
+					<select
+						value={selectedCategory}
+						onChange={(e) => setSelectedCategory(e.target.value)}
+						className="rounded-md border bg-background px-3 py-2 text-sm"
+					>
+						<option value="">Alla kategorier ({platformTools.length} verktyg)</option>
+						{categories
+							.filter((c) => c !== "external_model")
+							.map((cat) => (
+								<option key={cat} value={cat}>
+									{CATEGORY_LABELS[cat] || cat} (
+									{platformTools.filter((t) => t.category === cat).length})
+								</option>
+							))}
+					</select>
+					<Button onClick={handleGenerate} disabled={generating}>
+						{generating ? (
+							<Loader2 className="h-4 w-4 animate-spin mr-2" />
+						) : (
+							<Play className="h-4 w-4 mr-2" />
+						)}
+						{generating
+							? "Genererar..."
+							: selectedCategory
+								? `Generera för ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
+								: "Generera testfall"}
+					</Button>
+				</div>
 			</div>
 
 			{/* Stats */}
 			<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-				<StatCard
-					label="Totalt testfall"
-					value={String(cases.length)}
-				/>
+				<StatCard label="Plattformsverktyg" value={String(platformToolCount)} />
+				<StatCard label="Testfall genererade" value={String(filteredCases.length)} />
 				<StatCard
 					label="Verifierade"
-					value={String(cases.filter((c) => c.roundtrip_verified).length)}
+					value={String(filteredCases.filter((c) => c.roundtrip_verified).length)}
 				/>
-				<StatCard
-					label="Svårighetsgrader"
-					value={String(new Set(cases.map((c) => c.difficulty)).size)}
-				/>
-				<StatCard
-					label="Verktyg"
-					value={String(new Set(cases.map((c) => c.tool_id)).size)}
-				/>
+				<StatCard label="Verktyg med testfall" value={String(toolCount)} />
 			</div>
 
 			{/* Cases by difficulty */}
-			{cases.length === 0 ? (
+			{filteredCases.length === 0 ? (
 				<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-					Inga syntetiska testfall genererade ännu. Klicka "Generera testfall" för att börja.
+					{selectedCategory
+						? `Inga testfall för ${CATEGORY_LABELS[selectedCategory] || selectedCategory}. Klicka "Generera" för att skapa.`
+						: 'Inga syntetiska testfall genererade ännu. Klicka "Generera testfall" för att börja.'}
 				</div>
 			) : (
 				<div className="rounded-lg border bg-card">
 					<div className="p-4 border-b">
-						<h4 className="font-semibold">Testfall ({cases.length})</h4>
+						<h4 className="font-semibold">Testfall ({filteredCases.length})</h4>
 					</div>
 					<div className="divide-y max-h-96 overflow-y-auto">
-						{cases.map((c) => (
-							<div
-								key={c.id}
-								className="flex items-start justify-between p-4 gap-4"
-							>
+						{filteredCases.map((c) => (
+							<div key={c.id} className="flex items-start justify-between p-4 gap-4">
 								<div className="flex-1 min-w-0">
-									<p className="text-sm font-medium truncate">
-										{c.question}
-									</p>
+									<p className="text-sm font-medium truncate">{c.question}</p>
 									<p className="text-xs text-muted-foreground mt-1">
 										{c.tool_id} &middot; {c.namespace}
 									</p>
@@ -160,8 +216,6 @@ function DifficultyBadge({ difficulty }: { difficulty: string }) {
 	const color = colors[difficulty] || "bg-gray-100 text-gray-700";
 
 	return (
-		<span className={`text-xs px-2 py-0.5 rounded ${color}`}>
-			{difficulty}
-		</span>
+		<span className={`text-xs px-2 py-0.5 rounded ${color}`}>{difficulty}</span>
 	);
 }

@@ -355,6 +355,7 @@ class NexusService:
 
         Uses real embeddings from the configured embedding model when available,
         falling back to stored UMAP coordinates from DB snapshots.
+        If no DB snapshots exist, dynamically builds from platform tools.
         """
         from app.nexus.embeddings import nexus_embed
 
@@ -366,42 +367,44 @@ class NexusService:
         )
         snapshots = result.scalars().all()
 
-        if not snapshots:
-            return SpaceHealthReport(total_tools=0)
-
         # Group snapshots into tool points — prefer real embeddings
         tools: list[ToolPoint] = []
         seen: set[str] = set()
-        for snap in snapshots:
-            if snap.tool_id in seen:
-                continue
-            seen.add(snap.tool_id)
 
-            zone = snap.namespace.split("/")[1] if "/" in snap.namespace else ""
+        if snapshots:
+            for snap in snapshots:
+                if snap.tool_id in seen:
+                    continue
+                seen.add(snap.tool_id)
 
-            # Try real embedding from the configured model
-            prefixed_text = f"[{zone.upper()[:5]}] {snap.tool_id} {snap.namespace}"
-            real_emb = nexus_embed(prefixed_text)
+                zone = snap.namespace.split("/")[1] if "/" in snap.namespace else ""
 
-            if real_emb is not None:
-                tools.append(
-                    ToolPoint(
-                        tool_id=snap.tool_id,
-                        namespace=snap.namespace,
-                        zone=zone,
-                        embedding=real_emb,
+                # Try real embedding from the configured model
+                prefixed_text = f"[{zone.upper()[:5]}] {snap.tool_id} {snap.namespace}"
+                real_emb = nexus_embed(prefixed_text)
+
+                if real_emb is not None:
+                    tools.append(
+                        ToolPoint(
+                            tool_id=snap.tool_id,
+                            namespace=snap.namespace,
+                            zone=zone,
+                            embedding=real_emb,
+                        )
                     )
-                )
-            elif snap.umap_x is not None and snap.umap_y is not None:
-                # Fallback to stored UMAP coords
-                tools.append(
-                    ToolPoint(
-                        tool_id=snap.tool_id,
-                        namespace=snap.namespace,
-                        zone=zone,
-                        embedding=[snap.umap_x, snap.umap_y],
+                elif snap.umap_x is not None and snap.umap_y is not None:
+                    tools.append(
+                        ToolPoint(
+                            tool_id=snap.tool_id,
+                            namespace=snap.namespace,
+                            zone=zone,
+                            embedding=[snap.umap_x, snap.umap_y],
+                        )
                     )
-                )
+
+        # If no snapshots in DB, build from live platform tools
+        if not tools:
+            tools = self._build_tool_points_from_platform()
 
         if len(tools) < 2:
             return SpaceHealthReport(total_tools=len(tools))
@@ -435,7 +438,12 @@ class NexusService:
         )
 
     async def get_space_snapshot(self, session: AsyncSession) -> SpaceSnapshot:
-        """Get latest UMAP snapshot for visualization."""
+        """Get latest UMAP snapshot for visualization.
+
+        Falls back to dynamically generating points from live platform tools
+        if no DB snapshots exist.
+        """
+        import random
         from datetime import datetime
 
         result = await session.execute(
@@ -445,28 +453,62 @@ class NexusService:
         )
         snapshots = result.scalars().all()
 
-        if not snapshots:
+        if snapshots:
+            points = []
+            for snap in snapshots:
+                points.append(
+                    {
+                        "tool_id": snap.tool_id,
+                        "x": snap.umap_x,
+                        "y": snap.umap_y,
+                        "zone": snap.namespace.split("/")[1]
+                        if "/" in snap.namespace
+                        else "",
+                        "cluster": snap.cluster_label,
+                    }
+                )
+            return SpaceSnapshot(
+                snapshot_at=snapshots[0].snapshot_at,
+                points=points,
+            )
+
+        # No DB snapshots — build dynamically from platform tools
+        from app.nexus.platform_bridge import get_platform_tools
+
+        platform_tools = get_platform_tools()
+        if not platform_tools:
             return SpaceSnapshot(
                 snapshot_at=datetime.now(tz=UTC),
                 points=[],
             )
 
+        # Generate UMAP-like 2D coordinates clustered by zone
+        zone_centers = {
+            "kunskap": (-1.0, 1.5),
+            "skapande": (2.0, -1.0),
+            "jämförelse": (3.0, 2.0),
+            "konversation": (-3.0, -2.0),
+        }
+        zone_list = list(zone_centers.keys())
+
         points = []
-        for snap in snapshots:
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            cx, cy = zone_centers.get(pt.zone, (0, 0))
+            cluster = zone_list.index(pt.zone) if pt.zone in zone_list else 0
             points.append(
                 {
-                    "tool_id": snap.tool_id,
-                    "x": snap.umap_x,
-                    "y": snap.umap_y,
-                    "zone": snap.namespace.split("/")[1]
-                    if "/" in snap.namespace
-                    else "",
-                    "cluster": snap.cluster_label,
+                    "tool_id": pt.tool_id,
+                    "x": cx + random.uniform(-0.8, 0.8),
+                    "y": cy + random.uniform(-0.8, 0.8),
+                    "zone": pt.zone,
+                    "cluster": cluster,
                 }
             )
 
         return SpaceSnapshot(
-            snapshot_at=snapshots[0].snapshot_at,
+            snapshot_at=datetime.now(tz=UTC),
             points=points,
         )
 
@@ -931,6 +973,56 @@ class NexusService:
         entries.sort(key=lambda e: e["score"], reverse=True)
         return entries[:20]
 
+    def _build_tool_points_from_platform(self) -> list[ToolPoint]:
+        """Build ToolPoints from the live platform registry for space analysis.
+
+        Used when no DB snapshots exist — dynamically creates tool points
+        from the real platform tool registry with real embeddings when possible.
+        """
+        from app.nexus.embeddings import nexus_embed
+        from app.nexus.platform_bridge import get_platform_tools
+
+        platform_tools = get_platform_tools()
+        points: list[ToolPoint] = []
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            ns_str = "/".join(pt.namespace)
+            prefixed_text = f"[{pt.zone.upper()[:5]}] {pt.tool_id} {ns_str}"
+            emb = nexus_embed(prefixed_text)
+            if emb is not None:
+                points.append(
+                    ToolPoint(
+                        tool_id=pt.tool_id,
+                        namespace=ns_str,
+                        zone=pt.zone,
+                        embedding=emb,
+                    )
+                )
+            else:
+                # Fallback: use zone-based synthetic 2D coordinates
+                import random
+
+                zone_centers = {
+                    "kunskap": (-1.0, 1.5),
+                    "skapande": (2.0, -1.0),
+                    "jämförelse": (3.0, 2.0),
+                    "konversation": (-3.0, -2.0),
+                }
+                cx, cy = zone_centers.get(pt.zone, (0, 0))
+                points.append(
+                    ToolPoint(
+                        tool_id=pt.tool_id,
+                        namespace=ns_str,
+                        zone=pt.zone,
+                        embedding=[
+                            cx + random.uniform(-0.8, 0.8),
+                            cy + random.uniform(-0.8, 0.8),
+                        ],
+                    )
+                )
+        return points
+
     # ------------------------------------------------------------------
     # Deploy Control (Sprint 4)
     # ------------------------------------------------------------------
@@ -1169,13 +1261,22 @@ class NexusService:
     # Auto Loop Run (Sprint 5)
     # ------------------------------------------------------------------
 
-    async def run_auto_loop(self, session: AsyncSession) -> dict:
+    async def run_auto_loop(
+        self,
+        session: AsyncSession,
+        *,
+        category: str | None = None,
+    ) -> dict:
         """Run a complete auto-loop iteration inline.
 
         Steps: Load test cases → Route each (NEXUS + platform) → Compare → Cluster → Propose.
 
         Evaluates both NEXUS routing AND real platform routing
         (via smart_retrieve_tools_with_breakdown) to find discrepancies.
+
+        Args:
+            category: Optional category to filter test cases by (e.g. "smhi", "scb").
+                      Only runs on test cases whose tool_id belongs to tools in that category.
         """
         import uuid
 
@@ -1199,9 +1300,20 @@ class NexusService:
         session.add(db_run)
         await session.flush()
 
-        # Load test cases
-        result = await session.execute(select(NexusSyntheticCase).limit(200))
-        cases = result.scalars().all()
+        # Load test cases — optionally filtered by category
+        result = await session.execute(select(NexusSyntheticCase).limit(500))
+        all_cases = result.scalars().all()
+
+        # Filter by category if specified
+        if category:
+            from app.nexus.platform_bridge import get_platform_tools
+
+            cat_tool_ids = {
+                t.tool_id for t in get_platform_tools() if t.category == category
+            }
+            cases = [c for c in all_cases if c.tool_id in cat_tool_ids]
+        else:
+            cases = list(all_cases)
 
         if not cases:
             db_run.status = "failed"
