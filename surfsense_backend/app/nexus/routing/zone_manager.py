@@ -1,6 +1,6 @@
 """Zone Manager — embedding zone architecture.
 
-Manages the 4 embedding zones: [KUNSK], [MYNDG], [HANDL], [JAMFR].
+Manages the 4 embedding zones: [KUNSK], [SKAP], [JAMFR], [KONV].
 Handles zone-prefix embeddings, namespace→zone mapping, and zone
 health monitoring.
 """
@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class ZoneManager:
     """Manages the 4-zone embedding architecture.
 
-    Zone architecture:
-        [KUNSK]  — Knowledge: search, web, docs, marketplace
-        [MYNDG]  — Government: SMHI, SCB, Trafikverket, Riksdagen, Skolverket
-        [HANDL]  — Actions: sandbox, podcast, image generation
-        [JAMFR]  — Comparison: multi-model calls (GPT, Claude, Grok)
+    Zone architecture (aligned with platform intents):
+        [KUNSK]  — Kunskap: SMHI, SCB, Trafikverket, Riksdagen, sök, webb
+        [SKAP]   — Skapande: sandbox, podcast, bildgenerering, kartor, kod
+        [JAMFR]  — Jämförelse: multi-model calls (GPT, Claude, Grok)
+        [KONV]   — Konversation: småprat, hälsningar
 
     Zone-prefix embeddings improve inter-zone distance by +12-18%
     without fine-tuning the underlying embedding model.

@@ -219,7 +219,7 @@ class NexusService:
             query: User query.
             session: DB session.
             tool_entries: Pre-scored tool entries with zone/score.
-                If None, runs QUL-only analysis (no retrieval).
+                If None, auto-builds from the platform tool registry.
         """
         from app.nexus.embeddings import nexus_rerank
 
@@ -227,6 +227,10 @@ class NexusService:
 
         # Step 1: QUL
         analysis = self.analyze_query(query)
+
+        # Auto-build tool_entries from platform registry if not provided
+        if tool_entries is None:
+            tool_entries = self._build_tool_entries_from_platform(analysis)
 
         candidates: list[RoutingCandidate] = []
         selected_tool: str | None = None
@@ -852,6 +856,80 @@ class NexusService:
         )
         session.add(event)
         await session.flush()
+
+    # ------------------------------------------------------------------
+    # Tool Entry Builder
+    # ------------------------------------------------------------------
+
+    def _build_tool_entries_from_platform(self, analysis: QueryAnalysis) -> list[dict]:
+        """Build tool_entries from the platform registry with QUL-based scoring.
+
+        When route_query() is called without pre-scored tool_entries, this
+        method creates them from the real platform tool registry, scoring
+        each tool based on keyword overlap, zone match, and domain hints.
+        """
+        from app.nexus.embeddings import nexus_embed_score
+        from app.nexus.platform_bridge import get_platform_tools
+
+        tools = get_platform_tools()
+        if not tools:
+            return []
+
+        query_lower = analysis.normalized_query.lower()
+        query_tokens = set(query_lower.split())
+        zone_candidates = set(analysis.zone_candidates)
+        domain_hints = set(analysis.domain_hints)
+
+        entries: list[dict] = []
+        for pt in tools:
+            # Skip external model tools — compare mode only
+            if pt.category == "external_model":
+                continue
+
+            score = 0.0
+
+            # Zone match bonus
+            if pt.zone in zone_candidates:
+                score += 0.30
+
+            # Keyword overlap scoring
+            tool_keywords = {k.lower() for k in pt.keywords}
+            keyword_hits = query_tokens & tool_keywords
+            if keyword_hits:
+                score += min(0.30, len(keyword_hits) * 0.10)
+
+            # Domain hint match (category matches QUL domain hints)
+            if pt.category in domain_hints:
+                score += 0.20
+
+            # Name/ID match — direct substring match in query
+            tool_name_lower = pt.tool_id.lower().replace("_", " ")
+            if any(
+                tok in query_lower for tok in tool_name_lower.split() if len(tok) > 3
+            ):
+                score += 0.15
+
+            # Description similarity (embedding-based if available)
+            emb_score = nexus_embed_score(
+                query_lower,
+                f"{pt.tool_id} {pt.description}",
+            )
+            if emb_score is not None:
+                score += emb_score * 0.40
+
+            entries.append(
+                {
+                    "tool_id": pt.tool_id,
+                    "namespace": "/".join(pt.namespace),
+                    "zone": pt.zone,
+                    "score": round(score, 4),
+                    "description": pt.description,
+                }
+            )
+
+        # Sort by score descending, keep top 20 for the StR pipeline
+        entries.sort(key=lambda e: e["score"], reverse=True)
+        return entries[:20]
 
     # ------------------------------------------------------------------
     # Deploy Control (Sprint 4)

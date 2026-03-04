@@ -17,15 +17,15 @@ import {
 
 const ZONE_LABELS: Record<string, string> = {
 	kunskap: "Kunskap",
-	myndigheter: "Myndigheter",
-	handling: "Handling",
+	skapande: "Skapande",
+	konversation: "Konversation",
 	"jämförelse": "Jämförelse",
 };
 
 const ZONE_DESCRIPTIONS: Record<string, string> = {
-	kunskap: "Sök, webb, dokument, marketplace",
-	myndigheter: "SMHI, SCB, Trafikverket, Riksdagen",
-	handling: "Sandbox, podcast, bildgenerering",
+	kunskap: "SMHI, SCB, Trafikverket, Riksdagen, sök, webb, dokument, marketplace",
+	skapande: "Sandbox, podcast, bildgenerering, kartor, kod",
+	konversation: "Småprat, hälsningar, konversation",
 	"jämförelse": "Multi-modell jämförelser",
 };
 

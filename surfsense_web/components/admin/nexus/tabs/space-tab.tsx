@@ -102,9 +102,9 @@ function UMAPCanvas({
 	points: Array<{ tool_id: string; x: number; y: number; zone: string; cluster: number }>;
 }) {
 	const ZONE_COLORS: Record<string, string> = {
-		myndigheter: "#3b82f6",
-		kunskap: "#10b981",
-		handling: "#f59e0b",
+		kunskap: "#3b82f6",
+		skapande: "#f59e0b",
+		konversation: "#10b981",
 		"jämförelse": "#8b5cf6",
 	};
 

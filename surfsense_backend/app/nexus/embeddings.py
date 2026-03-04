@@ -85,6 +85,26 @@ def nexus_embed(text: str) -> list[float] | None:
         return None
 
 
+def nexus_embed_score(query: str, document: str) -> float | None:
+    """Compute cosine similarity between query and document embeddings.
+
+    Returns a similarity score in [0, 1], or None if embedding model
+    is not available.
+    """
+    q_emb = nexus_embed(query)
+    d_emb = nexus_embed(document)
+    if q_emb is None or d_emb is None:
+        return None
+
+    q = np.array(q_emb)
+    d = np.array(d_emb)
+    norm_q = np.linalg.norm(q)
+    norm_d = np.linalg.norm(d)
+    if norm_q == 0 or norm_d == 0:
+        return 0.0
+    return float(np.dot(q, d) / (norm_q * norm_d))
+
+
 def nexus_embed_batch(texts: list[str]) -> list[list[float]] | None:
     """Embed multiple texts using the configured embedding model.
 
