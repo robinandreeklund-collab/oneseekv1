@@ -430,6 +430,31 @@ export interface LiveRoutingConfigResponse {
 // Shadow Observer Types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Metadata Optimizer Types
+// ---------------------------------------------------------------------------
+
+export interface ToolSuggestionResponse {
+	tool_id: string;
+	current: Record<string, unknown>;
+	suggested: Record<string, unknown>;
+	reasoning: string;
+	fields_changed: string[];
+}
+
+export interface OptimizerResultResponse {
+	category: string;
+	total_tools: number;
+	suggestions: ToolSuggestionResponse[];
+	model_used: string;
+	error: string | null;
+}
+
+export interface OptimizerApplyResponse {
+	applied: number;
+	skipped: number;
+}
+
 export interface ShadowReportResponse {
 	feedback_store: {
 		total_patterns: number;
@@ -601,6 +626,26 @@ class NexusApiService {
 		fetchNexus<{ status: string }>(`/dark-matter/${clusterId}/review`, {
 			method: "POST",
 			body: JSON.stringify({ new_tool_candidate: newToolCandidate }),
+		});
+
+	// Metadata Optimizer
+	getOptimizerCategories = () =>
+		fetchNexus<{ categories: string[] }>("/optimizer/categories");
+
+	optimizerGenerate = (request: {
+		category?: string;
+		namespace?: string;
+		llm_config_id?: number;
+	}) =>
+		fetchNexus<OptimizerResultResponse>("/optimizer/generate", {
+			method: "POST",
+			body: JSON.stringify(request),
+		});
+
+	optimizerApply = (suggestions: Record<string, unknown>[]) =>
+		fetchNexus<OptimizerApplyResponse>("/optimizer/apply", {
+			method: "POST",
+			body: JSON.stringify({ suggestions }),
 		});
 }
 

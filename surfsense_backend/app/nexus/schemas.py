@@ -347,3 +347,36 @@ class RoutingEventResponse(BaseModel):
     is_multi_intent: bool | None = None
     is_ood: bool = False
     routed_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Metadata Optimizer
+# ---------------------------------------------------------------------------
+
+
+class OptimizerGenerateRequest(BaseModel):
+    category: str | None = None
+    namespace: str | None = None
+    llm_config_id: int = -24  # Claude Sonnet default
+
+
+class ToolSuggestionResponse(BaseModel):
+    tool_id: str
+    current: dict = Field(default_factory=dict)
+    suggested: dict = Field(default_factory=dict)
+    reasoning: str = ""
+    fields_changed: list[str] = Field(default_factory=list)
+
+
+class OptimizerResultResponse(BaseModel):
+    category: str
+    total_tools: int = 0
+    suggestions: list[ToolSuggestionResponse] = Field(default_factory=list)
+    model_used: str = ""
+    error: str | None = None
+
+
+class OptimizerApplyRequest(BaseModel):
+    suggestions: list[dict] = Field(
+        ..., description="List of tool metadata dicts with tool_id + fields to apply"
+    )

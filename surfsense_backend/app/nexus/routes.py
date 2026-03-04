@@ -27,6 +27,9 @@ from app.nexus.schemas import (
     MetricsTrend,
     NexusConfigResponse,
     NexusHealthResponse,
+    OptimizerApplyRequest,
+    OptimizerGenerateRequest,
+    OptimizerResultResponse,
     PipelineMetricsSummary,
     PromotionResult,
     QueryAnalysis,
@@ -781,6 +784,96 @@ async def get_calibration_ece(
 ):
     """Get ECE report across all zones."""
     return await service.get_ece_report(session)
+
+
+# ------------------------------------------------------------------
+# Metadata Optimizer
+# ------------------------------------------------------------------
+
+_optimizer = None
+
+
+def _get_optimizer():
+    global _optimizer
+    if _optimizer is None:
+        from app.nexus.optimizer import MetadataOptimizer
+
+        _optimizer = MetadataOptimizer()
+    return _optimizer
+
+
+@nexus_router.get("/optimizer/categories")
+async def get_optimizer_categories(
+    user: User = Depends(current_active_user),
+):
+    """List available tool categories for optimization."""
+    optimizer = _get_optimizer()
+    return {"categories": optimizer.get_available_categories()}
+
+
+@nexus_router.post("/optimizer/generate", response_model=OptimizerResultResponse)
+async def optimizer_generate(
+    request: OptimizerGenerateRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Generate optimized metadata suggestions using LLM.
+
+    Select a category (e.g. "smhi", "scb", "kolada") or namespace prefix
+    to optimize all tools in that batch. Uses Claude Sonnet (config_id=-24)
+    by default.
+    """
+    if not request.category and not request.namespace:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'category' or 'namespace' must be provided",
+        )
+
+    optimizer = _get_optimizer()
+    result = await optimizer.generate_suggestions(
+        session,
+        category=request.category,
+        namespace=request.namespace,
+        llm_config_id=request.llm_config_id,
+    )
+
+    return OptimizerResultResponse(
+        category=result.category,
+        total_tools=result.total_tools,
+        suggestions=[
+            {
+                "tool_id": s.tool_id,
+                "current": s.current,
+                "suggested": s.suggested,
+                "reasoning": s.reasoning,
+                "fields_changed": s.fields_changed,
+            }
+            for s in result.suggestions
+        ],
+        model_used=result.model_used,
+        error=result.error,
+    )
+
+
+@nexus_router.post("/optimizer/apply")
+async def optimizer_apply(
+    request: OptimizerApplyRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Apply approved metadata suggestions as DB overrides.
+
+    After reviewing the suggestions from /optimizer/generate, send the
+    approved ones here. They will be saved as tool metadata overrides
+    and immediately picked up by NEXUS routing.
+    """
+    optimizer = _get_optimizer()
+    result = await optimizer.apply_suggestions(
+        session,
+        request.suggestions,
+        user_id=user.id if user else None,
+    )
+    return result
 
 
 # ------------------------------------------------------------------

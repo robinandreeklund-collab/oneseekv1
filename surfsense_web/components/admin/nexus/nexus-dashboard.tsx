@@ -36,6 +36,7 @@ import { ForgeTab } from "@/components/admin/nexus/tabs/forge-tab";
 import { LoopTab } from "@/components/admin/nexus/tabs/loop-tab";
 import { LedgerTab } from "@/components/admin/nexus/tabs/ledger-tab";
 import { DeployTab } from "@/components/admin/nexus/tabs/deploy-tab";
+import { OptimizerTab } from "@/components/admin/nexus/tabs/optimizer-tab";
 import { PipelineExplorerTab } from "@/components/admin/nexus/tabs/pipeline-explorer-tab";
 
 function TabFallback() {
@@ -186,6 +187,10 @@ export function NexusDashboard() {
 						<Rocket className="h-3.5 w-3.5" />
 						Deploy
 					</TabsTrigger>
+					<TabsTrigger value="optimizer" className="gap-1.5">
+						<Sparkles className="h-3.5 w-3.5" />
+						Optimizer
+					</TabsTrigger>
 				</TabsList>
 
 				<TabsContent value="explorer" className="mt-6">
@@ -214,6 +219,10 @@ export function NexusDashboard() {
 
 				<TabsContent value="deploy" className="mt-6">
 					<DeployTab />
+				</TabsContent>
+
+				<TabsContent value="optimizer" className="mt-6">
+					<OptimizerTab />
 				</TabsContent>
 			</Tabs>
 		</div>
