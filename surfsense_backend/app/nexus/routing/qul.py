@@ -294,13 +294,13 @@ class QueryUnderstandingLayer:
         """Determine candidate zones from domain hints and entities."""
         zones: list[str] = list(domain_hints)
 
-        # Location entities boost myndigheter zone
-        if entities.locations and Zone.MYNDIGHETER not in zones:
-            zones.append(Zone.MYNDIGHETER)
+        # Location entities boost kunskap zone (government/statistics data)
+        if entities.locations and Zone.KUNSKAP not in zones:
+            zones.append(Zone.KUNSKAP)
 
         # If no hints at all, return broad search
         if not zones:
-            zones = [Zone.KUNSKAP, Zone.MYNDIGHETER, Zone.HANDLING]
+            zones = [Zone.KUNSKAP, Zone.SKAPANDE]
 
         return zones
 

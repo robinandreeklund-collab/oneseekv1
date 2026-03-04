@@ -3,6 +3,9 @@
 Verifies that a selected tool's required parameters, geographic scope,
 and temporal scope match what the query provides. This catches misroutes
 where the tool match looks correct but the query lacks necessary context.
+
+The schema registry is now auto-built from the real platform tool definitions
+via platform_bridge, instead of being hand-maintained.
 """
 
 from __future__ import annotations
@@ -18,10 +21,47 @@ class ToolSchema:
     """Expected schema for a tool."""
 
     tool_id: str
+    description: str = ""
+    keywords: list[str] = field(default_factory=list)
     required_params: list[str] = field(default_factory=list)
     geographic_scope: str = ""  # e.g., "sweden", "global", "nordic"
     temporal_scope: str = ""  # e.g., "realtime", "historical", "forecast"
     min_entities: int = 0  # minimum required entities in query
+    category: str = ""
+    zone: str = ""
+    namespace: str = ""
+
+
+def _build_schemas_from_platform() -> dict[str, ToolSchema]:
+    """Auto-build TOOL_SCHEMAS from the real platform tool registry."""
+    try:
+        from app.nexus.platform_bridge import get_platform_tools
+
+        tools = get_platform_tools()
+    except Exception:
+        logger.warning("Could not load platform tools — using empty schema registry")
+        return {}
+
+    schemas: dict[str, ToolSchema] = {}
+    for t in tools:
+        schemas[t.tool_id] = ToolSchema(
+            tool_id=t.tool_id,
+            description=t.description,
+            keywords=t.keywords,
+            required_params=t.required_params,
+            geographic_scope=t.geographic_scope,
+            temporal_scope=t.temporal_scope,
+            category=t.category,
+            zone=t.zone,
+            namespace="/".join(t.namespace) if t.namespace else "",
+        )
+
+    logger.info("Schema verifier loaded %d tool schemas from platform", len(schemas))
+    return schemas
+
+
+# Built from real platform tool definitions — NOT hand-maintained
+TOOL_SCHEMAS: dict[str, ToolSchema] = _build_schemas_from_platform()
 
 
 @dataclass
@@ -34,67 +74,6 @@ class VerificationResult:
     scope_mismatch: str = ""
     confidence_penalty: float = 0.0
 
-
-# Built-in tool schemas — extended as tools are added
-TOOL_SCHEMAS: dict[str, ToolSchema] = {
-    # Weather tools need location
-    "smhi_weather": ToolSchema(
-        tool_id="smhi_weather",
-        required_params=["location"],
-        geographic_scope="sweden",
-        temporal_scope="forecast",
-    ),
-    "smhi_vaderprognoser_metfcst": ToolSchema(
-        tool_id="smhi_vaderprognoser_metfcst",
-        required_params=["location"],
-        geographic_scope="sweden",
-        temporal_scope="forecast",
-    ),
-    "smhi_vaderobservationer_metobs": ToolSchema(
-        tool_id="smhi_vaderobservationer_metobs",
-        required_params=["location"],
-        geographic_scope="sweden",
-        temporal_scope="historical",
-    ),
-    "smhi_brandrisk_fwif": ToolSchema(
-        tool_id="smhi_brandrisk_fwif",
-        geographic_scope="sweden",
-        temporal_scope="forecast",
-    ),
-    # SCB tools need municipality or data category
-    "scb_befolkning": ToolSchema(
-        tool_id="scb_befolkning",
-        geographic_scope="sweden",
-    ),
-    # Kolada tools need municipality
-    "kolada_aldreomsorg": ToolSchema(
-        tool_id="kolada_aldreomsorg",
-        required_params=["municipality"],
-        geographic_scope="sweden",
-    ),
-    # Riksdagen — no geographic requirement but temporal
-    "riksdag_dokument": ToolSchema(
-        tool_id="riksdag_dokument",
-        geographic_scope="sweden",
-    ),
-    "riksdag_voteringar": ToolSchema(
-        tool_id="riksdag_voteringar",
-        geographic_scope="sweden",
-    ),
-    # External model calls — no constraints
-    "call_gpt": ToolSchema(tool_id="call_gpt"),
-    "call_claude": ToolSchema(tool_id="call_claude"),
-    "call_grok": ToolSchema(tool_id="call_grok"),
-    # Knowledge tools
-    "search_knowledge_base": ToolSchema(tool_id="search_knowledge_base"),
-    "search_tavily": ToolSchema(tool_id="search_tavily"),
-    # Trafiklab
-    "trafiklab_route": ToolSchema(
-        tool_id="trafiklab_route",
-        required_params=["origin", "destination"],
-        geographic_scope="sweden",
-    ),
-}
 
 # Geographic scope keywords
 _SWEDEN_INDICATORS = frozenset(
@@ -125,7 +104,7 @@ class SchemaVerifier:
     """Verifies that a selected tool's schema matches the query context."""
 
     def __init__(self, schemas: dict[str, ToolSchema] | None = None):
-        self.schemas = schemas or TOOL_SCHEMAS
+        self.schemas = schemas if schemas is not None else TOOL_SCHEMAS
 
     def verify(
         self,
@@ -187,7 +166,6 @@ class SchemaVerifier:
 
         # Check temporal scope
         if schema.temporal_scope == "forecast" and times:
-            # If query mentions historical dates, penalize
             lower = query.lower()
             if any(
                 kw in lower for kw in ("förra", "igår", "historisk", "1990", "1980")

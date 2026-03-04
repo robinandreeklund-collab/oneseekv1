@@ -9,12 +9,12 @@ class TestZoneSelection:
         self.str = SelectThenRoute()
 
     def test_select_valid_zones(self):
-        zones = self.str.select_zones([Zone.MYNDIGHETER, Zone.KUNSKAP])
-        assert zones == [Zone.MYNDIGHETER, Zone.KUNSKAP]
+        zones = self.str.select_zones([Zone.KUNSKAP, Zone.SKAPANDE])
+        assert zones == [Zone.KUNSKAP, Zone.SKAPANDE]
 
     def test_select_zones_max(self):
         zones = self.str.select_zones(
-            [Zone.MYNDIGHETER, Zone.KUNSKAP, Zone.HANDLING],
+            [Zone.KUNSKAP, Zone.SKAPANDE, Zone.JAMFORELSE],
             max_zones=2,
         )
         assert len(zones) == 2
@@ -22,7 +22,7 @@ class TestZoneSelection:
     def test_select_zones_fallback(self):
         zones = self.str.select_zones([])
         assert Zone.KUNSKAP in zones
-        assert Zone.MYNDIGHETER in zones
+        assert Zone.SKAPANDE in zones
 
     def test_select_zones_invalid_filtered(self):
         zones = self.str.select_zones(["nonexistent"])
@@ -35,13 +35,13 @@ class TestRetrieval:
         self.tools = [
             {
                 "tool_id": "smhi_weather",
-                "zone": "myndigheter",
+                "zone": "kunskap",
                 "score": 0.95,
                 "namespace": "tools/weather",
             },
             {
                 "tool_id": "scb_data",
-                "zone": "myndigheter",
+                "zone": "kunskap",
                 "score": 0.80,
                 "namespace": "tools/statistik",
             },
@@ -62,24 +62,24 @@ class TestRetrieval:
     def test_retrieve_per_zone(self):
         candidates = self.str.retrieve_per_zone(
             "väder stockholm",
-            ["myndigheter"],
+            ["kunskap"],
             self.tools,
         )
-        assert len(candidates) == 2
+        assert len(candidates) == 3
         assert candidates[0].tool_id == "smhi_weather"
 
     def test_retrieve_multiple_zones(self):
         candidates = self.str.retrieve_per_zone(
             "väder stockholm",
-            ["myndigheter", "kunskap"],
+            ["kunskap", "jämförelse"],
             self.tools,
         )
-        assert len(candidates) == 3
+        assert len(candidates) == 4
 
     def test_retrieve_empty_zone(self):
         candidates = self.str.retrieve_per_zone(
             "test",
-            ["handling"],
+            ["skapande"],
             self.tools,
         )
         assert len(candidates) == 0
@@ -122,13 +122,13 @@ class TestFullPipeline:
         tools = [
             {
                 "tool_id": "smhi_weather",
-                "zone": "myndigheter",
+                "zone": "kunskap",
                 "score": 0.95,
                 "namespace": "tools/weather",
             },
             {
                 "tool_id": "scb_data",
-                "zone": "myndigheter",
+                "zone": "kunskap",
                 "score": 0.80,
                 "namespace": "tools/statistik",
             },
@@ -141,7 +141,7 @@ class TestFullPipeline:
         ]
         result = str_pipeline.run(
             "väder i stockholm",
-            [Zone.MYNDIGHETER],
+            [Zone.KUNSKAP],
             tools,
         )
         assert len(result.zones_searched) >= 1

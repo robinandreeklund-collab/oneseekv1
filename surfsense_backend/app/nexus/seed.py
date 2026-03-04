@@ -4,8 +4,7 @@ Endpoint: POST /api/v1/nexus/seed
 Inserts zone configs, routing events, space snapshots, loop runs,
 pipeline metrics, dark matter queries, and calibration params.
 
-Synthetic test cases are NOT seeded here — use POST /nexus/forge/generate
-to generate real test cases via the configured LLM.
+Uses REAL tool IDs from the platform_bridge — not made-up tool names.
 """
 
 from __future__ import annotations
@@ -29,111 +28,249 @@ from app.nexus.models import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Tool catalog — realistic Swedish tools
-# ---------------------------------------------------------------------------
 
-TOOL_CATALOG = [
-    {
-        "tool_id": "smhi_weather",
-        "namespace": "tools/weather/smhi",
-        "zone": "myndigheter",
-    },
-    {"tool_id": "yr_forecast", "namespace": "tools/weather/yr", "zone": "myndigheter"},
-    {
-        "tool_id": "scb_statistics",
-        "namespace": "tools/statistik/scb",
-        "zone": "myndigheter",
-    },
-    {
-        "tool_id": "kolada_kpi",
-        "namespace": "tools/statistik/kolada",
-        "zone": "myndigheter",
-    },
-    {
-        "tool_id": "riksdag_documents",
-        "namespace": "tools/politik/riksdag",
-        "zone": "myndigheter",
-    },
-    {
-        "tool_id": "trafiklab_transit",
-        "namespace": "tools/transport/trafiklab",
-        "zone": "myndigheter",
-    },
-    {
-        "tool_id": "skolverket_grades",
-        "namespace": "tools/utbildning/skolverket",
-        "zone": "myndigheter",
-    },
-    {"tool_id": "web_search", "namespace": "tools/knowledge/search", "zone": "kunskap"},
-    {
-        "tool_id": "document_search",
-        "namespace": "tools/knowledge/docs",
-        "zone": "kunskap",
-    },
-    {
-        "tool_id": "marketplace_search",
-        "namespace": "tools/marketplace/blocket",
-        "zone": "kunskap",
-    },
-    {"tool_id": "code_sandbox", "namespace": "tools/code/sandbox", "zone": "handling"},
-    {
-        "tool_id": "podcast_generator",
-        "namespace": "tools/action/podcast",
-        "zone": "handling",
-    },
-    {
-        "tool_id": "image_generator",
-        "namespace": "tools/action/image",
-        "zone": "handling",
-    },
-    {
-        "tool_id": "compare_models",
-        "namespace": "tools/compare/models",
-        "zone": "jämförelse",
-    },
-    {
-        "tool_id": "compare_products",
-        "namespace": "tools/compare/products",
-        "zone": "jämförelse",
-    },
-]
+def _get_tool_catalog() -> list[dict]:
+    """Build tool catalog from the real platform tool registry."""
+    try:
+        from app.nexus.platform_bridge import get_platform_tools
 
-# Sample queries for routing events
-SAMPLE_QUERIES = [
-    ("Vad blir vädret i Stockholm imorgon?", "smhi_weather", "myndigheter", 0, 0.96),
-    ("Hur många bor i Göteborg?", "scb_statistics", "myndigheter", 0, 0.93),
-    (
-        "Visa senaste riksdagsbeslut om klimat",
-        "riksdag_documents",
-        "myndigheter",
-        1,
-        0.85,
-    ),
-    ("Hur långt har buss 55 kvar?", "trafiklab_transit", "myndigheter", 1, 0.82),
-    ("Betygsresultat i Malmö kommun", "skolverket_grades", "myndigheter", 0, 0.91),
-    ("Kolada nyckeltal för äldreomsorgen", "kolada_kpi", "myndigheter", 1, 0.88),
-    ("Sök efter python tutorials", "web_search", "kunskap", 0, 0.94),
-    ("Hitta dokumentet om Q3 budget", "document_search", "kunskap", 1, 0.79),
-    ("Köpa begagnad cykel i Uppsala", "marketplace_search", "kunskap", 0, 0.92),
-    ("Kör min Python-kod", "code_sandbox", "handling", 0, 0.97),
-    ("Skapa en podcast om AI", "podcast_generator", "handling", 1, 0.86),
-    ("Generera en bild av en katt", "image_generator", "handling", 0, 0.95),
-    ("Jämför GPT-4 och Claude", "compare_models", "jämförelse", 0, 0.93),
-    (
-        "Vilken telefon är bäst under 5000 kr?",
-        "compare_products",
-        "jämförelse",
-        2,
-        0.68,
-    ),
-    ("Vad är meningen med livet?", None, None, 4, 0.15),
-    ("Boka tandläkartid", None, None, 4, 0.22),
-    ("Regnar det i Oslo idag?", "yr_forecast", "myndigheter", 2, 0.62),
-    ("Medellöner per kommun", "scb_statistics", "myndigheter", 1, 0.84),
-    ("Hur gör jag en PR i GitHub?", "web_search", "kunskap", 2, 0.71),
-    ("Skriv en haiku om programmering", None, None, 3, 0.45),
-]
+        platform_tools = get_platform_tools()
+        return [
+            {
+                "tool_id": t.tool_id,
+                "namespace": "/".join(t.namespace),
+                "zone": t.zone,
+                "category": t.category,
+            }
+            for t in platform_tools
+        ]
+    except Exception:
+        logger.warning("Could not load platform tools for seed — using fallback")
+        return [
+            {
+                "tool_id": "search_knowledge_base",
+                "namespace": "tools/knowledge/kb",
+                "zone": "kunskap",
+                "category": "builtin",
+            },
+            {
+                "tool_id": "search_tavily",
+                "namespace": "tools/knowledge/web",
+                "zone": "kunskap",
+                "category": "builtin",
+            },
+            {
+                "tool_id": "smhi_vaderprognoser_metfcst",
+                "namespace": "tools/weather/smhi",
+                "zone": "kunskap",
+                "category": "smhi",
+            },
+        ]
+
+
+def _get_sample_queries(catalog: list[dict]) -> list[tuple]:
+    """Build sample queries using real tool IDs from the catalog."""
+    by_cat: dict[str, list[dict]] = {}
+    for t in catalog:
+        by_cat.setdefault(t["category"], []).append(t)
+
+    queries: list[tuple] = []
+
+    # SMHI weather queries
+    smhi_tools = by_cat.get("smhi", [])
+    if smhi_tools:
+        metfcst = next(
+            (t for t in smhi_tools if "metfcst" in t["tool_id"]), smhi_tools[0]
+        )
+        metobs = next(
+            (t for t in smhi_tools if "metobs" in t["tool_id"]), smhi_tools[0]
+        )
+        brandrisk = next(
+            (t for t in smhi_tools if "brandrisk" in t["tool_id"]), smhi_tools[0]
+        )
+        queries.extend(
+            [
+                (
+                    "Vad blir vädret i Stockholm imorgon?",
+                    metfcst["tool_id"],
+                    metfcst["zone"],
+                    0,
+                    0.96,
+                ),
+                (
+                    "Regnade det i Göteborg igår?",
+                    metobs["tool_id"],
+                    metobs["zone"],
+                    1,
+                    0.85,
+                ),
+                (
+                    "Hur stor är brandrisken i Kalmar?",
+                    brandrisk["tool_id"],
+                    brandrisk["zone"],
+                    1,
+                    0.88,
+                ),
+            ]
+        )
+
+    # SCB queries
+    scb_tools = by_cat.get("scb", [])
+    if scb_tools:
+        bef = next(
+            (t for t in scb_tools if t["tool_id"].split("_")[-1] == "befolkning"),
+            scb_tools[0],
+        )
+        arb = next(
+            (t for t in scb_tools if "arbetsmarknad" in t["tool_id"]), scb_tools[0]
+        )
+        queries.extend(
+            [
+                ("Hur många bor i Sverige?", bef["tool_id"], bef["zone"], 0, 0.93),
+                (
+                    "Arbetslöshetsstatistik per kommun",
+                    arb["tool_id"],
+                    arb["zone"],
+                    1,
+                    0.84,
+                ),
+            ]
+        )
+
+    # Kolada queries
+    kolada_tools = by_cat.get("kolada", [])
+    if kolada_tools:
+        aldr = next(
+            (t for t in kolada_tools if "aldreomsorg" in t["tool_id"]), kolada_tools[0]
+        )
+        queries.append(
+            (
+                "Kolada nyckeltal för äldreomsorgen i Malmö",
+                aldr["tool_id"],
+                aldr["zone"],
+                1,
+                0.88,
+            )
+        )
+
+    # Riksdagen queries
+    riks_tools = by_cat.get("riksdagen", [])
+    if riks_tools:
+        dok = next(
+            (t for t in riks_tools if t["tool_id"] == "riksdag_dokument"), riks_tools[0]
+        )
+        queries.append(
+            (
+                "Visa senaste riksdagsbeslut om klimat",
+                dok["tool_id"],
+                dok["zone"],
+                1,
+                0.85,
+            )
+        )
+
+    # Trafikverket queries
+    trafik_tools = by_cat.get("trafikverket", [])
+    if trafik_tools:
+        storn = next(
+            (t for t in trafik_tools if "storningar" in t["tool_id"]), trafik_tools[0]
+        )
+        queries.append(
+            (
+                "Finns det trafikstörningar på E4?",
+                storn["tool_id"],
+                storn["zone"],
+                0,
+                0.92,
+            )
+        )
+
+    # Bolagsverket queries
+    bolag_tools = by_cat.get("bolagsverket", [])
+    if bolag_tools:
+        info = next(
+            (t for t in bolag_tools if "info_basic" in t["tool_id"]), bolag_tools[0]
+        )
+        queries.append(
+            (
+                "Vad gör företaget med orgnr 5566778899?",
+                info["tool_id"],
+                info["zone"],
+                0,
+                0.91,
+            )
+        )
+
+    # Marketplace queries
+    market_tools = by_cat.get("marketplace", [])
+    if market_tools:
+        unified = next(
+            (t for t in market_tools if "unified" in t["tool_id"]), market_tools[0]
+        )
+        queries.append(
+            (
+                "Köpa begagnad cykel i Uppsala",
+                unified["tool_id"],
+                unified["zone"],
+                0,
+                0.92,
+            )
+        )
+
+    # Builtin knowledge queries
+    builtin_tools = by_cat.get("builtin", [])
+    if builtin_tools:
+        kb = next(
+            (t for t in builtin_tools if "knowledge_base" in t["tool_id"]),
+            builtin_tools[0],
+        )
+        tavily = next(
+            (t for t in builtin_tools if "tavily" in t["tool_id"]), builtin_tools[0]
+        )
+        podcast = next((t for t in builtin_tools if "podcast" in t["tool_id"]), None)
+        sandbox = next(
+            (t for t in builtin_tools if "sandbox_execute" in t["tool_id"]), None
+        )
+        queries.extend(
+            [
+                ("Hitta dokumentet om Q3 budget", kb["tool_id"], kb["zone"], 1, 0.79),
+                (
+                    "Sök efter python tutorials",
+                    tavily["tool_id"],
+                    tavily["zone"],
+                    0,
+                    0.94,
+                ),
+            ]
+        )
+        if podcast:
+            queries.append(
+                ("Skapa en podcast om AI", podcast["tool_id"], podcast["zone"], 1, 0.86)
+            )
+        if sandbox:
+            queries.append(
+                ("Kör min Python-kod", sandbox["tool_id"], sandbox["zone"], 0, 0.97)
+            )
+
+    # External model queries
+    ext_tools = by_cat.get("external_model", [])
+    if ext_tools:
+        gpt = next((t for t in ext_tools if "gpt" in t["tool_id"]), ext_tools[0])
+        queries.append(
+            ("Jämför GPT-4 och Claude", gpt["tool_id"], gpt["zone"], 0, 0.93)
+        )
+
+    # OOD / band 4 queries (no tool match)
+    queries.extend(
+        [
+            ("Vad är meningen med livet?", None, None, 4, 0.15),
+            ("Boka tandläkartid", None, None, 4, 0.22),
+            ("Skriv en haiku om programmering", None, None, 3, 0.45),
+        ]
+    )
+
+    return queries
+
 
 # OOD queries for dark matter
 OOD_QUERIES = [
@@ -155,15 +292,12 @@ OOD_QUERIES = [
 async def seed_nexus_data(session: AsyncSession) -> dict:
     """Insert infrastructure data into NEXUS tables.
 
-    Does NOT insert synthetic test cases — those are generated live via
-    POST /nexus/forge/generate using the configured LLM.
-
-    Returns summary of what was inserted.
+    Uses REAL tool IDs from the platform bridge.
     """
     now = datetime.now(tz=UTC)
     counts: dict[str, int] = {}
 
-    # 1. Zone configs
+    # 1. Zone configs (aligned with real platform intents)
     from app.nexus.config import ZONE_PREFIXES
 
     for zone, prefix in ZONE_PREFIXES.items():
@@ -180,9 +314,14 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         await session.merge(zc)
     counts["zone_configs"] = len(ZONE_PREFIXES)
 
-    # 2. Routing events
-    for i in range(40):
-        q_text, tool, zone, band, conf = SAMPLE_QUERIES[i % len(SAMPLE_QUERIES)]
+    # 2. Load real tool catalog
+    tool_catalog = _get_tool_catalog()
+    sample_queries = _get_sample_queries(tool_catalog)
+
+    # 3. Routing events (using real tool IDs)
+    n_events = 40
+    for i in range(n_events):
+        q_text, tool, zone, band, conf = sample_queries[i % len(sample_queries)]
         conf_var = max(0.0, min(1.0, conf + random.uniform(-0.05, 0.05)))
         event = NexusRoutingEvent(
             query_text=q_text,
@@ -199,35 +338,44 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             routed_at=now - timedelta(minutes=random.randint(1, 2880)),
         )
         session.add(event)
-    counts["routing_events"] = 40
+    counts["routing_events"] = n_events
 
-    # 3. Space snapshots (UMAP coordinates per tool)
+    # 4. Space snapshots — sample from real tools (max 30 for seed)
     zone_centers = {
-        "myndigheter": (2.0, 1.0),
-        "kunskap": (-2.0, 1.5),
-        "handling": (0.0, -2.0),
-        "jämförelse": (3.0, -1.0),
+        "kunskap": (-1.0, 1.5),
+        "skapande": (2.0, -1.0),
+        "jämförelse": (3.0, 2.0),
+        "konversation": (-3.0, -2.0),
     }
-    for tool in TOOL_CATALOG:
+    snapshot_tools = random.sample(tool_catalog, min(30, len(tool_catalog)))
+    for tool in snapshot_tools:
         cx, cy = zone_centers.get(tool["zone"], (0, 0))
         snap = NexusSpaceSnapshot(
             snapshot_at=now - timedelta(hours=1),
             tool_id=tool["tool_id"],
             namespace=tool["namespace"],
-            embedding_model="all-MiniLM-L6-v2",
+            embedding_model="KBLab/sentence-bert-swedish-cased",
             umap_x=cx + random.uniform(-0.8, 0.8),
             umap_y=cy + random.uniform(-0.8, 0.8),
-            cluster_label=list(zone_centers.keys()).index(tool["zone"]),
+            cluster_label=list(zone_centers.keys()).index(tool["zone"])
+            if tool["zone"] in zone_centers
+            else 0,
             silhouette_score=round(random.uniform(0.45, 0.85), 3),
             nearest_neighbor_tool=random.choice(
-                [t["tool_id"] for t in TOOL_CATALOG if t["tool_id"] != tool["tool_id"]]
-            ),
+                [
+                    t["tool_id"]
+                    for t in snapshot_tools
+                    if t["tool_id"] != tool["tool_id"]
+                ]
+            )
+            if len(snapshot_tools) > 1
+            else tool["tool_id"],
             nearest_neighbor_distance=round(random.uniform(0.15, 0.60), 3),
         )
         session.add(snap)
-    counts["space_snapshots"] = len(TOOL_CATALOG)
+    counts["space_snapshots"] = len(snapshot_tools)
 
-    # 4. Auto-loop runs
+    # 5. Auto-loop runs
     for i in range(3):
         run = NexusAutoLoopRun(
             loop_number=i + 1,
@@ -236,8 +384,12 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             total_tests=random.randint(40, 80),
             failures=random.randint(3, 12),
             metadata_proposals={
-                "proposals": [{"tool_id": "smhi_weather", "field": "description"}]
-            },
+                "proposals": [
+                    {"tool_id": snapshot_tools[0]["tool_id"], "field": "description"}
+                ]
+            }
+            if snapshot_tools
+            else {},
             approved_proposals=random.randint(0, 3),
             embedding_delta=round(random.uniform(0.01, 0.05), 4),
             status=random.choice(["approved", "deployed", "review"]),
@@ -245,7 +397,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         session.add(run)
     counts["auto_loop_runs"] = 3
 
-    # 5. Pipeline metrics
+    # 6. Pipeline metrics
     run_id = uuid.uuid4()
     stages = [
         (1, "intent", 0.88, 0.95, 0.91, 0.89, None, None),
@@ -270,8 +422,8 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         session.add(metric)
     counts["pipeline_metrics"] = len(stages)
 
-    # 6. Calibration params
-    for zone in ["kunskap", "myndigheter", "handling", "jämförelse"]:
+    # 7. Calibration params (per real zone/intent)
+    for zone in ZONE_PREFIXES:
         cal = NexusCalibrationParam(
             zone=zone,
             calibration_method="platt",
@@ -284,9 +436,9 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             is_active=True,
         )
         session.add(cal)
-    counts["calibration_params"] = 4
+    counts["calibration_params"] = len(ZONE_PREFIXES)
 
-    # 7. Dark matter queries
+    # 8. Dark matter queries
     for q_text, energy in OOD_QUERIES:
         dm = NexusDarkMatterQuery(
             query_text=q_text,
@@ -305,7 +457,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         "NEXUS seed complete: %d total rows across %d tables", total, len(counts)
     )
 
-    # Include model info in response
+    # Include model info and tool registry summary in response
     from app.nexus.embeddings import get_embedding_info, get_reranker_info
     from app.nexus.llm import get_nexus_llm_info
 
@@ -313,13 +465,15 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         "status": "seeded",
         "total_rows": total,
         "details": counts,
+        "platform_tools_loaded": len(tool_catalog),
         "models": {
             "llm": get_nexus_llm_info(),
             "embedding": get_embedding_info(),
             "reranker": get_reranker_info(),
         },
         "next_steps": [
-            "POST /api/v1/nexus/forge/generate — generera testfall via LLM",
+            "GET /api/v1/nexus/tools — se alla verktyg som NEXUS känner till",
+            "POST /api/v1/nexus/forge/generate — generera testfall (valfritt: category=smhi)",
             "POST /api/v1/nexus/routing/route — kör routing-pipeline",
         ],
     }

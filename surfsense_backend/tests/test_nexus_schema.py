@@ -1,11 +1,38 @@
 """Tests for Schema Verifier — Sprint 2."""
 
-from app.nexus.routing.schema_verifier import SchemaVerifier
+from app.nexus.routing.schema_verifier import SchemaVerifier, ToolSchema
+
+# Test-local schemas so tests don't depend on platform_bridge imports
+_TEST_SCHEMAS: dict[str, ToolSchema] = {
+    "smhi_weather": ToolSchema(
+        tool_id="smhi_weather",
+        description="SMHI väderprognos",
+        required_params=["location"],
+        geographic_scope="sweden",
+        temporal_scope="forecast",
+    ),
+    "smhi_vaderprognoser_metfcst": ToolSchema(
+        tool_id="smhi_vaderprognoser_metfcst",
+        description="SMHI meteorologisk prognos",
+        required_params=["location"],
+        geographic_scope="sweden",
+        temporal_scope="forecast",
+    ),
+    "trafiklab_route": ToolSchema(
+        tool_id="trafiklab_route",
+        description="Trafiklab resväg",
+        required_params=["origin", "destination"],
+    ),
+    "call_gpt": ToolSchema(
+        tool_id="call_gpt",
+        description="External GPT model call",
+    ),
+}
 
 
 class TestSchemaVerification:
     def setup_method(self):
-        self.sv = SchemaVerifier()
+        self.sv = SchemaVerifier(schemas=_TEST_SCHEMAS)
 
     def test_unknown_tool_passes(self):
         result = self.sv.verify("unknown_tool_xyz")
@@ -78,7 +105,7 @@ class TestSchemaVerification:
 
 class TestBatchVerification:
     def test_verify_top_candidates(self):
-        sv = SchemaVerifier()
+        sv = SchemaVerifier(schemas=_TEST_SCHEMAS)
         candidates = [
             {"tool_id": "smhi_weather"},
             {"tool_id": "call_gpt"},

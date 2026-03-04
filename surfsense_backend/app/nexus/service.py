@@ -507,29 +507,39 @@ class NexusService:
         session: AsyncSession,
         *,
         tool_ids: list[str] | None = None,
+        category: str | None = None,
         difficulties: list[str] | None = None,
         questions_per_difficulty: int = 4,
     ) -> dict:
         """Run Synth Forge generation with the configured LLM.
 
-        Calls the LLM to generate test questions, persists them to DB,
-        and returns a summary.
+        Args:
+            tool_ids: Specific tool IDs to generate for. If None, uses all.
+            category: Filter by tool category (e.g. "smhi", "scb", "kolada",
+                      "riksdagen", "trafikverket", "bolagsverket", "marketplace",
+                      "skolverket", "builtin", "external_model").
+            difficulties: Override difficulty levels.
+            questions_per_difficulty: Questions per difficulty per tool.
         """
         from app.nexus.llm import nexus_llm_call
-        from app.nexus.routing.schema_verifier import TOOL_SCHEMAS
+        from app.nexus.platform_bridge import get_platform_tools
 
-        # Build tool metadata from schema registry
+        # Build tool metadata from REAL platform tool registry
+        platform_tools = get_platform_tools()
         tools: list[dict] = []
-        for tid, schema in TOOL_SCHEMAS.items():
+        for pt in platform_tools:
+            # Filter by category if specified
+            if category and pt.category != category:
+                continue
             tools.append(
                 {
-                    "tool_id": tid,
-                    "name": tid.replace("_", " ").title(),
-                    "description": getattr(schema, "description", ""),
-                    "namespace": f"tools/{tid}",
-                    "keywords": getattr(schema, "keywords", []),
-                    "excludes": [],
-                    "geographic_scope": getattr(schema, "geographic_scope", ""),
+                    "tool_id": pt.tool_id,
+                    "name": pt.name,
+                    "description": pt.description,
+                    "namespace": "/".join(pt.namespace),
+                    "keywords": pt.keywords,
+                    "excludes": pt.excludes,
+                    "geographic_scope": pt.geographic_scope,
                 }
             )
 

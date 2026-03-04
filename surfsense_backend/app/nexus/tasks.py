@@ -32,25 +32,26 @@ async def _forge_generate_async(
     from app.db import async_session_factory
     from app.nexus.llm import nexus_llm_call
     from app.nexus.models import NexusSyntheticCase
-    from app.nexus.routing.schema_verifier import TOOL_SCHEMAS
+    from app.nexus.platform_bridge import get_platform_tools
 
-    # Build tool metadata from schema registry
+    # Build tool metadata from REAL platform tool registry
+    platform_tools = get_platform_tools()
     tools: list[dict] = []
-    for tid, schema in TOOL_SCHEMAS.items():
+    for pt in platform_tools:
         tools.append(
             {
-                "tool_id": tid,
-                "name": tid.replace("_", " ").title(),
-                "description": getattr(schema, "description", ""),
-                "namespace": f"tools/{tid}",
-                "keywords": getattr(schema, "keywords", []),
-                "excludes": [],
-                "geographic_scope": getattr(schema, "geographic_scope", ""),
+                "tool_id": pt.tool_id,
+                "name": pt.name,
+                "description": pt.description,
+                "namespace": "/".join(pt.namespace),
+                "keywords": pt.keywords,
+                "excludes": pt.excludes,
+                "geographic_scope": pt.geographic_scope,
             }
         )
 
     if not tools:
-        return {"status": "error", "message": "No tools found in schema registry"}
+        return {"status": "error", "message": "No tools found in platform registry"}
 
     from app.nexus.layers.synth_forge import SynthForge
 

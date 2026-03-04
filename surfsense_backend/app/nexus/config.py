@@ -12,33 +12,45 @@ from enum import StrEnum
 
 
 class Zone(StrEnum):
-    """The four embedding zones that structure the vector space."""
+    """Zones aligned with the real platform intents (intent_definition_service.py).
+
+    The platform routes to 4 intents: kunskap, skapande, jämförelse, konversation.
+    NEXUS uses these same intents as its zone system so that metrics, calibration,
+    and routing evaluation are directly comparable to live routing decisions.
+    """
 
     KUNSKAP = "kunskap"
-    MYNDIGHETER = "myndigheter"
-    HANDLING = "handling"
+    SKAPANDE = "skapande"
     JAMFORELSE = "jämförelse"
+    KONVERSATION = "konversation"
+
+
+# Backward-compat aliases for old zone names used in tests/existing code
+Zone.MYNDIGHETER = Zone.KUNSKAP  # type: ignore[attr-defined]
+Zone.HANDLING = Zone.SKAPANDE  # type: ignore[attr-defined]
 
 
 ZONE_PREFIXES: dict[str, str] = {
     Zone.KUNSKAP: "[KUNSK] ",
-    Zone.MYNDIGHETER: "[MYNDG] ",
-    Zone.HANDLING: "[HANDL] ",
+    Zone.SKAPANDE: "[SKAP] ",
     Zone.JAMFORELSE: "[JAMFR] ",
+    Zone.KONVERSATION: "[KONV] ",
 }
 
-# Namespace prefix → zone mapping
+# Namespace prefix → zone mapping (aligned with platform routing)
 NAMESPACE_ZONE_MAP: dict[str, Zone] = {
     "tools/knowledge": Zone.KUNSKAP,
-    "tools/weather": Zone.MYNDIGHETER,
-    "tools/politik": Zone.MYNDIGHETER,
-    "tools/statistik": Zone.MYNDIGHETER,
-    "tools/utbildning": Zone.MYNDIGHETER,
-    "tools/transport": Zone.MYNDIGHETER,
-    "tools/action": Zone.HANDLING,
-    "tools/code": Zone.HANDLING,
+    "tools/weather": Zone.KUNSKAP,
+    "tools/politik": Zone.KUNSKAP,
+    "tools/statistics": Zone.KUNSKAP,
+    "tools/trafik": Zone.KUNSKAP,
+    "tools/bolag": Zone.KUNSKAP,
     "tools/marketplace": Zone.KUNSKAP,
+    "tools/action": Zone.SKAPANDE,
+    "tools/code": Zone.SKAPANDE,
+    "tools/kartor": Zone.SKAPANDE,
     "tools/compare": Zone.JAMFORELSE,
+    "tools/general": Zone.KUNSKAP,
 }
 
 
@@ -114,64 +126,116 @@ SWEDISH_NORMALIZATION_BANK: dict[str, str] = {
     "cph": "Köpenhamn",
 }
 
-# Domain hints — keywords that suggest specific zones
+# Domain hints — keywords that suggest specific zones.
+# Aligned with real intent_definition_service.py keywords.
 DOMAIN_HINTS: dict[str, list[str]] = {
-    Zone.MYNDIGHETER: [
+    Zone.KUNSKAP: [
+        # From real intent_definition_service "kunskap" keywords
+        "dokument",
+        "docs",
+        "kunskap",
+        "sök",
+        "search",
+        "notion",
+        "slack",
+        "github",
+        "sammanfatta",
+        # Weather / SMHI
         "väder",
-        "klimat",
-        "vind",
-        "regn",
-        "snö",
+        "vädret",
+        "vader",
+        "vadret",
+        "smhi",
         "temperatur",
+        "regn",
+        "prognos",
+        # Traffic
         "trafik",
-        "väg",
-        "järnväg",
+        "trafiken",
+        "trafikverket",
         "tåg",
-        "riksdag",
+        "väg",
+        # Statistics
+        "statistik",
+        "scb",
+        "befolkning",
+        "kolada",
+        "nyckeltal",
+        # Company
+        "bolag",
+        "bolagsverket",
+        # Parliament
+        "riksdagen",
         "proposition",
         "betänkande",
         "motion",
-        "befolkning",
-        "statistik",
-        "kommun",
-        "region",
+        # Marketplace
+        "blocket",
+        "tradera",
+        "marknadsplats",
+        "annons",
+        "begagnat",
+        # Web
+        "webb",
+        "länk",
+        "nyheter",
+        "nyheter",
+        # General knowledge
+        "vad är",
+        "hur mycket",
+        "hur många",
+        "hitta",
+        "information",
+        # Education
         "skola",
         "utbildning",
         "kursplan",
-        "kolada",
-        "nyckeltal",
+        "skolverket",
+        # Municipality
+        "kommun",
+        "region",
     ],
-    Zone.KUNSKAP: [
-        "sök",
-        "hitta",
-        "information",
-        "dokument",
-        "artikel",
-        "köpa",
-        "sälja",
-        "pris",
-        "marknad",
-        "annons",
-    ],
-    Zone.HANDLING: [
+    Zone.SKAPANDE: [
+        # From real intent_definition_service "skapande" keywords
         "skapa",
         "generera",
-        "kör",
-        "exekvera",
-        "kod",
+        "gör",
+        "rita",
         "podcast",
         "bild",
+        "karta",
+        "kartbild",
+        "kod",
+        "script",
+        "python",
         "sandbox",
+        "fil",
+        "skriv",
+        "exekvera",
+        "kör",
     ],
     Zone.JAMFORELSE: [
+        # From real intent_definition_service "jämförelse" keywords
+        "/compare",
+        "compare",
         "jämför",
-        "olika",
+        "jamfor",
+        "jämförelse",
         "modeller",
         "ai",
         "gpt",
         "claude",
         "grok",
         "gemini",
+    ],
+    Zone.KONVERSATION: [
+        # From real intent_definition_service "konversation" keywords
+        "hej",
+        "tjena",
+        "hallå",
+        "hur mår du",
+        "konversation",
+        "smalltalk",
     ],
 }
 

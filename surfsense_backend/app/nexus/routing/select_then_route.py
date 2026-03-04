@@ -72,7 +72,7 @@ class SelectThenRoute:
         valid_zones = [z for z in zone_candidates if z in [v.value for v in Zone]]
         if not valid_zones:
             # Fallback: search the two broadest zones
-            return [Zone.KUNSKAP, Zone.MYNDIGHETER]
+            return [Zone.KUNSKAP, Zone.SKAPANDE]
         return valid_zones[:max_zones]
 
     def retrieve_per_zone(

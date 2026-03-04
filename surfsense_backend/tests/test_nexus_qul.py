@@ -70,9 +70,9 @@ class TestMultiIntentDetection:
 
 
 class TestDomainHints:
-    def test_weather_hints_myndigheter(self, qul):
+    def test_weather_hints_kunskap(self, qul):
         result = qul.analyze("Väder i Stockholm")
-        assert "myndigheter" in result.domain_hints
+        assert "kunskap" in result.domain_hints
 
     def test_search_hints_kunskap(self, qul):
         result = qul.analyze("Sök information om klimatförändringar")
@@ -82,20 +82,20 @@ class TestDomainHints:
         result = qul.analyze("Jämför vad GPT och Claude tycker om AI")
         assert "jämförelse" in result.domain_hints
 
-    def test_action_hints_handling(self, qul):
+    def test_action_hints_skapande(self, qul):
         result = qul.analyze("Generera en podcast om teknik")
-        assert "handling" in result.domain_hints
+        assert "skapande" in result.domain_hints
 
 
 class TestZoneResolution:
-    def test_location_boosts_myndigheter(self, qul):
+    def test_location_boosts_kunskap(self, qul):
         result = qul.analyze("Statistik om Umeå")
-        assert "myndigheter" in result.zone_candidates
+        assert "kunskap" in result.zone_candidates
 
     def test_fallback_to_broad_zones(self, qul):
         result = qul.analyze("hej")
-        # Should return broad search zones
-        assert len(result.zone_candidates) >= 2
+        # Trivial greeting routes to konversation zone
+        assert len(result.zone_candidates) >= 1
 
 
 class TestComplexityClassification:

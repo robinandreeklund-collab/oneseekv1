@@ -88,6 +88,60 @@ async def get_nexus_config(
 
 
 # ------------------------------------------------------------------
+# Platform Tools Registry
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/tools")
+async def get_platform_tools_list(
+    category: str | None = Query(None),
+    user: User = Depends(current_active_user),
+):
+    """List all real platform tools visible to NEXUS.
+
+    Returns the full tool catalog auto-discovered from the live platform.
+    Use `?category=smhi` to filter by domain.
+    """
+    from app.nexus.platform_bridge import get_category_names, get_platform_tools
+
+    tools = get_platform_tools()
+    if category:
+        tools = [t for t in tools if t.category == category]
+    return {
+        "total": len(tools),
+        "categories": get_category_names(),
+        "tools": [
+            {
+                "tool_id": t.tool_id,
+                "name": t.name,
+                "description": t.description,
+                "category": t.category,
+                "zone": t.zone,
+                "namespace": "/".join(t.namespace),
+                "keywords": t.keywords[:5],
+                "geographic_scope": t.geographic_scope,
+            }
+            for t in tools
+        ],
+    }
+
+
+@nexus_router.get("/tools/categories")
+async def get_tool_categories(
+    user: User = Depends(current_active_user),
+):
+    """List available tool categories with counts."""
+    from app.nexus.platform_bridge import get_platform_tools_by_category
+
+    by_cat = get_platform_tools_by_category()
+    return {
+        "categories": [
+            {"name": cat, "count": len(tools)} for cat, tools in sorted(by_cat.items())
+        ]
+    }
+
+
+# ------------------------------------------------------------------
 # Routing — Precision Stack
 # ------------------------------------------------------------------
 
@@ -189,10 +243,16 @@ async def forge_generate(
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Generate synthetic test cases using the configured LLM."""
+    """Generate synthetic test cases using the configured LLM.
+
+    Pass `category` to generate for a specific tool domain:
+    smhi, scb, kolada, riksdagen, trafikverket, bolagsverket,
+    marketplace, skolverket, builtin, external_model, geoapify.
+    """
     return await service.forge_generate(
         session,
         tool_ids=request.tool_ids,
+        category=getattr(request, "category", None),
         difficulties=request.difficulties,
         questions_per_difficulty=request.questions_per_difficulty or 4,
     )

@@ -13,7 +13,7 @@ class TestZonePrefixEmbeddings:
 
     def test_embed_tool_with_zone_known_namespace(self):
         result = self.zm.embed_tool_with_zone("Väderprognos", "tools/weather/smhi")
-        assert result.startswith("[MYNDG] ")
+        assert result.startswith("[KUNSK] ")
         assert "Väderprognos" in result
 
     def test_embed_tool_with_zone_unknown_namespace(self):
@@ -21,8 +21,8 @@ class TestZonePrefixEmbeddings:
         assert result == "Something"
 
     def test_embed_query_with_hint(self):
-        result = self.zm.embed_query_with_hint("väder stockholm", [Zone.MYNDIGHETER])
-        assert result.startswith("[MYNDG] ")
+        result = self.zm.embed_query_with_hint("väder stockholm", [Zone.KUNSKAP])
+        assert result.startswith("[KUNSK] ")
 
     def test_embed_query_no_hint(self):
         result = self.zm.embed_query_with_hint("väder stockholm", [])
