@@ -98,7 +98,13 @@ export function LoopTab() {
 
 	const handleStart = () => {
 		setStarting(true);
-		let request: { category?: string; tool_ids?: string[]; namespace?: string } = {};
+		let request: {
+			category?: string;
+			tool_ids?: string[];
+			namespace?: string;
+			batch_size?: number;
+			max_iterations?: number;
+		} = {};
 		if (filterMode === "category" && selectedCategory) {
 			request = { category: selectedCategory };
 		} else if (filterMode === "namespace" && selectedNamespace) {
@@ -106,6 +112,8 @@ export function LoopTab() {
 		} else if (filterMode === "tool" && selectedToolId) {
 			request = { tool_ids: [selectedToolId] };
 		}
+		// Always send batch_size to ensure all cases are processed
+		request.batch_size = 200;
 		nexusApiService
 			.startLoop(request)
 			.then(() => {
@@ -344,8 +352,17 @@ export function LoopTab() {
 											{run.total_tests !== null && (
 												<span className="text-muted-foreground">
 													{run.failures || 0}/{run.total_tests} fel
+										{run.total_cases_available != null &&
+											run.total_cases_available > 0 &&
+											` (av ${run.total_cases_available})`}
 												</span>
 											)}
+											{run.iterations_completed != null &&
+												run.iterations_completed > 1 && (
+													<span className="text-blue-600 text-xs">
+														{run.iterations_completed} iterationer
+													</span>
+												)}
 											{run.approved_proposals !== null &&
 												run.approved_proposals > 0 && (
 													<span className="text-green-600 font-medium">
@@ -376,6 +393,11 @@ export function LoopTab() {
 														<div className="flex items-center gap-4">
 															<h5 className="text-sm font-semibold">
 																Loop #{detail.loop_number}
+																{detail.total_cases_available != null && (
+																	<span className="text-xs font-normal text-muted-foreground ml-2">
+																		({detail.total_tests}/{detail.total_cases_available} testfall utvärderade)
+																	</span>
+																)}
 															</h5>
 															{detail.embedding_delta != null && (
 																<span
@@ -573,6 +595,43 @@ export function LoopTab() {
 																	</div>
 																</CardContent>
 															</Card>
+
+															{/* Iteration details */}
+															{detail.iterations &&
+																detail.iterations.length > 0 && (
+																	<Card>
+																		<CardHeader className="py-3 px-4">
+																			<CardTitle className="text-sm">
+																				Iterationer ({detail.iterations.length})
+																			</CardTitle>
+																		</CardHeader>
+																		<CardContent className="px-4 pb-4">
+																			<div className="space-y-2">
+																				{detail.iterations.map((iter) => (
+																					<div
+																						key={iter.iteration}
+																						className="flex items-center justify-between text-sm rounded-md border bg-background p-2"
+																					>
+																						<span className="font-medium">
+																							Iteration {iter.iteration}
+																						</span>
+																						<div className="flex items-center gap-3 text-xs text-muted-foreground">
+																							<span>
+																								{iter.failures}/{iter.total_tests} fel
+																							</span>
+																							<span>
+																								P@1: {(iter.precision_at_1 * 100).toFixed(1)}%
+																							</span>
+																							<span>
+																								MRR: {(iter.mrr * 100).toFixed(1)}%
+																							</span>
+																						</div>
+																					</div>
+																				))}
+																			</div>
+																		</CardContent>
+																	</Card>
+																)}
 														</div>
 													</div>
 												</>

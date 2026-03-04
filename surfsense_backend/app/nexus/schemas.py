@@ -226,6 +226,8 @@ class AutoLoopRunResponse(BaseModel):
     failures: int | None = None
     approved_proposals: int | None = None
     embedding_delta: float | None = None
+    total_cases_available: int | None = None
+    iterations_completed: int | None = None
 
 
 class AutoLoopRunDetail(AutoLoopRunResponse):

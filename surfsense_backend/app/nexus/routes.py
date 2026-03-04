@@ -432,6 +432,8 @@ class LoopStartRequest(BaseModel):
     category: str | None = None
     tool_ids: list[str] | None = None
     namespace: str | None = None
+    batch_size: int = 200
+    max_iterations: int = 1
 
 
 @nexus_router.post("/loop/start")
@@ -443,17 +445,26 @@ async def loop_start(
 ):
     """Start an auto-improvement loop run.
 
-    Runs synchronously: loads test cases, evaluates routing, clusters
-    failures, creates proposals, and returns results.
+    Evaluates ALL matching test cases (no limit), processes in batches,
+    and supports multiple iterations for re-evaluation.
 
     Pass `category` to run on a domain (e.g. "smhi"), `tool_ids` for
     specific tools, or `namespace` for a namespace prefix.
+    `batch_size` controls how many cases per batch (default 200).
+    `max_iterations` allows re-evaluation passes (default 1).
     """
     cat = request.category if request else None
     tids = request.tool_ids if request else None
     ns = request.namespace if request else None
+    bs = request.batch_size if request else 200
+    mi = request.max_iterations if request else 1
     return await service.run_auto_loop(
-        session, category=cat, tool_ids=tids, namespace=ns
+        session,
+        category=cat,
+        tool_ids=tids,
+        namespace=ns,
+        batch_size=max(10, min(bs, 2000)),
+        max_iterations=max(1, min(mi, 10)),
     )
 
 
@@ -506,6 +517,8 @@ async def get_loop_run_detail(
         "band_distribution": meta.get("band_distribution", []),
         "platform_comparisons": meta.get("platform_comparisons", 0),
         "platform_agreements": meta.get("platform_agreements", 0),
+        "iterations": meta.get("iterations", []),
+        "total_cases_available": meta.get("total_cases_available"),
     }
 
 

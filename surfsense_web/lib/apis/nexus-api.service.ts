@@ -217,6 +217,8 @@ export interface AutoLoopRunResponse {
 	failures: number | null;
 	approved_proposals: number | null;
 	embedding_delta: number | null;
+	total_cases_available?: number | null;
+	iterations_completed?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +367,18 @@ export interface MetricsTrend {
 // Loop Run Detail Types
 // ---------------------------------------------------------------------------
 
+export interface LoopIterationDetail {
+	iteration: number;
+	total_tests: number;
+	failures: number;
+	precision_at_1: number;
+	precision_at_5: number;
+	mrr: number;
+	band_distribution: number[];
+	platform_comparisons: number;
+	platform_agreements: number;
+}
+
 export interface LoopRunDetail {
 	id: string;
 	loop_number: number;
@@ -379,6 +393,8 @@ export interface LoopRunDetail {
 	band_distribution: number[];
 	platform_comparisons: number;
 	platform_agreements: number;
+	iterations?: LoopIterationDetail[];
+	total_cases_available?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +495,13 @@ class NexusApiService {
 
 	// Auto Loop (Sprint 3)
 	startLoop = (
-		request?: { category?: string; tool_ids?: string[]; namespace?: string },
+		request?: {
+			category?: string;
+			tool_ids?: string[];
+			namespace?: string;
+			batch_size?: number;
+			max_iterations?: number;
+		},
 	) =>
 		fetchNexus<Record<string, string>>("/loop/start", {
 			method: "POST",

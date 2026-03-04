@@ -174,6 +174,17 @@ class NexusService:
 
         valid_rows = [r for r in rows if r.zone in valid_zones]
 
+        # Compute zone-level metrics on-demand from routing events
+        # so that band0_rate, ece_score, and silhouette are populated.
+        try:
+            await self._update_zone_metrics(session)
+        except Exception as e:
+            logger.warning("Failed to update zone metrics in get_zones: %s", e)
+
+        # Re-query to get updated values
+        result = await session.execute(select(NexusZoneConfig))
+        valid_rows = [r for r in result.scalars().all() if r.zone in valid_zones]
+
         return [
             ZoneConfigResponse(
                 zone=row.zone,
@@ -801,20 +812,26 @@ class NexusService:
             .limit(limit)
         )
         rows = result.scalars().all()
-        return [
-            AutoLoopRunResponse(
-                id=row.id,
-                loop_number=row.loop_number,
-                status=row.status,
-                started_at=row.started_at,
-                completed_at=row.completed_at,
-                total_tests=row.total_tests,
-                failures=row.failures,
-                approved_proposals=row.approved_proposals,
-                embedding_delta=row.embedding_delta,
+        results = []
+        for row in rows:
+            meta = row.metadata_proposals or {}
+            iterations = meta.get("iterations", [])
+            results.append(
+                AutoLoopRunResponse(
+                    id=row.id,
+                    loop_number=row.loop_number,
+                    status=row.status,
+                    started_at=row.started_at,
+                    completed_at=row.completed_at,
+                    total_tests=row.total_tests,
+                    failures=row.failures,
+                    approved_proposals=row.approved_proposals,
+                    embedding_delta=row.embedding_delta,
+                    total_cases_available=meta.get("total_cases_available"),
+                    iterations_completed=len(iterations) if iterations else None,
+                )
             )
-            for row in rows
-        ]
+        return results
 
     # ------------------------------------------------------------------
     # Eval Ledger (Sprint 3)
@@ -1864,19 +1881,26 @@ class NexusService:
         category: str | None = None,
         tool_ids: list[str] | None = None,
         namespace: str | None = None,
+        batch_size: int = 200,
+        max_iterations: int = 1,
     ) -> dict:
         """Run a complete auto-loop iteration inline.
 
-        Steps: Load test cases → Route each (NEXUS + platform) → Compare → Cluster → Propose.
+        Steps: Load ALL test cases → Route each (NEXUS + platform) → Compare → Cluster → Propose.
 
         Evaluates both NEXUS routing AND real platform routing
         (via smart_retrieve_tools_with_breakdown) to find discrepancies.
 
+        Processes all matching test cases in batches and supports multiple
+        iterations for re-evaluation after proposals are generated.
+
         Args:
             category: Optional category to filter test cases by (e.g. "smhi", "scb").
-                      Only runs on test cases whose tool_id belongs to tools in that category.
             tool_ids: Optional list of specific tool IDs to run on.
             namespace: Optional namespace prefix to filter by (e.g. "tools/weather").
+            batch_size: Number of test cases to process per batch (default 200).
+            max_iterations: Number of evaluation passes (default 1).
+                           >1 allows re-evaluation after proposals are applied.
         """
         import uuid
 
@@ -1900,29 +1924,29 @@ class NexusService:
         session.add(db_run)
         await session.flush()
 
-        # Load test cases — optionally filtered by category
-        result = await session.execute(select(NexusSyntheticCase).limit(500))
-        all_cases = result.scalars().all()
+        # Build filtered query at DB level (no .limit — load ALL matching cases)
+        stmt = select(NexusSyntheticCase)
 
-        # Filter test cases by tool_ids, namespace, or category
         if tool_ids:
-            tid_set = set(tool_ids)
-            cases = [c for c in all_cases if c.tool_id in tid_set]
+            stmt = stmt.where(NexusSyntheticCase.tool_id.in_(tool_ids))
         elif namespace:
-            cases = [
-                c
-                for c in all_cases
-                if c.namespace and c.namespace.startswith(namespace)
-            ]
+            stmt = stmt.where(NexusSyntheticCase.namespace.startswith(namespace))
         elif category:
             from app.nexus.platform_bridge import get_platform_tools
 
-            cat_tool_ids = {
-                t.tool_id for t in get_platform_tools() if t.category == category
-            }
-            cases = [c for c in all_cases if c.tool_id in cat_tool_ids]
-        else:
-            cases = list(all_cases)
+            cat_tool_ids = list(
+                {t.tool_id for t in get_platform_tools() if t.category == category}
+            )
+            if cat_tool_ids:
+                stmt = stmt.where(NexusSyntheticCase.tool_id.in_(cat_tool_ids))
+            else:
+                stmt = stmt.where(False)  # No tools in category
+
+        # Order by created_at to ensure consistent batching
+        stmt = stmt.order_by(NexusSyntheticCase.created_at)
+
+        result = await session.execute(stmt)
+        cases = result.scalars().all()
 
         if not cases:
             db_run.status = "failed"
@@ -1934,106 +1958,189 @@ class NexusService:
                 "message": "Inga testfall hittade. Kör forge/generate först.",
             }
 
-        # Evaluate using both NEXUS routing and real platform retrieval
-        total_tests = 0
-        failures = 0
-        failed_queries: list[dict] = []
-        platform_comparisons = 0
-        platform_agreements = 0
-        # Track per-stage metrics for the ledger
-        band_counts = [0, 0, 0, 0, 0]
-        correct_at_1 = 0
-        correct_at_5 = 0
-        reciprocal_ranks: list[float] = []
-
-        for case in cases:
-            total_tests += 1
-            try:
-                # NEXUS routing
-                decision = await self.route_query(case.question, session)
-                nexus_tool = decision.selected_tool
-                band_counts[min(decision.band, 4)] += 1
-
-                # Track ranking metrics
-                candidate_ids = [c.tool_id for c in decision.candidates]
-                if case.expected_tool:
-                    if nexus_tool == case.expected_tool:
-                        correct_at_1 += 1
-                    if case.expected_tool in candidate_ids[:5]:
-                        correct_at_5 += 1
-                    if case.expected_tool in candidate_ids:
-                        rank = candidate_ids.index(case.expected_tool) + 1
-                        reciprocal_ranks.append(1.0 / rank)
-                    else:
-                        reciprocal_ranks.append(0.0)
-
-                # Also run through real platform retrieval for comparison
-                platform_result = await self.shadow_observer.run_platform_retrieval(
-                    case.question, session=session
-                )
-                platform_tool = platform_result.get("top1")
-
-                if platform_tool:
-                    platform_comparisons += 1
-                    if nexus_tool == platform_tool:
-                        platform_agreements += 1
-
-                # Check against expected tool
-                if case.expected_tool and nexus_tool != case.expected_tool:
-                    failures += 1
-                    failed_queries.append(
-                        {
-                            "query": case.question,
-                            "expected_tool": case.expected_tool,
-                            "got_tool": nexus_tool or "(none)",
-                            "platform_tool": platform_tool or "(none)",
-                        }
-                    )
-            except Exception as e:
-                failures += 1
-                logger.warning("Loop eval error: %s", e)
-
-        # Cluster failures and create proposals
-        clusters = self.auto_loop.cluster_failures(failed_queries)
-
-        # LLM root cause analysis per cluster
-        root_causes: list[str] = []
-        try:
-            from app.nexus.llm import nexus_llm_call
-
-            for cluster in clusters:
-                if not cluster.sample_queries:
-                    root_causes.append("")
-                    continue
-                rc_prompt = (
-                    f"Analysera varför dessa frågor routades fel.\n"
-                    f"Förväntade verktyg: {', '.join(cluster.tool_ids)}\n"
-                    f"Exempelfrågor:\n"
-                    + "\n".join(f"- {q}" for q in cluster.sample_queries[:3])
-                    + "\n\nSvara med EN mening som förklarar rotorsaken."
-                )
-                try:
-                    root_cause = await nexus_llm_call(rc_prompt)
-                    root_causes.append(root_cause.strip())
-                except Exception as e:
-                    logger.warning(
-                        "LLM root cause failed for cluster %d: %s",
-                        cluster.cluster_id,
-                        e,
-                    )
-                    root_causes.append("")
-        except ImportError:
-            logger.warning("LLM not available for root cause analysis")
-
-        proposals = self.auto_loop.create_proposals(
-            clusters, root_causes=root_causes or None
+        total_case_count = len(cases)
+        logger.info(
+            "Auto-loop #%d: evaluating %d test cases in batches of %d (%d iterations)",
+            loop_number,
+            total_case_count,
+            batch_size,
+            max_iterations,
         )
+
+        # Cumulative metrics across all iterations
+        all_iteration_results: list[dict] = []
+        cumulative_failed_queries: list[dict] = []
+        cumulative_proposals = []
+        cumulative_root_causes: list[str] = []
+
+        for iteration in range(1, max_iterations + 1):
+            # Evaluate using both NEXUS routing and real platform retrieval
+            total_tests = 0
+            failures = 0
+            failed_queries: list[dict] = []
+            platform_comparisons = 0
+            platform_agreements = 0
+            band_counts = [0, 0, 0, 0, 0]
+            correct_at_1 = 0
+            correct_at_5 = 0
+            reciprocal_ranks: list[float] = []
+
+            # Process in batches
+            for batch_start in range(0, len(cases), batch_size):
+                batch = cases[batch_start : batch_start + batch_size]
+                logger.info(
+                    "Auto-loop #%d iter %d: batch %d-%d / %d",
+                    loop_number,
+                    iteration,
+                    batch_start + 1,
+                    min(batch_start + len(batch), len(cases)),
+                    len(cases),
+                )
+
+                for case in batch:
+                    total_tests += 1
+                    try:
+                        # NEXUS routing
+                        decision = await self.route_query(case.question, session)
+                        nexus_tool = decision.selected_tool
+                        band_counts[min(decision.band, 4)] += 1
+
+                        # Track ranking metrics
+                        candidate_ids = [c.tool_id for c in decision.candidates]
+                        if case.expected_tool:
+                            if nexus_tool == case.expected_tool:
+                                correct_at_1 += 1
+                            if case.expected_tool in candidate_ids[:5]:
+                                correct_at_5 += 1
+                            if case.expected_tool in candidate_ids:
+                                rank = candidate_ids.index(case.expected_tool) + 1
+                                reciprocal_ranks.append(1.0 / rank)
+                            else:
+                                reciprocal_ranks.append(0.0)
+
+                        # Also run through real platform retrieval for comparison
+                        platform_result = (
+                            await self.shadow_observer.run_platform_retrieval(
+                                case.question, session=session
+                            )
+                        )
+                        platform_tool = platform_result.get("top1")
+
+                        if platform_tool:
+                            platform_comparisons += 1
+                            if nexus_tool == platform_tool:
+                                platform_agreements += 1
+
+                        # Check against expected tool
+                        if case.expected_tool and nexus_tool != case.expected_tool:
+                            failures += 1
+                            failed_queries.append(
+                                {
+                                    "query": case.question,
+                                    "expected_tool": case.expected_tool,
+                                    "got_tool": nexus_tool or "(none)",
+                                    "platform_tool": platform_tool or "(none)",
+                                    "case_id": str(case.id),
+                                }
+                            )
+                    except Exception as e:
+                        failures += 1
+                        logger.warning("Loop eval error: %s", e)
+
+                # Commit after each batch so routing events are persisted
+                await session.commit()
+
+            # Per-iteration metrics
+            p_at_1 = correct_at_1 / total_tests if total_tests > 0 else 0.0
+            p_at_5 = correct_at_5 / total_tests if total_tests > 0 else 0.0
+            mrr = (
+                sum(reciprocal_ranks) / len(reciprocal_ranks)
+                if reciprocal_ranks
+                else 0.0
+            )
+
+            iter_result = {
+                "iteration": iteration,
+                "total_tests": total_tests,
+                "failures": failures,
+                "precision_at_1": round(p_at_1, 3),
+                "precision_at_5": round(p_at_5, 3),
+                "mrr": round(mrr, 3),
+                "band_distribution": band_counts,
+                "platform_comparisons": platform_comparisons,
+                "platform_agreements": platform_agreements,
+            }
+            all_iteration_results.append(iter_result)
+
+            logger.info(
+                "Auto-loop #%d iter %d: %d/%d failures (P@1=%.3f)",
+                loop_number,
+                iteration,
+                failures,
+                total_tests,
+                p_at_1,
+            )
+
+            # Cluster failures and create proposals
+            clusters = self.auto_loop.cluster_failures(failed_queries)
+
+            # LLM root cause analysis per cluster
+            root_causes: list[str] = []
+            try:
+                from app.nexus.llm import nexus_llm_call
+
+                for cluster in clusters:
+                    if not cluster.sample_queries:
+                        root_causes.append("")
+                        continue
+                    rc_prompt = (
+                        f"Analysera varför dessa frågor routades fel.\n"
+                        f"Förväntade verktyg: {', '.join(cluster.tool_ids)}\n"
+                        f"Exempelfrågor:\n"
+                        + "\n".join(f"- {q}" for q in cluster.sample_queries[:3])
+                        + "\n\nSvara med EN mening som förklarar rotorsaken."
+                    )
+                    try:
+                        root_cause = await nexus_llm_call(rc_prompt)
+                        root_causes.append(root_cause.strip())
+                    except Exception as e:
+                        logger.warning(
+                            "LLM root cause failed for cluster %d: %s",
+                            cluster.cluster_id,
+                            e,
+                        )
+                        root_causes.append("")
+            except ImportError:
+                logger.warning("LLM not available for root cause analysis")
+
+            proposals = self.auto_loop.create_proposals(
+                clusters, root_causes=root_causes or None
+            )
+
+            cumulative_failed_queries.extend(failed_queries)
+            cumulative_proposals.extend(proposals)
+            cumulative_root_causes.extend(root_causes)
+
+            # If no failures or last iteration, stop iterating
+            if failures == 0 or iteration == max_iterations:
+                break
+
+        # Use last iteration's values for final metrics
+        last_iter = all_iteration_results[-1]
+        final_p_at_1 = last_iter["precision_at_1"]
+        final_p_at_5 = last_iter["precision_at_5"]
+        final_mrr = last_iter["mrr"]
+        final_band_counts = last_iter["band_distribution"]
+        final_total_tests = last_iter["total_tests"]
+        final_failures = last_iter["failures"]
+        final_platform_comparisons = last_iter["platform_comparisons"]
+        final_platform_agreements = last_iter["platform_agreements"]
 
         # Compute real embedding delta for each proposal
         try:
             from app.nexus.embeddings import nexus_embed_score
 
-            for proposal in proposals:
+            for proposal in cumulative_proposals:
                 if proposal.current_value and proposal.proposed_value:
                     current_score = nexus_embed_score(
                         proposal.tool_id, proposal.current_value
@@ -2047,14 +2154,14 @@ class NexusService:
             logger.warning("Embedding delta computation failed: %s", e)
 
         # Mine hard negatives from confusion pairs in failures
-        if failed_queries:
+        if cumulative_failed_queries:
             confusion_data = [
                 {
                     "tool_a": fq.get("expected_tool", ""),
                     "tool_b": fq.get("got_tool", ""),
                     "similarity": 0.85,
                 }
-                for fq in failed_queries
+                for fq in cumulative_failed_queries
                 if fq.get("expected_tool") and fq.get("got_tool")
             ]
             hn_result = self.hard_negative_miner.mine_from_confusion(confusion_data)
@@ -2086,39 +2193,33 @@ class NexusService:
                 except Exception:
                     pass  # Unique constraint violation — already exists
 
-        # Compute pipeline metrics
-        p_at_1 = correct_at_1 / total_tests if total_tests > 0 else 0.0
-        p_at_5 = correct_at_5 / total_tests if total_tests > 0 else 0.0
-        mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
-
         # Compute overall embedding delta
         total_embedding_delta = (
-            sum(p.embedding_delta for p in proposals) / len(proposals)
-            if proposals
+            sum(p.embedding_delta for p in cumulative_proposals)
+            / len(cumulative_proposals)
+            if cumulative_proposals
             else 0.0
         )
 
         # Persist pipeline metrics to the ledger — all 5 stages per vision
         # (1=intent, 2=route, 3=bigtool, 4=rerank, 5=e2e)
-        if total_tests >= 3:
-            # Compute reranker delta: platform agreement rate vs NEXUS
+        if final_total_tests >= 3:
             reranker_delta = (
-                (platform_agreements / platform_comparisons - p_at_1)
-                if platform_comparisons > 0
+                (final_platform_agreements / final_platform_comparisons - final_p_at_1)
+                if final_platform_comparisons > 0
                 else None
             )
-            # Hard negative precision: proportion of failures NOT in hard neg bank
             hn_precision = (
-                platform_agreements / platform_comparisons
-                if platform_comparisons > 0
+                final_platform_agreements / final_platform_comparisons
+                if final_platform_comparisons > 0
                 else None
             )
             metric_stages = [
-                (1, "intent", p_at_1, p_at_5, mrr, mrr, None, None),
-                (2, "route", p_at_1, p_at_5, mrr, mrr, None, None),
-                (3, "bigtool", p_at_5, p_at_5, mrr, mrr, hn_precision, None),
-                (4, "rerank", p_at_1, p_at_5, mrr, mrr, hn_precision, reranker_delta),
-                (5, "e2e", p_at_1, p_at_5, mrr, mrr, None, None),
+                (1, "intent", final_p_at_1, final_p_at_5, final_mrr, final_mrr, None, None),
+                (2, "route", final_p_at_1, final_p_at_5, final_mrr, final_mrr, None, None),
+                (3, "bigtool", final_p_at_5, final_p_at_5, final_mrr, final_mrr, hn_precision, None),
+                (4, "rerank", final_p_at_1, final_p_at_5, final_mrr, final_mrr, hn_precision, reranker_delta),
+                (5, "e2e", final_p_at_1, final_p_at_5, final_mrr, final_mrr, None, None),
             ]
             for stage, name, p1, p5, mrr_val, ndcg, hn_p, delta in metric_stages:
                 metric = NexusPipelineMetric(
@@ -2136,20 +2237,22 @@ class NexusService:
                 session.add(metric)
 
         # Update run
-        db_run.total_tests = total_tests
-        db_run.failures = failures
+        db_run.total_tests = final_total_tests
+        db_run.failures = final_failures
         db_run.metadata_proposals = {
             "proposals": [
                 {"tool_id": p.tool_id, "field": p.field_name, "reason": p.reason}
-                for p in proposals
+                for p in cumulative_proposals
             ],
-            "platform_comparisons": platform_comparisons,
-            "platform_agreements": platform_agreements,
-            "band_distribution": band_counts,
+            "platform_comparisons": final_platform_comparisons,
+            "platform_agreements": final_platform_agreements,
+            "band_distribution": final_band_counts,
+            "iterations": all_iteration_results,
+            "total_cases_available": total_case_count,
         }
         db_run.approved_proposals = 0
         db_run.embedding_delta = total_embedding_delta
-        db_run.status = "review" if proposals else "approved"
+        db_run.status = "review" if cumulative_proposals else "approved"
         db_run.completed_at = datetime.now(tz=UTC)
         await session.commit()
 
@@ -2157,25 +2260,28 @@ class NexusService:
             "status": "completed",
             "run_id": str(run_id),
             "loop_number": loop_number,
-            "total_tests": total_tests,
-            "failures": failures,
-            "proposals": len(proposals),
+            "total_tests": final_total_tests,
+            "total_cases_available": total_case_count,
+            "iterations_completed": len(all_iteration_results),
+            "failures": final_failures,
+            "proposals": len(cumulative_proposals),
             "embedding_delta": round(total_embedding_delta, 4),
-            "root_causes": root_causes,
+            "root_causes": cumulative_root_causes,
             "hard_negatives_mined": self.hard_negative_miner.get_stats().get(
                 "total_pairs", 0
             ),
-            "platform_comparisons": platform_comparisons,
-            "platform_agreements": platform_agreements,
+            "platform_comparisons": final_platform_comparisons,
+            "platform_agreements": final_platform_agreements,
             "platform_agreement_rate": (
-                round(platform_agreements / platform_comparisons, 3)
-                if platform_comparisons > 0
+                round(final_platform_agreements / final_platform_comparisons, 3)
+                if final_platform_comparisons > 0
                 else None
             ),
-            "precision_at_1": round(p_at_1, 3),
-            "precision_at_5": round(p_at_5, 3),
-            "mrr": round(mrr, 3),
-            "band_distribution": band_counts,
+            "precision_at_1": final_p_at_1,
+            "precision_at_5": final_p_at_5,
+            "mrr": final_mrr,
+            "band_distribution": final_band_counts,
+            "iteration_details": all_iteration_results,
         }
 
     # ------------------------------------------------------------------
