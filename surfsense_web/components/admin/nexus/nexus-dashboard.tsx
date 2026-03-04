@@ -13,6 +13,7 @@ import {
 	Rocket,
 	Sparkles,
 	Trash2,
+	Workflow,
 } from "lucide-react";
 import {
 	nexusApiService,
@@ -35,6 +36,7 @@ import { ForgeTab } from "@/components/admin/nexus/tabs/forge-tab";
 import { LoopTab } from "@/components/admin/nexus/tabs/loop-tab";
 import { LedgerTab } from "@/components/admin/nexus/tabs/ledger-tab";
 import { DeployTab } from "@/components/admin/nexus/tabs/deploy-tab";
+import { PipelineExplorerTab } from "@/components/admin/nexus/tabs/pipeline-explorer-tab";
 
 function TabFallback() {
 	return (
@@ -55,7 +57,7 @@ function PlaceholderTab({ name }: { name: string }) {
 }
 
 export function NexusDashboard() {
-	const [activeTab, setActiveTab] = useState("overview");
+	const [activeTab, setActiveTab] = useState("explorer");
 	const [health, setHealth] = useState<NexusHealthResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -156,6 +158,10 @@ export function NexusDashboard() {
 			{/* Tabs */}
 			<Tabs value={activeTab} onValueChange={setActiveTab}>
 				<TabsList>
+					<TabsTrigger value="explorer" className="gap-1.5">
+						<Workflow className="h-3.5 w-3.5" />
+						Pipeline Explorer
+					</TabsTrigger>
 					<TabsTrigger value="overview" className="gap-1.5">
 						<Activity className="h-3.5 w-3.5" />
 						Översikt
@@ -181,6 +187,10 @@ export function NexusDashboard() {
 						Deploy
 					</TabsTrigger>
 				</TabsList>
+
+				<TabsContent value="explorer" className="mt-6">
+					<PipelineExplorerTab />
+				</TabsContent>
 
 				<TabsContent value="overview" className="mt-6">
 					<OverviewTab />
