@@ -61,6 +61,7 @@ class AgentResolver:
     Scoring strategy (per agent):
       +1.0  base score if zone matches
       +0.3  per keyword match in query
+      +0.5  bonus if agent name matches a category hint from QUL
       +0.2  bonus for organization entity match (e.g. "SMHI" → väder)
     """
 
@@ -78,7 +79,7 @@ class AgentResolver:
         Args:
             query: Normalized user query.
             zone_candidates: Zones identified by QUL.
-            domain_hints: Domain keywords from QUL.
+            domain_hints: Domain keywords from QUL (zones + category hints).
             organizations: Organization entities from QUL.
             max_agents: Maximum number of agents to select.
 
@@ -87,6 +88,12 @@ class AgentResolver:
         """
         lower_query = query.lower()
         scored: list[AgentCandidate] = []
+
+        # Separate zone names from category hints in domain_hints
+        zone_values = {z.value for z in Zone}
+        category_hints = set()
+        if domain_hints:
+            category_hints = {h for h in domain_hints if h not in zone_values}
 
         # Collect agents from candidate zones
         candidate_agents: list[NexusAgent] = []
@@ -109,6 +116,11 @@ class AgentResolver:
         for agent in unique_agents:
             score = 1.0  # Base score for zone match
             matched_kw: list[str] = []
+
+            # Category hint bonus — strongly boosts the right agent
+            if agent.name in category_hints:
+                score += 0.5
+                matched_kw.append(f"category:{agent.name}")
 
             # Keyword matching
             for kw in agent.keywords:

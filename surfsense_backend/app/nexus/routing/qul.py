@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 
 from app.nexus.config import (
+    CATEGORY_HINTS,
     DOMAIN_HINTS,
     MULTI_INTENT_MARGIN_THRESHOLD,
     SWEDISH_NORMALIZATION_BANK,
@@ -275,15 +276,30 @@ class QueryUnderstandingLayer:
         return [query]
 
     def _score_domain_hints(self, query: str, entities: QueryEntities) -> list[str]:
-        """Score which domain zones are relevant based on keywords."""
+        """Score which domain zones AND categories are relevant.
+
+        Returns a list where the first entries are zone names (e.g. "kunskap")
+        followed by category hints (e.g. "väder", "statistik").  The category
+        hints let the AgentResolver boost the specific agent instead of
+        treating all agents in the zone equally.
+        """
         lower = query.lower()
         hints: list[str] = []
 
+        # Zone-level hints
         for zone, keywords in DOMAIN_HINTS.items():
             for kw in keywords:
                 if kw in lower:
                     if zone not in hints:
                         hints.append(zone)
+                    break
+
+        # Category-level hints (agent-granular)
+        for category, keywords in CATEGORY_HINTS.items():
+            for kw in keywords:
+                if kw in lower:
+                    if category not in hints:
+                        hints.append(category)
                     break
 
         return hints
@@ -292,7 +308,9 @@ class QueryUnderstandingLayer:
         self, domain_hints: list[str], entities: QueryEntities
     ) -> list[str]:
         """Determine candidate zones from domain hints and entities."""
-        zones: list[str] = list(domain_hints)
+        # Only include actual zone values, not category hints
+        valid_zones = {z.value for z in Zone}
+        zones: list[str] = [h for h in domain_hints if h in valid_zones]
 
         # Location entities boost kunskap zone (government/statistics data)
         if entities.locations and Zone.KUNSKAP not in zones:

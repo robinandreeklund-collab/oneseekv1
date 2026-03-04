@@ -379,6 +379,27 @@ DOMAIN_HINTS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Category Hints — maps keywords to specific agent names for fine-grained
+# routing.  DOMAIN_HINTS resolves only to zone; CATEGORY_HINTS resolves to
+# the agent *within* that zone so the AgentResolver can boost the right one.
+# ---------------------------------------------------------------------------
+
+CATEGORY_HINTS: dict[str, list[str]] = {
+    "väder": ["väder", "vädret", "vader", "vadret", "smhi", "temperatur", "regn", "prognos", "väderleksrapport"],
+    "statistik": ["statistik", "scb", "befolkning", "kolada", "nyckeltal", "skolverket", "skola", "kursplan"],
+    "trafik": ["trafik", "trafiken", "trafikverket", "tåg", "väg", "vägarbete", "förseningar"],
+    "bolag": ["bolag", "bolagsverket", "företag", "organisationsnummer"],
+    "riksdagen": ["riksdagen", "proposition", "betänkande", "motion", "votering"],
+    "marknad": ["blocket", "tradera", "marknadsplats", "annons", "begagnat"],
+    "kunskap": ["dokument", "docs", "kunskap", "sök", "search", "notion", "slack", "github", "sammanfatta"],
+    "webb": ["webb", "länk", "nyheter", "url", "scrape"],
+    "kartor": ["karta", "kartbild", "geoapify", "visa på karta"],
+    "kod": ["kod", "python", "script", "sandbox", "exekvera"],
+    "media": ["podcast", "media", "ljud", "generera bild"],
+}
+
+
+# ---------------------------------------------------------------------------
 # Calibration
 # ---------------------------------------------------------------------------
 
