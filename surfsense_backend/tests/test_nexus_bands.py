@@ -76,6 +76,34 @@ class TestBandDistribution:
         assert cascade.compute_band0_rate([]) == 0.0
 
 
+class TestRawMarginOverride:
+    """Platt scaling can compress calibrated margins to near-zero.
+
+    When raw_margin is supplied, band checks should use that instead of
+    the (compressed) calibrated margin.
+    """
+
+    def test_raw_margin_promotes_to_band_0(self, cascade):
+        # Calibrated scores are close (margin 0.01) but raw margin is large
+        result = cascade.classify(
+            top_score=0.9909, second_score=0.9809, raw_margin=0.24
+        )
+        assert result.band == 0, f"Expected Band 0, got Band {result.band}"
+        assert result.action == "direct"
+
+    def test_raw_margin_promotes_to_band_1(self, cascade):
+        # Calibrated margin < 0.10 but raw margin qualifies for Band 1
+        result = cascade.classify(
+            top_score=0.88, second_score=0.85, raw_margin=0.14
+        )
+        assert result.band == 1
+
+    def test_raw_margin_none_uses_calibrated(self, cascade):
+        # Without raw_margin, small calibrated gap → Band 2
+        result = cascade.classify(top_score=0.96, second_score=0.90)
+        assert result.band != 0  # margin 0.06 < 0.20
+
+
 class TestCustomThresholds:
     def test_custom_band0_threshold(self):
         cascade = ConfidenceBandCascade(band_0_min_score=0.99)

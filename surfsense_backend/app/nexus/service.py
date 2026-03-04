@@ -299,6 +299,7 @@ class NexusService:
         top_score = 0.0
         second_score = 0.0
         raw_top_score: float | None = None
+        raw_margin: float | None = None
         schema_verified = False
 
         if tool_entries:
@@ -356,6 +357,8 @@ class NexusService:
 
             if candidates:
                 raw_top_score = candidates[0].raw_score
+                raw_second = candidates[1].raw_score if len(candidates) > 1 else 0.0
+                raw_margin = raw_top_score - raw_second
                 top_score = candidates[0].calibrated_score
                 second_score = (
                     candidates[1].calibrated_score if len(candidates) > 1 else 0.0
@@ -381,10 +384,12 @@ class NexusService:
         else:
             ood_result = OODResult(is_ood=False, energy_score=0.0)
 
-        # Step 7: Band classification
+        # Step 7: Band classification — use raw margin to avoid Platt
+        # compression collapsing the gap between top candidates.
         band_result = self.band_cascade.classify(
             top_score=top_score,
             second_score=second_score,
+            raw_margin=raw_margin,
         )
 
         elapsed_ms = (time.monotonic() - start_time) * 1000

@@ -68,18 +68,28 @@ class ConfidenceBandCascade:
         self._b3_score = band_3_min_score
 
     def classify(
-        self, top_score: float, second_score: float = 0.0
+        self,
+        top_score: float,
+        second_score: float = 0.0,
+        *,
+        raw_margin: float | None = None,
     ) -> BandClassification:
         """Classify a routing decision into a confidence band.
 
         Args:
             top_score: Calibrated score of the top-1 candidate.
             second_score: Calibrated score of the top-2 candidate.
+            raw_margin: Pre-calibration margin (top_raw - second_raw).
+                When provided, band margin checks use this instead of
+                the calibrated margin.  Platt scaling compresses high
+                scores toward 1.0 which can collapse the calibrated
+                margin to near-zero even when the raw gap is large.
 
         Returns:
             BandClassification with band number, name, and action.
         """
-        margin = top_score - second_score
+        calibrated_margin = top_score - second_score
+        margin = raw_margin if raw_margin is not None else calibrated_margin
 
         # Band 0: Very high confidence with large margin
         if top_score >= self._b0_score and margin >= self._b0_margin:
