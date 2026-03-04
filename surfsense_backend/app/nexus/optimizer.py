@@ -17,7 +17,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -425,28 +424,38 @@ class MetadataOptimizer:
 
         text = response_text.strip()
 
-        # Strategy 1: Extract from ```json ... ``` or ``` ... ``` blocks
-        json_match = re.search(
-            r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL
-        )
-        if json_match:
-            text = json_match.group(1).strip()
+        # Strategy 1: Strip markdown code fences if present
+        if text.startswith("```"):
+            # Remove opening fence (```json or ```)
+            first_nl = text.find("\n")
+            if first_nl != -1:
+                # Remove closing fence
+                if text.endswith("```"):
+                    text = text[first_nl + 1 : -3].strip()
+                else:
+                    text = text[first_nl + 1 :].strip()
 
-        # Strategy 2: Find the outermost JSON array [ ... ]
+        # Strategy 2: Try direct JSON parse
         parsed = None
-        with contextlib.suppress(json.JSONDecodeError):
+        try:
             parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            logger.debug(
+                "Direct JSON parse failed: %s. Trying bracket extraction.", exc
+            )
 
+        # Strategy 3: Find the outermost JSON array [ ... ]
         if parsed is None:
-            # Try to locate the first '[' and last ']'
             start = text.find("[")
             end = text.rfind("]")
             if start != -1 and end != -1 and end > start:
-                with contextlib.suppress(json.JSONDecodeError):
+                try:
                     parsed = json.loads(text[start : end + 1])
+                except json.JSONDecodeError as exc:
+                    logger.debug("Array extraction failed: %s", exc)
 
+        # Strategy 4: Find the first '{' and last '}'
         if parsed is None:
-            # Strategy 3: Find the first '{' and last '}'
             start = text.find("{")
             end = text.rfind("}")
             if start != -1 and end != -1 and end > start:
