@@ -518,3 +518,147 @@ def get_platform_intents() -> dict[str, dict[str, Any]]:
             "jämförelse": {"intent_id": "jämförelse", "keywords": []},
             "konversation": {"intent_id": "konversation", "keywords": []},
         }
+
+
+# ---------------------------------------------------------------------------
+# Agent definitions from real platform
+# ---------------------------------------------------------------------------
+
+# The real agents are defined in supervisor_constants.py _build_agent_tool_profiles()
+PLATFORM_AGENTS: list[dict[str, str]] = [
+    {
+        "name": "åtgärd",
+        "zone": "kunskap",
+        "description": "Generella uppgifter och åtgärder",
+    },
+    {"name": "väder", "zone": "kunskap", "description": "SMHI väder och klimatdata"},
+    {
+        "name": "trafik",
+        "zone": "kunskap",
+        "description": "Trafikverket trafik och vägdata",
+    },
+    {
+        "name": "statistik",
+        "zone": "kunskap",
+        "description": "SCB, Kolada, Skolverket statistik",
+    },
+    {
+        "name": "riksdagen",
+        "zone": "kunskap",
+        "description": "Riksdagsdokument och voteringar",
+    },
+    {"name": "bolag", "zone": "kunskap", "description": "Bolagsverket företagsinfo"},
+    {
+        "name": "marknad",
+        "zone": "kunskap",
+        "description": "Blocket, Tradera marknadsplatser",
+    },
+    {
+        "name": "kunskap",
+        "zone": "kunskap",
+        "description": "Intern kunskapsbas och webbsökning",
+    },
+    {
+        "name": "webb",
+        "zone": "kunskap",
+        "description": "Webbskrapning och länkförhandsgranskning",
+    },
+    {"name": "kartor", "zone": "skapande", "description": "Geoapify kartgenerering"},
+    {"name": "media", "zone": "skapande", "description": "Podcast och bildgenerering"},
+    {"name": "kod", "zone": "skapande", "description": "Sandbox-kodexekvering"},
+    {"name": "syntes", "zone": "kunskap", "description": "Sammanfattning och syntes"},
+]
+
+
+# ---------------------------------------------------------------------------
+# Live routing phases from real platform
+# ---------------------------------------------------------------------------
+
+# Mirrors _LIVE_ROUTING_PHASE_ORDER in supervisor_constants.py
+LIVE_ROUTING_PHASES: dict[str, int] = {
+    "shadow": 0,
+    "tool_gate": 1,
+    "agent_auto": 2,
+    "adaptive": 3,
+    "intent_finetune": 4,
+}
+
+
+# ---------------------------------------------------------------------------
+# Async DB-aware accessors (require AsyncSession)
+# ---------------------------------------------------------------------------
+
+
+async def get_effective_intents_from_db(session: Any) -> list[dict[str, Any]]:
+    """Get intent definitions merged with DB overrides (the REAL active intents).
+
+    This is what the supervisor uses — defaults + admin overrides.
+    """
+    try:
+        from app.services.intent_definition_service import (
+            get_effective_intent_definitions,
+        )
+
+        return await get_effective_intent_definitions(session)
+    except Exception:
+        # Fallback to defaults
+        return list(get_platform_intents().values())
+
+
+async def get_tool_lifecycle_statuses(session: Any) -> dict[str, dict[str, Any]]:
+    """Get all tool lifecycle statuses (REVIEW / LIVE) from DB."""
+    try:
+        from app.services.tool_lifecycle_service import (
+            get_all_tool_lifecycle_statuses,
+        )
+
+        rows = await get_all_tool_lifecycle_statuses(session)
+        return {
+            r["tool_id"]: r for r in rows if isinstance(r, dict) and r.get("tool_id")
+        }
+    except Exception:
+        return {}
+
+
+async def get_live_tool_ids(session: Any) -> list[str] | None:
+    """Get tool IDs that are currently LIVE (not REVIEW).
+
+    Returns None if lifecycle service is unavailable, meaning all tools are allowed.
+    """
+    try:
+        from app.services.tool_lifecycle_service import get_live_tool_ids as _get
+
+        return await _get(session)
+    except Exception:
+        return None
+
+
+async def get_retrieval_tuning(session: Any) -> dict[str, Any]:
+    """Get the active retrieval tuning configuration from DB.
+
+    This includes live_routing_enabled, live_routing_phase,
+    tool_auto_margin_threshold, etc.
+    """
+    try:
+        from app.services.tool_retrieval_tuning_service import (
+            get_global_retrieval_tuning,
+        )
+
+        return await get_global_retrieval_tuning(session)
+    except Exception:
+        return {
+            "live_routing_enabled": False,
+            "live_routing_phase": "shadow",
+        }
+
+
+async def get_tool_metadata_overrides(session: Any) -> dict[str, dict[str, Any]]:
+    """Get admin-configured tool metadata overrides from DB."""
+    try:
+        from app.agents.new_chat.bigtool_store import (
+            get_global_tool_metadata_overrides,
+        )
+
+        return await get_global_tool_metadata_overrides(session)
+    except Exception:
+        return {}

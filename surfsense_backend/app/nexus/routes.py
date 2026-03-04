@@ -95,18 +95,38 @@ async def get_nexus_config(
 @nexus_router.get("/tools")
 async def get_platform_tools_list(
     category: str | None = Query(None),
+    zone: str | None = Query(None),
+    namespace: str | None = Query(None),
+    session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
     """List all real platform tools visible to NEXUS.
 
-    Returns the full tool catalog auto-discovered from the live platform.
-    Use `?category=smhi` to filter by domain.
+    Returns the full tool catalog auto-discovered from the live platform,
+    enriched with lifecycle status (LIVE/REVIEW) from the DB.
+
+    Filters:
+    - `?category=smhi` — filter by domain category
+    - `?zone=kunskap` — filter by intent zone
+    - `?namespace=tools/weather` — filter by namespace prefix
     """
-    from app.nexus.platform_bridge import get_category_names, get_platform_tools
+    from app.nexus.platform_bridge import (
+        get_category_names,
+        get_platform_tools,
+        get_tool_lifecycle_statuses,
+    )
 
     tools = get_platform_tools()
     if category:
         tools = [t for t in tools if t.category == category]
+    if zone:
+        tools = [t for t in tools if t.zone == zone]
+    if namespace:
+        tools = [t for t in tools if "/".join(t.namespace).startswith(namespace)]
+
+    # Enrich with lifecycle status from DB
+    lifecycle = await get_tool_lifecycle_statuses(session)
+
     return {
         "total": len(tools),
         "categories": get_category_names(),
@@ -120,6 +140,11 @@ async def get_platform_tools_list(
                 "namespace": "/".join(t.namespace),
                 "keywords": t.keywords[:5],
                 "geographic_scope": t.geographic_scope,
+                "lifecycle_status": (
+                    lifecycle.get(t.tool_id, {}).get("status", "unknown")
+                    if lifecycle
+                    else "unknown"
+                ),
             }
             for t in tools
         ],
@@ -139,6 +164,96 @@ async def get_tool_categories(
             {"name": cat, "count": len(tools)} for cat, tools in sorted(by_cat.items())
         ]
     }
+
+
+@nexus_router.get("/tools/agents")
+async def get_platform_agents(
+    user: User = Depends(current_active_user),
+):
+    """List all platform agents and their zone mappings."""
+    from app.nexus.platform_bridge import PLATFORM_AGENTS
+
+    return {"agents": PLATFORM_AGENTS}
+
+
+@nexus_router.get("/tools/intents")
+async def get_platform_intents_endpoint(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Get effective intent definitions (defaults + DB overrides).
+
+    This is the REAL routing intent configuration that the supervisor uses.
+    """
+    from app.nexus.platform_bridge import get_effective_intents_from_db
+
+    intents = await get_effective_intents_from_db(session)
+    return {"intents": intents}
+
+
+@nexus_router.get("/tools/live-routing")
+async def get_live_routing_config(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Get current live routing configuration.
+
+    Shows the active phase (shadow/tool_gate/agent_auto/adaptive/intent_finetune),
+    thresholds, and whether live routing is enabled.
+    """
+    from app.nexus.platform_bridge import LIVE_ROUTING_PHASES, get_retrieval_tuning
+
+    tuning = await get_retrieval_tuning(session)
+    return {
+        "phases": LIVE_ROUTING_PHASES,
+        "current_config": tuning,
+    }
+
+
+# ------------------------------------------------------------------
+# Shadow Observer (Platform Integration)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/shadow/report")
+async def get_shadow_report(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get shadow observer report — how NEXUS compares to real platform routing.
+
+    Shows retrieval feedback store state and live routing configuration.
+    """
+    return await service.get_shadow_report(session)
+
+
+@nexus_router.get("/shadow/feedback/{tool_id}")
+async def get_shadow_feedback_for_tool(
+    tool_id: str,
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get retrieval feedback signals for a specific tool from the real pipeline."""
+    return service.shadow_observer.get_feedback_for_tool(tool_id)
+
+
+class ShadowCompareRequest(BaseModel):
+    query: str
+
+
+@nexus_router.post("/shadow/compare")
+async def shadow_compare(
+    request: ShadowCompareRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Route a query through NEXUS AND the real platform, return comparison.
+
+    Shows whether NEXUS agrees with the production routing pipeline.
+    """
+    return await service.compare_single_query(request.query, session)
 
 
 # ------------------------------------------------------------------
@@ -252,7 +367,9 @@ async def forge_generate(
     return await service.forge_generate(
         session,
         tool_ids=request.tool_ids,
-        category=getattr(request, "category", None),
+        category=request.category,
+        namespace=request.namespace,
+        zone=request.zone,
         difficulties=request.difficulties,
         questions_per_difficulty=request.questions_per_difficulty or 4,
     )

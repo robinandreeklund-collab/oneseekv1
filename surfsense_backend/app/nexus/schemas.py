@@ -169,6 +169,8 @@ class SpaceSnapshot(BaseModel):
 class ForgeGenerateRequest(BaseModel):
     tool_ids: list[str] | None = None  # None = all tools
     category: str | None = None  # e.g. "smhi", "scb", "riksdagen", "marketplace"
+    namespace: str | None = None  # e.g. "tools/weather" — filters by namespace prefix
+    zone: str | None = None  # e.g. "kunskap" — filters by intent zone
     difficulties: list[str] | None = None  # None = all 4
     questions_per_difficulty: int = 4
 

@@ -38,6 +38,7 @@ from app.nexus.routing.ood_detector import DarkMatterDetector
 from app.nexus.routing.qul import QueryUnderstandingLayer
 from app.nexus.routing.schema_verifier import SchemaVerifier
 from app.nexus.routing.select_then_route import SelectThenRoute
+from app.nexus.routing.shadow_observer import ShadowObserver
 from app.nexus.routing.zone_manager import ZoneManager
 from app.nexus.schemas import (
     AutoLoopRunResponse,
@@ -90,6 +91,8 @@ class NexusService:
         self.auto_loop = AutoLoop()
         # Sprint 4 additions
         self.deploy_control = DeployControl()
+        # Shadow observer — reads from real platform routing pipeline
+        self.shadow_observer = ShadowObserver()
 
     # ------------------------------------------------------------------
     # Health & Config
@@ -508,6 +511,8 @@ class NexusService:
         *,
         tool_ids: list[str] | None = None,
         category: str | None = None,
+        namespace: str | None = None,
+        zone: str | None = None,
         difficulties: list[str] | None = None,
         questions_per_difficulty: int = 4,
     ) -> dict:
@@ -518,6 +523,8 @@ class NexusService:
             category: Filter by tool category (e.g. "smhi", "scb", "kolada",
                       "riksdagen", "trafikverket", "bolagsverket", "marketplace",
                       "skolverket", "builtin", "external_model").
+            namespace: Filter by namespace prefix (e.g. "tools/weather").
+            zone: Filter by intent zone (e.g. "kunskap", "skapande").
             difficulties: Override difficulty levels.
             questions_per_difficulty: Questions per difficulty per tool.
         """
@@ -530,6 +537,12 @@ class NexusService:
         for pt in platform_tools:
             # Filter by category if specified
             if category and pt.category != category:
+                continue
+            # Filter by namespace prefix if specified
+            if namespace and not "/".join(pt.namespace).startswith(namespace):
+                continue
+            # Filter by zone if specified
+            if zone and pt.zone != zone:
                 continue
             tools.append(
                 {
@@ -1077,7 +1090,10 @@ class NexusService:
     async def run_auto_loop(self, session: AsyncSession) -> dict:
         """Run a complete auto-loop iteration inline.
 
-        Steps: Load test cases → Route each → Compare → Cluster → Propose
+        Steps: Load test cases → Route each (NEXUS + platform) → Compare → Cluster → Propose.
+
+        Evaluates both NEXUS routing AND real platform routing
+        (via smart_retrieve_tools_with_breakdown) to find discrepancies.
         """
         import uuid
 
@@ -1115,22 +1131,40 @@ class NexusService:
                 "message": "Inga testfall hittade. Kör forge/generate först.",
             }
 
-        # Evaluate
+        # Evaluate using both NEXUS routing and real platform retrieval
         total_tests = 0
         failures = 0
         failed_queries: list[dict] = []
+        platform_comparisons = 0
+        platform_agreements = 0
 
         for case in cases:
             total_tests += 1
             try:
+                # NEXUS routing
                 decision = await self.route_query(case.question, session)
-                if case.expected_tool and decision.selected_tool != case.expected_tool:
+                nexus_tool = decision.selected_tool
+
+                # Also run through real platform retrieval for comparison
+                platform_result = await self.shadow_observer.run_platform_retrieval(
+                    case.question, session=session
+                )
+                platform_tool = platform_result.get("top1")
+
+                if platform_tool:
+                    platform_comparisons += 1
+                    if nexus_tool == platform_tool:
+                        platform_agreements += 1
+
+                # Check against expected tool
+                if case.expected_tool and nexus_tool != case.expected_tool:
                     failures += 1
                     failed_queries.append(
                         {
                             "query": case.question,
                             "expected_tool": case.expected_tool,
-                            "got_tool": decision.selected_tool or "(none)",
+                            "got_tool": nexus_tool or "(none)",
+                            "platform_tool": platform_tool or "(none)",
                         }
                     )
             except Exception as e:
@@ -1148,7 +1182,9 @@ class NexusService:
             "proposals": [
                 {"tool_id": p.tool_id, "field": p.field_name, "reason": p.reason}
                 for p in proposals
-            ]
+            ],
+            "platform_comparisons": platform_comparisons,
+            "platform_agreements": platform_agreements,
         }
         db_run.approved_proposals = 0
         db_run.status = "review" if proposals else "approved"
@@ -1162,4 +1198,81 @@ class NexusService:
             "total_tests": total_tests,
             "failures": failures,
             "proposals": len(proposals),
+            "platform_comparisons": platform_comparisons,
+            "platform_agreements": platform_agreements,
+            "platform_agreement_rate": (
+                round(platform_agreements / platform_comparisons, 3)
+                if platform_comparisons > 0
+                else None
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # Shadow Observer (Platform Integration)
+    # ------------------------------------------------------------------
+
+    async def get_shadow_report(self, session: AsyncSession) -> dict:
+        """Get a report on how NEXUS routing compares to real platform routing.
+
+        Reads from the platform's retrieval_feedback_store and returns
+        insights about routing accuracy and discrepancies.
+        """
+        feedback = self.shadow_observer.get_retrieval_feedback_snapshot()
+
+        # Get current live routing config
+        try:
+            from app.nexus.platform_bridge import get_retrieval_tuning
+
+            tuning = await get_retrieval_tuning(session)
+        except Exception:
+            tuning = {"live_routing_enabled": False, "live_routing_phase": "shadow"}
+
+        return {
+            "feedback_store": {
+                "total_patterns": feedback.get("count", 0),
+                "sample_rows": feedback.get("rows", [])[:20],
+            },
+            "live_routing": tuning,
+        }
+
+    async def compare_single_query(
+        self,
+        query: str,
+        session: AsyncSession,
+    ) -> dict:
+        """Route a query through both NEXUS and real platform, return comparison."""
+        # NEXUS routing
+        nexus_decision = await self.route_query(query, session)
+
+        # Real platform routing
+        platform_result = await self.shadow_observer.run_platform_retrieval(
+            query, session=session
+        )
+
+        comparison = self.shadow_observer.compare_routing(
+            query=query,
+            nexus_tool=nexus_decision.selected_tool,
+            nexus_score=nexus_decision.calibrated_confidence,
+            nexus_band=nexus_decision.band,
+            platform_result=platform_result,
+        )
+
+        return {
+            "query": query,
+            "nexus": {
+                "selected_tool": nexus_decision.selected_tool,
+                "confidence": nexus_decision.calibrated_confidence,
+                "band": nexus_decision.band,
+                "zone": nexus_decision.resolved_zone,
+                "is_ood": nexus_decision.is_ood,
+            },
+            "platform": {
+                "top1": platform_result.get("top1"),
+                "top2": platform_result.get("top2"),
+                "top1_score": platform_result.get("top1_score", 0.0),
+                "top2_score": platform_result.get("top2_score", 0.0),
+                "margin": platform_result.get("margin"),
+                "candidates": platform_result.get("ranked_ids", []),
+            },
+            "agreement": comparison.agreement,
         }
