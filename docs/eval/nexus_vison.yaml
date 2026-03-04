@@ -1,0 +1,403 @@
+NEXUS — Next-gen Eval & eXperience Unified System
+Förslag för optimal metadata/embed/namespace/kategori retrieval-eval 2026
+
+Vad som brister idag (snabb analys)
+Ert befintliga eval-system är statiskt JSON-drivet — manuellt skrivna testfall per domän, körs en gång, ingen feedback-loop. Det saknar:
+
+Embedding-space awareness — ingen mätning av hur väl verktyg/intents är separerade i vektorrymden
+Auto-genererade testfall — skalas inte utan manuellt arbete
+Contrastive evaluation — du vet inte varför ett verktyg väljs fel, bara att det väljs fel
+Self-improving loop — systemet lär sig inte av sina misstag
+Reranker-specifik eval — ms-marco utvärderas inte isolerat
+Namespace confusion tracking — ingen cross-namespace confusion matrix
+Ny arkitektur: 5 separata lager
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NEXUS — RETRIEVAL INTELLIGENCE PLATFORM                                     │
+│                                                                               │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐ │
+│  │  SPACE     │  │  SYNTH    │  │   AUTO    │  │   EVAL    │  │  DEPLOY   │ │
+│  │  AUDITOR   │  │  FORGE    │  │   LOOP    │  │  LEDGER   │  │  CONTROL  │ │
+│  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘ │
+│        │               │               │               │               │       │
+│  Visa  │  Generera     │  Förbättra    │  Logga        │  Deploya      │       │
+│  rymd  │  frågor       │  metadata     │  allt         │  godkänt      │       │
+└────────┴───────────────┴───────────────┴───────────────┴───────────────┴──────┘
+          ↑                               ↑
+     Förstå →      ← Skapa →      ← Optimera →    ← Verifiera →    ← Deploya
+
+Lager 1: SPACE AUDITOR — Embedding-rymd visualisering
+Kärnidé: Mät kontinuerligt hur separerade verktyg, intents och agenter är i vektorrymden.
+
+┌─────────────────────────────────────────────────────────┐
+│  SPACE AUDITOR                              [Export] [▶] │
+│                                                          │
+│  Separation Score: 0.73 ██████████░░░  Bra              │
+│  Cluster Purity:   0.91 █████████████  Utmärkt          │
+│  Confusion Risk:   0.18 ███░░░░░░░░░░  Låg              │
+│                                                          │
+│  ┌─────────────────────────────────────────────────────┐ │
+│  │  UMAP 2D — Verktygsrymd                             │ │
+│  │                                                     │ │
+│  │   ●●● smhi          ○○ riksdag    ■■ marketplace    │ │
+│  │      ●●●                ○○          ■■■             │ │
+│  │          ◆◆◆ scb                ▲▲ kod              │ │
+│  │                                                     │ │
+│  │  ⚠ VARNING: smhi_brandrisk ↔ skolverket_kursplan   │ │
+│  │    Cosine similarity: 0.87 (för nära!)             │ │
+│  └─────────────────────────────────────────────────────┘ │
+│                                                          │
+│  Namespace Confusion Matrix:                            │
+│  tools/weather vs tools/knowledge: 0.12 ✓              │
+│  tools/politik vs tools/marketplace: 0.08 ✓            │
+│  tools/weather/smhi vs tools/action: 0.31 ⚠            │
+└─────────────────────────────────────────────────────────┘
+
+Metriker:
+
+Intra-class distance — Hur tätt klustrar verktyg i samma namespace?
+Inter-class distance — Hur långt är det mellan namespaces?
+Confusion Risk Score — Top-10 farliga par (verktyg som är för lika)
+Hubness detection — Vilka verktyg hamnar för ofta som "närmaste granne" (falskt positiva magneter)
+Implementering:
+
+class SpaceAuditor:
+    def compute_separation_matrix(self, tools: list[ToolIndexEntry]) -> SeparationReport:
+        embeddings = [t.semantic_embedding for t in tools]
+        namespaces = [t.namespace for t in tools]
+        
+        # UMAP för visualisering
+        coords_2d = UMAP(n_components=2).fit_transform(embeddings)
+        
+        # Separation metrics
+        intra_scores = silhouette_score(embeddings, namespace_labels)
+        confusion_pairs = self._find_risky_pairs(embeddings, threshold=0.85)
+        
+        return SeparationReport(coords_2d, intra_scores, confusion_pairs)
+
+Lager 2: SYNTH FORGE — Auto-generering av testfrågor
+Kärnidé: Local LLM genererar 4 svårighetsnivåer av testfrågor per verktyg, automatiskt.
+
+┌─────────────────────────────────────────────────────────┐
+│  SYNTH FORGE                    [Generera] [Stoppa]      │
+│                                                          │
+│  Verktyg: smhi_vaderprognoser_metfcst                   │
+│  Status: Genererar... ████████░░  80%                   │
+│                                                          │
+│  LÄTT (direkta):                                        │
+│  ✓ "Vad blir vädret i Stockholm imorgon?"               │
+│  ✓ "SMHI-prognos för Göteborg nästa vecka"             │
+│                                                          │
+│  MEDEL (kontextuella):                                  │
+│  ✓ "Ska vi ta med paraply till fotbollsmatchen?"        │
+│  ✓ "Bör vi resa till Dalarna denna helg?"              │
+│                                                          │
+│  SVÅR (tvetydiga):                                      │
+│  ✓ "Hur är förhållandena?" (geography ambiguous)       │
+│  ✓ "Vad säger meteorologerna?" (which source?)         │
+│                                                          │
+│  ADVERSARIAL (bör INTE välja detta verktyg):            │
+│  ✓ "Hur varmt var det i Stockholm 1987?" → historik     │
+│  ✓ "Vilket väder har Medelhavet?" → inte Sverige        │
+└─────────────────────────────────────────────────────────┘
+
+LLM-prompt-struktur:
+
+SYNTH_PROMPT = """
+Du är en expert på att testa AI-system för verktygsval.
+
+Verktyg: {tool_name}
+Beskrivning: {description}
+Namespace: {namespace}
+Exkluderar: {excludes}
+Geografisk räckvidd: {geographic_scope}
+
+Generera exakt 4 frågor per kategori:
+1. DIREKTA — frågor som tydligt mappar till detta verktyg
+2. KONTEXTUELLA — frågor där verktyget behövs men inte nämns explicit  
+3. TVETYDIGA — frågor som testar disambiguation mot liknande verktyg
+4. ADVERSARIAL — frågor som INTE ska välja detta verktyg (för negativ träning)
+
+Format: JSON med difficulty, question, expected_tool, expected_reason
+"""
+
+Contrastive pairs — varje adversarial-fråga genererar ett hårt negativt par som kan användas för att fine-tuna embeddings längre fram.
+
+Lager 3: AUTO LOOP — Självförbättrande system
+Kärnidé: Systemet kör eval → identifierar fel → LLM föreslår fix → test → auto-PR för granskning.
+
+┌─────────────────────────────────────────────────────────────┐
+│  AUTO LOOP                              [Kör Loop] [Pausa]   │
+│                                                              │
+│  Loop #47 — 2026-03-03 14:22                               │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────┐ │
+│  │   Kör    │ →  │Analysera │ →  │  Föreslå │ →  │Review  │ │
+│  │  Eval    │    │  Fel     │    │   Fix    │    │& Merge │ │
+│  └──────────┘    └──────────┘    └──────────┘    └────────┘ │
+│                                                              │
+│  Senaste körning:                                           │
+│  ✓ 847 testfall körda                                       │
+│  ✗ 23 misslyckanden identifierade                          │
+│                                                              │
+│  Rotorsaksanalys:                                           │
+│  ├─ smhi_brandrisk: 8 fel — brandrisk liknar skolverket     │
+│  │  LLM-förslag: Lägg till "brandindex, RH, vindkänslighet"│
+│  │  Embedding δ: +0.15 separation efter fix                │
+│  │  Status: [Godkänn] [Avvisa] [Testa mer]                │
+│  │                                                          │
+│  ├─ riksdag_voteringar: 5 fel — förväxlas med dokument      │
+│  │  LLM-förslag: Skärp unique_scope: "ONLY voting records" │
+│  └─ kolada_query: 3 fel — query format för tekniskt         │
+└─────────────────────────────────────────────────────────────┘
+
+Auto-loop pipeline:
+
+1. Kör full eval suite (syntetisk + manuell)
+2. Cluster failure modes (vilka tool-par förväxlas?)  
+3. LLM rotorsaksanalys per failure cluster
+4. Generera metadata-fix kandidater
+5. Compute embedding delta (förbättras separationen?)
+6. Om delta > threshold: skapa "metadata PR" för human review
+7. Om PR godkänns: uppdatera DB, reindex embeddings
+8. Kör micro-eval för de påverkade verktygen
+9. Logga till EVAL LEDGER, nästa loop startar
+
+Feedback-signal integration:
+
+Production logs (vilka verktyg väljs och vad ger användaren feedback på?)
+Thumbs up/down på svar → kopplas till tool-chain
+Implicit: om användaren re-frågar med omformulering → trolig feltriggning
+Lager 4: EVAL LEDGER — Metriker per pipeline-steg
+Kärnidé: Separata metriker för varje steg i retrieval-pipelinen, med trendkurvor.
+
+┌─────────────────────────────────────────────────────────────────┐
+│  EVAL LEDGER                              [Filter] [Export]      │
+│                                                                  │
+│  Pipeline-precision (senaste 30 dagar):                         │
+│                                                                  │
+│  Steg 1: Intent routing        ████████████████░  94.2% (+1.2) │
+│  Steg 2: Route selection       █████████████░░░░  81.7% (-0.3) │
+│  Steg 3: Bigtool retrieval     ████████████░░░░░  78.9% (+2.1) │
+│  Steg 4: Reranker effekt       ██████████████░░░  87.3% (+0.5) │
+│  Steg 5: End-to-end quality    ████████████░░░░░  79.1% (new)  │
+│                                                                  │
+│  Per-namespace breakdown:                                       │
+│  tools/weather/smhi:     92.1% ██████████████████              │
+│  tools/politik:          73.4% ███████████████░░░ ⚠ Under 80% │
+│  tools/marketplace:      88.7% ████████████████░░             │
+│  tools/knowledge/kb:     95.2% ███████████████████             │
+│                                                                  │
+│  Reranker isolerad analys:                                      │
+│  Pre-rerank accuracy:    71.2%                                  │
+│  Post-rerank accuracy:   87.3%  (+16.1pp — reranker hjälper!) │
+│  Reranker kan göra SÄMRE: 4 cases/vecka  ← actionable         │
+└─────────────────────────────────────────────────────────────────┘
+
+Nyckelmetriker:
+
+Metrik	Beskrivning	Beräkning
+namespace_precision@k	Hur ofta rätt namespace i top-k	TP / (TP + FP) per ns
+intent_confidence_calibration	Stämmer confidence med accuracy?	ECE (Expected Calibration Error)
+reranker_delta	Hur mycket förbättrar reranker?	accuracy_post - accuracy_pre
+embedding_separation_score	Silhouette score per namespace	sklearn silhouette
+mrr@10	Mean Reciprocal Rank, top-10	standard MRR
+ndcg@5	Position-weighted relevance	standard nDCG
+hard_negative_precision	Hur ofta undviks adversarial?	adversarial_correct / total
+Lager 5: DEPLOY CONTROL — Lifecycle med triple-gate
+┌─────────────────────────────────────────────────────────────────┐
+│  DEPLOY CONTROL                                                  │
+│                                                                  │
+│  Lifecycle: REVIEW → STAGING → LIVE → (ROLLBACK)               │
+│                                                                  │
+│  Gate 1 — Embed-separation test:                               │
+│    smhi_brandrisk: separation score 0.72 ✓ (min: 0.65)        │
+│                                                                  │
+│  Gate 2 — Eval-trösklar:                                       │
+│    Success rate: 88.3% ✓ (min: 80%)                           │
+│    Hard negative rate: 91.2% ✓ (min: 85%)                     │
+│    Adversarial rate: 87.4% ✓ (min: 80%)                       │
+│                                                                  │
+│  Gate 3 — LLM-judge quality:                                   │
+│    Description clarity: 4.2/5 ✓                               │
+│    Keyword relevance: 4.5/5 ✓                                 │
+│    Disambiguation quality: 3.8/5 ⚠ (min: 4.0)                │
+│                                                                  │
+│  → Gate 3 ej passerad. Auto-loop föreslår fix.                │
+│    [Visa förslag] [Kör om] [Override & Deploy]                │
+└─────────────────────────────────────────────────────────────────┘
+
+Databas-schema för NEXUS
+-- Syntetiska testfall (genererade av LLM)
+CREATE TABLE eval_synthetic_cases (
+  id uuid PRIMARY KEY,
+  tool_id text NOT NULL,
+  namespace text NOT NULL,
+  question text NOT NULL,
+  difficulty text NOT NULL,     -- 'easy'|'medium'|'hard'|'adversarial'
+  expected_tool text,
+  expected_not_tool text[],     -- adversarial: should NOT pick these
+  generation_model text,
+  generation_run_id uuid,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Embedding-rymd snapshots
+CREATE TABLE eval_space_snapshots (
+  id uuid PRIMARY KEY,
+  snapshot_at timestamptz DEFAULT now(),
+  tool_id text NOT NULL,
+  namespace text NOT NULL,
+  embedding_model text NOT NULL,
+  umap_x float8, umap_y float8,          -- 2D coords för visualisering
+  cluster_label int,                      -- tilldelat kluster
+  silhouette_score float8,               -- per-point separation
+  nearest_neighbor_tool text,            -- närmaste granne
+  nearest_neighbor_distance float8
+);
+
+-- Auto-loop körningar
+CREATE TABLE eval_auto_loop_runs (
+  id uuid PRIMARY KEY,
+  loop_number int NOT NULL,
+  started_at timestamptz,
+  completed_at timestamptz,
+  total_tests int,
+  failures int,
+  metadata_proposals jsonb[],            -- LLM-förslag
+  approved_proposals int,
+  embedding_delta float8,               -- separation förbättring
+  status text                            -- 'running'|'waiting_review'|'done'
+);
+
+-- Pipeline-steg metriker (ersätter befintlig)
+CREATE TABLE eval_pipeline_stage_metrics (
+  id uuid PRIMARY KEY,
+  run_id uuid NOT NULL,
+  stage int NOT NULL,                    -- 1=intent, 2=route, 3=bigtool, 4=rerank, 5=e2e
+  stage_name text NOT NULL,
+  namespace text,                        -- null = all namespaces
+  precision_at_1 float8,
+  precision_at_5 float8,
+  mrr_at_10 float8,
+  ndcg_at_5 float8,
+  hard_negative_precision float8,
+  reranker_delta float8,                 -- NULL om inte steg 4
+  recorded_at timestamptz DEFAULT now()
+);
+
+Vad gör detta bättre än dagens system?
+Aspekt	Idag	NEXUS
+Testfall	Manuellt skrivna JSON	Auto-genererade, 4 svårighetsnivåer
+Embedding-analys	Ingen	UMAP-visualisering + separation score
+Förbättringsloop	Manuell	LLM-driven auto-loop med PR-förslag
+Reranker-eval	Inte isolerad	Pre/post-rerank delta tracking
+Adversarial test	Ingen	Hard negatives per verktyg
+Namespace-förvirring	Okänd	Confusion matrix + alerting
+LLM-som-domare	Nej	Gate 3 i lifecycle
+Self-improving	Nej	Hela Lager 3
+Implementeringsordning (3 faser)
+FAS 1 (2 veckor) — Grunden
+  └─ Eval Ledger: pipeline-steg metriker i DB
+  └─ Space Auditor: silhouette + confusion risk alerts
+  └─ Synth Forge: LLM-genererade frågor (lätt + medel)
+
+FAS 2 (2 veckor) — Intelligensen  
+  └─ Adversarial generation (svår + adversarial)
+  └─ Auto Loop: failure analysis + LLM-förslag
+  └─ Reranker isolerad eval (pre/post delta)
+
+FAS 3 (1 vecka) — Polish
+  └─ Deploy Control: triple-gate lifecycle
+  └─ UMAP live-visualisering i admin UI
+  └─ Production feedback → auto-loop kopplingen
+
+Kärnsatsen: Istället för att underhålla statiska testfiler ber du systemet generera sina egna prövningar, analysera sina egna svagheter, och föreslå sina egna förbättringar — med människa i loopen bara för att godkänna.
+
+Vad tänker du? Vill du börja bygga något specifikt lager, eller ska vi förfina designen ytterligare?
+
+Sources:
+
+Synthetic data for RAG evaluation — Red Hat Developer (2026)
+RAG Evaluation: 2026 Metrics and Benchmarks — Label Your Data
+Contrastive learning for embedding models — Milvus AI Reference
+Can Contrastive Learning Refine Embeddings — arXiv
+Perfekt - nu har jag också den djupa forskningen klar. Några kritiska fynd som stärker och skärper förslaget:
+
+Tillägg från forskningen — 4 saker du MÅSTE veta
+1. ms-marco är inte tränad på svenska
+Er nuvarande reranker ms-marco-MultiBERT-L-12 är MS MARCO-tränad enbart på engelska. För svenska agentfrågor finns ett semantisk gap. Forskningen pekar på:
+
+Nuläge:   ms-marco-MultiBERT-L-12  →  engelska
+Bättre:   BGE-reranker-v2-m3       →  100+ språk inkl. svenska
+          Cohere Rerank 3.5        →  multilingual API (managed)
+
+NEXUS bör inkludera en Reranker A/B-testmodul som mäter pre/post delta per språk:
+
+ms-marco:        svenska accuracy  =  73.2%  ⚠
+bge-v2-m3:       svenska accuracy  =  ?      ← mäts i Eval Ledger
+
+2. Ert eval-underlag är för litet
+Ert befintliga system har 10–20 testfall per leverantör. ARES-forskningen är tydlig: för statistiskt tillförlitliga metriker behövs 100–500 per domän. Det är precis detta NEXUS Synth Forge löser automatiskt.
+
+Roundtrip consistency filter (ARES-metod): generera fråga → verifiera att rätt verktyg återfinns inom top-3 → annars kassera frågan. Filtrerar bort tvetydiga syntetiska frågor automatiskt.
+
+3. Bädda in tools OCH agents i samma rymd
+Paper från november 2025: Tool-to-Agent Retrieval — bäddade in både verktyg och agenter i ett delat vektorrum. Resultaten är relevanta:
+
++19.4% Recall@5
++17.7% nDCG@5
+
+För OneSeek betyder detta: intent → route → agent → tool bör alla ha embeddings i samma rum, med kontrollerade avstånd. Space Auditor bör visualisera detta hierarkiskt:
+
+[INTENT: väder]
+    ↓ nära
+[ROUTE: kunskap]
+    ↓ nära
+[AGENT: weather-worker]
+    ↓ nära
+[TOOL: smhi_metfcst]  ← men LÅNGT från [riksdag_voteringar]
+
+Space Auditor-metriken utökas:
+
+Nivå	Vad mäts
+Intent → Route	Ska vara tight (<0.3 cosine)
+Route → Tools	Ska vara tight inom route
+Tool → Tool (cross-ns)	Ska vara separerade (>0.6 cosine)
+4. RAGElo tournament för era befintliga eval-filer
+Ni har redan versionerade eval-filer (_v1, _v2, _v3, _v4). Istället för att definiera ett fast "gold standard" tröskelvärde — kör ett RAGElo Elo-tournament:
+
+eval_v1 vs eval_v2  → LLM bedömer vilken retrieval är bättre per fråga
+eval_v2 vs eval_v3  → parvisa jämförelser
+...
+Elo-poäng avgör bästa konfiguration automatiskt
+
+Det är snabbt, kräver inga absoluta trösklar, och passar era befintliga strukturer perfekt.
+
+Komplett NEXUS — Slutgiltig skiss
+NEXUS RETRIEVAL INTELLIGENCE PLATFORM
+══════════════════════════════════════════════════════════════════════════
+
+  SPACE AUDITOR        SYNTH FORGE         AUTO LOOP
+  ─────────────        ───────────         ─────────
+  · UMAP visualization  · LLM-generated    · Failure clustering
+  · Silhouette score      4 difficulty       LLM root-cause
+  · Confusion risk        levels           · Metadata PR proposals
+  · Intent→Tool→Agent   · Roundtrip       · Roundtrip-filtered
+    hierarchy view        filter             auto-accept
+                        · Hard negatives
+
+  EVAL LEDGER          DEPLOY CONTROL
+  ───────────          ──────────────
+  · 5-stage pipeline   · Gate 1: separation score
+  · Pre/post rerank    · Gate 2: eval thresholds
+  · RAGElo tournament  · Gate 3: LLM-judge quality
+  · Reranker A/B       · Lifecycle: REVIEW→LIVE→ROLLBACK
+  · Swedish vs EN
+    accuracy split
+
+Byggordning (föreslagen):
+
+Sprint 1: Eval Ledger + 5-stage metriker + Space Auditor grund
+Sprint 2: Synth Forge (LLM-generering + roundtrip filter)
+Sprint 3: Auto Loop + failure clustering + metadata-PR
+Sprint 4: RAGElo tournament + Reranker A/B + Deploy triple-gate
+Sprint 5: Production feedback → loop-koppling + UMAP live-viz
