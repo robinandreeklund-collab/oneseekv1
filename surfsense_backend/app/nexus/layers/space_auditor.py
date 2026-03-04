@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 import numpy as np
+from umap import UMAP
 
 logger = logging.getLogger(__name__)
 
@@ -340,16 +341,17 @@ class SpaceAuditor:
 
         Falls back to PCA if umap-learn is not installed.
         """
-        try:
-            from umap import UMAP
-
+        n_samples = len(tools)
+        if n_samples < 4:
+            # UMAP needs at least n_neighbors+1 samples; use PCA for tiny sets
+            coords = self._pca_2d(embeddings)
+        else:
             reducer = UMAP(
-                n_components=2, random_state=42, n_neighbors=min(15, len(tools) - 1)
+                n_components=2,
+                random_state=42,
+                n_neighbors=min(15, n_samples - 1),
             )
             coords = reducer.fit_transform(embeddings)
-        except ImportError:
-            logger.info("umap-learn not installed, falling back to PCA projection")
-            coords = self._pca_2d(embeddings)
 
         points: list[UMAPPoint] = []
         for i, tool in enumerate(tools):
