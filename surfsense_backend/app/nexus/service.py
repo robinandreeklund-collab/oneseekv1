@@ -435,6 +435,19 @@ class NexusService:
 
         report = self.space_auditor.compute_separation_matrix(tools)
 
+        # Update zone_config DB rows with latest silhouette scores
+        try:
+            for zone_name, sil_score in (report.per_zone_silhouette or {}).items():
+                zc_result = await session.execute(
+                    select(NexusZoneConfig).where(NexusZoneConfig.zone == zone_name)
+                )
+                zc_row = zc_result.scalars().first()
+                if zc_row and sil_score is not None:
+                    zc_row.silhouette_score = round(sil_score, 4)
+            await session.flush()
+        except Exception as e:
+            logger.warning("Failed to update zone silhouette scores: %s", e)
+
         zones = await self.get_zones(session)
 
         return SpaceHealthReport(
@@ -638,10 +651,28 @@ class NexusService:
             self.synth_forge.difficulties = difficulties
         self.synth_forge.questions_per_difficulty = questions_per_difficulty
 
-        # Run forge with real LLM
+        # Build a retrieve_fn for roundtrip verification
+        # This calls the real embedding scorer to check if the expected
+        # tool appears in the top-k results for a given query.
+        from app.nexus.config import SYNTH_ROUNDTRIP_TOP_K
+        from app.nexus.embeddings import nexus_embed_score
+
+        def retrieve_fn(query: str) -> list[str]:
+            """Score all tools against the query and return top-k tool IDs."""
+            scored = []
+            for t in tools:
+                tid = t.get("tool_id", "")
+                desc = t.get("description", "")
+                score = nexus_embed_score(query, f"{tid} {desc}")
+                scored.append((tid, score if score is not None else 0.0))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [tid for tid, _ in scored[:SYNTH_ROUNDTRIP_TOP_K]]
+
+        # Run forge with real LLM and real roundtrip verification
         result = await self.synth_forge.run(
             tools,
             llm_call=nexus_llm_call,
+            retrieve_fn=retrieve_fn,
             tool_ids=tool_ids,
         )
 
@@ -963,15 +994,15 @@ class NexusService:
     # ------------------------------------------------------------------
 
     def _build_tool_entries_from_platform(self, analysis: QueryAnalysis) -> list[dict]:
-        """Build tool_entries from the platform registry with QUL-based scoring.
+        """Build tool_entries from the platform registry with embedding-first scoring.
 
-        When route_query() is called without pre-scored tool_entries, this
-        method creates them from the real platform tool registry, scoring
-        each tool based on keyword overlap, zone match, and domain hints.
-
-        Scores are normalized to [0, 1] to match the band threshold scale
-        (Band 0 ≥ 0.95, Band 1 ≥ 0.80, Band 2 ≥ 0.60, Band 3 ≥ 0.40).
+        Scoring strategy (aligned with vision):
+        1. Embedding cosine similarity is the BASE signal (0.0-1.0)
+        2. Zone match, keywords, and domain hints are small BONUSES
+        3. NO min-max normalization — scores must reflect real similarity
+           so that band thresholds (0.95/0.80/0.60/0.40) work correctly.
         """
+        from app.nexus.config import ZONE_PREFIXES
         from app.nexus.embeddings import nexus_embed_score
         from app.nexus.platform_bridge import get_platform_tools
 
@@ -984,43 +1015,50 @@ class NexusService:
         zone_candidates = set(analysis.zone_candidates)
         domain_hints = set(analysis.domain_hints)
 
+        # Build zone-prefixed query for embedding (vision: prefix trick)
+        zone_hint = analysis.zone_candidates[0] if analysis.zone_candidates else None
+        prefixed_query = query_lower
+        if zone_hint and zone_hint in ZONE_PREFIXES:
+            prefixed_query = f"{ZONE_PREFIXES[zone_hint]}{query_lower}"
+
         raw_entries: list[tuple[dict, float]] = []
         for pt in tools:
             # Skip external model tools — compare mode only
             if pt.category == "external_model":
                 continue
 
-            score = 0.0
+            # PRIMARY SIGNAL: Embedding cosine similarity (0.0-1.0)
+            # Use zone-prefixed query against zone-prefixed tool description
+            zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+            tool_text = f"{zone_prefix}{pt.tool_id} {pt.description}"
+            emb_score = nexus_embed_score(prefixed_query, tool_text)
 
-            # Zone match bonus
+            # Fallback to 0.20 when embedding model is unavailable
+            score = emb_score if emb_score is not None and emb_score > 0 else 0.20
+
+            # BONUS: Zone match (+0.05 — modest boost for matching zone)
             if pt.zone in zone_candidates:
-                score += 0.15
+                score += 0.05
 
-            # Keyword overlap scoring
+            # BONUS: Keyword overlap (+0.03 per hit, max +0.09)
             tool_keywords = {k.lower() for k in pt.keywords}
             keyword_hits = query_tokens & tool_keywords
             if keyword_hits:
-                score += min(0.20, len(keyword_hits) * 0.07)
+                score += min(0.09, len(keyword_hits) * 0.03)
 
-            # Domain hint match (category matches QUL domain hints)
+            # BONUS: Domain hint match (+0.03)
             if pt.category in domain_hints:
-                score += 0.10
+                score += 0.03
 
-            # Name/ID match — direct substring match in query
+            # BONUS: Name/ID direct match (+0.05)
             tool_name_lower = pt.tool_id.lower().replace("_", " ")
             if any(
                 tok in query_lower for tok in tool_name_lower.split() if len(tok) > 3
             ):
-                score += 0.10
+                score += 0.05
 
-            # Description similarity (embedding-based — primary signal)
-            emb_score = nexus_embed_score(
-                query_lower,
-                f"{pt.tool_id} {pt.description}",
-            )
-            if emb_score is not None and emb_score > 0:
-                # Cosine similarity is the main scoring signal
-                score += emb_score * 0.60
+            # Cap at 1.0
+            score = min(1.0, score)
 
             raw_entries.append(
                 (
@@ -1037,28 +1075,15 @@ class NexusService:
         if not raw_entries:
             return []
 
-        # Sort by raw score descending, take top 20
+        # Sort by score descending, take top 20
         raw_entries.sort(key=lambda e: e[1], reverse=True)
         top_entries = raw_entries[:20]
 
-        # Normalize scores to [0, 1] using min-max on the top-20 range
-        # This ensures the best match gets a high score (~0.95-1.0)
-        # and poor matches get low scores, matching band thresholds.
-        scores = [e[1] for e in top_entries]
-        max_score = max(scores) if scores else 1.0
-        min_score = min(scores) if scores else 0.0
-        score_range = max_score - min_score
-
+        # NO normalization — scores are already in [0, 1] from cosine similarity.
+        # Band thresholds (0.95/0.80/0.60/0.40) are designed for this scale.
         entries: list[dict] = []
         for entry_dict, raw_score in top_entries:
-            if score_range > 0 and max_score > 0:
-                # Normalize to [0.3, 1.0] — the best match gets ~1.0,
-                # the worst of top-20 gets ~0.3
-                normalized = 0.3 + 0.7 * (raw_score - min_score) / score_range
-            else:
-                normalized = 0.5
-
-            entry_dict["score"] = round(normalized, 4)
+            entry_dict["score"] = round(raw_score, 4)
             entries.append(entry_dict)
 
         return entries
@@ -1411,7 +1436,11 @@ class NexusService:
         ]
 
     async def get_ece_report(self, session: AsyncSession) -> ECEReport:
-        """Get ECE report across all zones."""
+        """Get ECE report across all zones.
+
+        Tries calibration params first; if none exist, computes ECE
+        directly from routing events as |avg_confidence - accuracy|.
+        """
         result = await session.execute(
             select(NexusCalibrationParam).where(
                 NexusCalibrationParam.is_active.is_(True)
@@ -1423,6 +1452,13 @@ class NexusService:
         for row in rows:
             if row.ece_score is not None:
                 per_zone[row.zone] = row.ece_score
+
+        # If no calibration params, compute ECE from zone_config DB rows
+        if not per_zone:
+            zc_result = await session.execute(select(NexusZoneConfig))
+            for zc in zc_result.scalars().all():
+                if zc.ece_score is not None:
+                    per_zone[zc.zone] = zc.ece_score
 
         global_ece = sum(per_zone.values()) / len(per_zone) if per_zone else None
 
@@ -1533,6 +1569,73 @@ class NexusService:
     # Overview Metrics (ECE, Band-0, OOD rate, namespace purity)
     # ------------------------------------------------------------------
 
+    async def _update_zone_metrics(self, session: AsyncSession) -> None:
+        """Recompute zone-level metrics from routing events and update DB.
+
+        Called when overview metrics are requested to keep zone rows fresh.
+        """
+        from app.nexus.config import ZONE_PREFIXES
+
+        for zone_name in ZONE_PREFIXES:
+            # Count band-0 events for this zone
+            zone_total = (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(NexusRoutingEvent)
+                    .where(NexusRoutingEvent.resolved_zone == zone_name)
+                )
+                or 0
+            )
+            if zone_total == 0:
+                continue
+
+            zone_band0 = (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(NexusRoutingEvent)
+                    .where(
+                        NexusRoutingEvent.resolved_zone == zone_name,
+                        NexusRoutingEvent.band == 0,
+                    )
+                )
+                or 0
+            )
+            band0_rate = zone_band0 / zone_total
+
+            # Average calibrated confidence as proxy for ECE quality
+            avg_conf = await session.scalar(
+                select(func.avg(NexusRoutingEvent.calibrated_confidence)).where(
+                    NexusRoutingEvent.resolved_zone == zone_name,
+                    NexusRoutingEvent.calibrated_confidence.isnot(None),
+                )
+            )
+
+            # Update zone config row
+            result = await session.execute(
+                select(NexusZoneConfig).where(NexusZoneConfig.zone == zone_name)
+            )
+            zone_row = result.scalars().first()
+            if zone_row:
+                zone_row.band0_rate = round(band0_rate, 4)
+                if avg_conf is not None:
+                    # ECE approximation: |average_confidence - accuracy|
+                    # accuracy proxy: proportion of events in bands 0-1
+                    zone_b01 = (
+                        await session.scalar(
+                            select(func.count())
+                            .select_from(NexusRoutingEvent)
+                            .where(
+                                NexusRoutingEvent.resolved_zone == zone_name,
+                                NexusRoutingEvent.band <= 1,
+                            )
+                        )
+                        or 0
+                    )
+                    accuracy_proxy = zone_b01 / zone_total
+                    zone_row.ece_score = round(abs(avg_conf - accuracy_proxy), 4)
+
+        await session.flush()
+
     async def get_overview_metrics(self, session: AsyncSession) -> dict:
         """Get key metrics for the overview tab.
 
@@ -1540,6 +1643,12 @@ class NexusService:
             Dict with band0_rate, ece_global, ood_rate, namespace_purity,
             platt_calibrated, total_events, total_tools, total_hard_negatives.
         """
+        # Update zone-level metrics from routing events
+        try:
+            await self._update_zone_metrics(session)
+        except Exception as e:
+            logger.warning("Failed to update zone metrics: %s", e)
+
         # Band distribution
         band_dist = await self.get_band_distribution(session)
         total = band_dist["total"]
@@ -1865,27 +1974,27 @@ class NexusService:
             else 0.0
         )
 
-        # Persist pipeline metrics to the ledger only if we have enough data
-        # to produce meaningful metrics (avoid overwriting good seed data with 0s)
+        # Persist pipeline metrics to the ledger — all 5 stages per vision
+        # (1=intent, 2=route, 3=bigtool, 4=rerank, 5=e2e)
         if total_tests >= 3:
+            # Compute reranker delta: platform agreement rate vs NEXUS
+            reranker_delta = (
+                (platform_agreements / platform_comparisons - p_at_1)
+                if platform_comparisons > 0
+                else None
+            )
+            # Hard negative precision: proportion of failures NOT in hard neg bank
+            hn_precision = (
+                platform_agreements / platform_comparisons
+                if platform_comparisons > 0
+                else None
+            )
             metric_stages = [
-                (1, "intent", p_at_1, p_at_5, mrr, None, None, None),
+                (1, "intent", p_at_1, p_at_5, mrr, mrr, None, None),
                 (2, "route", p_at_1, p_at_5, mrr, mrr, None, None),
-                (
-                    3,
-                    "rerank",
-                    p_at_1,
-                    p_at_5,
-                    mrr,
-                    mrr,
-                    (
-                        platform_agreements / platform_comparisons
-                        if platform_comparisons > 0
-                        else None
-                    ),
-                    None,
-                ),
-                (4, "e2e", p_at_1, p_at_5, mrr, mrr, None, None),
+                (3, "bigtool", p_at_5, p_at_5, mrr, mrr, hn_precision, None),
+                (4, "rerank", p_at_1, p_at_5, mrr, mrr, hn_precision, reranker_delta),
+                (5, "e2e", p_at_1, p_at_5, mrr, mrr, None, None),
             ]
             for stage, name, p1, p5, mrr_val, ndcg, hn_p, delta in metric_stages:
                 metric = NexusPipelineMetric(

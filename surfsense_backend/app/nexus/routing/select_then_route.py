@@ -122,7 +122,10 @@ class SelectThenRoute:
     def compute_margin(
         self, candidates: list[RetrievalCandidate]
     ) -> tuple[float, float, float]:
-        """Compute top score, second score, and margin from candidates.
+        """Compute top score, second score, and ABSOLUTE margin.
+
+        The margin must be absolute (top - second) to match the band
+        cascade thresholds (Band 0 requires margin >= 0.20, Band 1 >= 0.10).
 
         Returns:
             Tuple of (top_score, second_score, margin).
@@ -131,7 +134,7 @@ class SelectThenRoute:
             return 0.0, 0.0, 0.0
         top = candidates[0].raw_score
         second = candidates[1].raw_score if len(candidates) > 1 else 0.0
-        margin = (top - second) / max(1.0, top) if top > 0 else 0.0
+        margin = top - second
         return top, second, margin
 
     def run(

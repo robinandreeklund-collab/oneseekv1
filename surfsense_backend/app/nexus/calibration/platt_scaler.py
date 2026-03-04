@@ -93,11 +93,20 @@ class PlattCalibratedReranker:
         return self.params
 
     def calibrate(self, raw_score: float) -> float:
-        """Transform a raw reranker score into a calibrated probability."""
+        """Transform a raw reranker score into a calibrated probability.
+
+        When the scaler has NOT been fitted yet, passes through the raw
+        score unchanged.  Applying the default sigmoid (a=1, b=0) would
+        compress all scores toward 0.3-0.5, which breaks band thresholds.
+        """
+        if not self.params.fitted:
+            return raw_score
         return float(1.0 / (1.0 + np.exp(self.params.a * raw_score + self.params.b)))
 
     def calibrate_batch(self, raw_scores: list[float]) -> list[float]:
         """Calibrate a batch of scores."""
+        if not self.params.fitted:
+            return list(raw_scores)
         arr = np.array(raw_scores, dtype=np.float64)
         calibrated = 1.0 / (1.0 + np.exp(self.params.a * arr + self.params.b))
         return calibrated.tolist()
