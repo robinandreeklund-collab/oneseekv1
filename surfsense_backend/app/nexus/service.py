@@ -479,6 +479,12 @@ class NexusService:
                 for h in report.hubness_alerts[:5]
             ],
             total_tools=report.total_tools,
+            cluster_purity=report.cluster_purity if hasattr(report, "cluster_purity") else None,
+            confusion_risk=(
+                round(len(report.confusion_pairs) / max(report.total_tools, 1), 3)
+                if report.confusion_pairs
+                else 0.0
+            ),
         )
 
     async def get_space_snapshot(self, session: AsyncSession) -> SpaceSnapshot:
@@ -1705,6 +1711,57 @@ class NexusService:
         except Exception:
             tool_count = 0
 
+        # Multi-intent rate
+        multi_intent_count = (
+            await session.scalar(
+                select(func.count())
+                .select_from(NexusRoutingEvent)
+                .where(NexusRoutingEvent.is_multi_intent.is_(True))
+            )
+            or 0
+        )
+        multi_intent_rate = multi_intent_count / total if total > 0 else None
+
+        # Reranker delta from latest pipeline metrics
+        reranker_delta = None
+        try:
+            reranker_row = (
+                await session.execute(
+                    select(NexusPipelineMetric)
+                    .where(NexusPipelineMetric.stage_name == "rerank")
+                    .order_by(NexusPipelineMetric.recorded_at.desc())
+                    .limit(1)
+                )
+            ).scalars().first()
+            if reranker_row and reranker_row.reranker_delta is not None:
+                reranker_delta = round(reranker_row.reranker_delta, 4)
+        except Exception:
+            pass
+
+        # Embedding health from space auditor
+        silhouette_global = None
+        inter_zone_distance = None
+        hubness_rate = None
+        try:
+            space_health = await self.get_space_health(session)
+            silhouette_global = space_health.global_silhouette
+            if space_health.zone_metrics:
+                inter_zone_distances = [
+                    zm.inter_zone_min_distance
+                    for zm in space_health.zone_metrics
+                    if zm.inter_zone_min_distance is not None
+                ]
+                if inter_zone_distances:
+                    inter_zone_distance = round(
+                        sum(inter_zone_distances) / len(inter_zone_distances), 4
+                    )
+            if space_health.hubness_alerts and space_health.total_tools > 0:
+                hubness_rate = round(
+                    len(space_health.hubness_alerts) / space_health.total_tools, 4
+                )
+        except Exception:
+            pass
+
         return {
             "band0_rate": round(band0_rate, 4),
             "ece_global": ece_report.global_ece,
@@ -1716,6 +1773,12 @@ class NexusService:
             "total_hard_negatives": hn_count,
             "band_distribution": band_dist["distribution"],
             "band_percentages": band_dist["percentages"],
+            "multi_intent_rate": round(multi_intent_rate, 4) if multi_intent_rate is not None else None,
+            "schema_match_rate": round(namespace_purity, 4),
+            "reranker_delta": reranker_delta,
+            "silhouette_global": silhouette_global,
+            "inter_zone_distance": inter_zone_distance,
+            "hubness_rate": hubness_rate,
         }
 
     # ------------------------------------------------------------------

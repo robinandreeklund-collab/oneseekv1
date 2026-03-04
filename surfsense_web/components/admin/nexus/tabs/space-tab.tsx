@@ -52,12 +52,25 @@ export function SpaceTab() {
 		<div className="space-y-6">
 			{/* Health Summary */}
 			{health && (
-				<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+				<div className="grid grid-cols-1 md:grid-cols-5 gap-4">
 					<MetricCard
 						label="Separation Score"
 						value={health.global_silhouette}
 						target={0.60}
 						format="score"
+					/>
+					<MetricCard
+						label="Cluster Purity"
+						value={health.cluster_purity}
+						target={0.85}
+						format="score"
+					/>
+					<MetricCard
+						label="Confusion Risk"
+						value={health.confusion_risk}
+						target={0.20}
+						format="score"
+						invert
 					/>
 					<MetricCard
 						label="Totala verktyg"

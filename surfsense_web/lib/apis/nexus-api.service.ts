@@ -125,6 +125,8 @@ export interface HubnessReport {
 
 export interface SpaceHealthReport {
 	global_silhouette: number | null;
+	cluster_purity: number | null;
+	confusion_risk: number | null;
 	zone_metrics: ZoneConfigResponse[];
 	top_confusion_pairs: ConfusionPair[];
 	hubness_alerts: HubnessReport[];
@@ -265,6 +267,12 @@ export interface OverviewMetricsResponse {
 	total_events: number;
 	total_tools: number;
 	total_hard_negatives: number;
+	multi_intent_rate: number | null;
+	schema_match_rate: number | null;
+	reranker_delta: number | null;
+	silhouette_global: number | null;
+	inter_zone_distance: number | null;
+	hubness_rate: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +547,12 @@ class NexusApiService {
 	// Live Routing Config
 	getLiveRoutingConfig = () =>
 		fetchNexus<LiveRoutingConfigResponse>("/tools/live-routing");
+
+	// Reset all NEXUS dev data
+	resetAll = () =>
+		fetchNexus<{ status: string; deleted: Record<string, number> }>("/reset", {
+			method: "POST",
+		});
 
 	// Shadow Observer
 	getShadowReport = () =>

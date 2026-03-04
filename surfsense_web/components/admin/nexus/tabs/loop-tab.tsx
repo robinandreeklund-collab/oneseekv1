@@ -10,6 +10,8 @@ import {
 	Clock,
 	Loader2,
 	Play,
+	ThumbsUp,
+	ThumbsDown,
 	XCircle,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -369,11 +371,28 @@ export function LoopTab() {
 												</div>
 											) : detail ? (
 												<>
-													{/* Approve button */}
+													{/* Header with embedding delta + approve all */}
 													<div className="flex items-center justify-between">
-														<h5 className="text-sm font-semibold">
-															Korningsdetaljer -- Loop #{detail.loop_number}
-														</h5>
+														<div className="flex items-center gap-4">
+															<h5 className="text-sm font-semibold">
+																Loop #{detail.loop_number}
+															</h5>
+															{detail.embedding_delta != null && (
+																<span
+																	className={`text-xs font-mono px-2 py-0.5 rounded ${
+																		detail.embedding_delta > 0
+																			? "bg-green-100 text-green-700"
+																			: detail.embedding_delta < 0
+																				? "bg-red-100 text-red-700"
+																				: "bg-muted text-muted-foreground"
+																	}`}
+																>
+																	Embedding delta:{" "}
+																	{detail.embedding_delta > 0 ? "+" : ""}
+																	{(detail.embedding_delta * 100).toFixed(2)}pp
+																</span>
+															)}
+														</div>
 														<Button
 															size="sm"
 															onClick={(e) => {
@@ -395,7 +414,7 @@ export function LoopTab() {
 													</div>
 
 													<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-														{/* Proposals */}
+														{/* Proposals with per-proposal actions */}
 														<Card>
 															<CardHeader className="py-3 px-4">
 																<CardTitle className="text-sm">
@@ -412,26 +431,42 @@ export function LoopTab() {
 																		{detail.proposals.map((proposal, idx) => (
 																			<div
 																				key={`${proposal.tool_id}-${proposal.field}-${idx}`}
-																				className="rounded-md border bg-background p-3 text-sm space-y-1"
+																				className="rounded-md border bg-background p-3 text-sm space-y-2"
 																			>
-																				<p>
-																					<span className="font-medium text-muted-foreground">
-																						Tool:
-																					</span>{" "}
-																					{proposal.tool_id}
-																				</p>
-																				<p>
-																					<span className="font-medium text-muted-foreground">
-																						Falt:
-																					</span>{" "}
-																					{proposal.field}
-																				</p>
-																				<p>
-																					<span className="font-medium text-muted-foreground">
-																						Anledning:
-																					</span>{" "}
-																					{proposal.reason}
-																				</p>
+																				<div className="flex items-start justify-between gap-2">
+																					<div className="space-y-1 flex-1">
+																						<p className="font-mono font-medium text-xs">
+																							{proposal.tool_id}
+																						</p>
+																						<p>
+																							<span className="text-muted-foreground">
+																								Falt:
+																							</span>{" "}
+																							<span className="font-medium">{proposal.field}</span>
+																						</p>
+																						<p className="text-muted-foreground text-xs">
+																							{proposal.reason}
+																						</p>
+																					</div>
+																					{run.status === "review" && (
+																						<div className="flex gap-1 shrink-0">
+																							<button
+																								type="button"
+																								className="p-1 rounded hover:bg-green-100 transition-colors"
+																								title="Godkann forslag"
+																							>
+																								<ThumbsUp className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
+																							</button>
+																							<button
+																								type="button"
+																								className="p-1 rounded hover:bg-red-100 transition-colors"
+																								title="Avvisa forslag"
+																							>
+																								<ThumbsDown className="h-3.5 w-3.5 text-muted-foreground hover:text-red-600" />
+																							</button>
+																						</div>
+																					)}
+																				</div>
 																			</div>
 																		))}
 																	</div>

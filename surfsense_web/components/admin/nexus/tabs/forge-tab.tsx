@@ -201,60 +201,17 @@ export function ForgeTab() {
 				<StatCard label="Verktyg med testfall" value={String(toolCount)} />
 			</div>
 
-			{/* Cases by difficulty */}
+			{/* Cases grouped by tool, then by difficulty */}
 			{filteredCases.length === 0 ? (
 				<div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
 					{selectedCategory
-						? `Inga testfall f\u00f6r ${CATEGORY_LABELS[selectedCategory] || selectedCategory}. Klicka "Generera" f\u00f6r att skapa.`
+						? `Inga testfall for ${CATEGORY_LABELS[selectedCategory] || selectedCategory}. Klicka "Generera" for att skapa.`
 						: query
-							? "Inga testfall matchar din s\u00f6kning."
-							: 'Inga syntetiska testfall genererade \u00e4nnu. Klicka "Generera testfall" f\u00f6r att b\u00f6rja.'}
+							? "Inga testfall matchar din sokning."
+							: 'Inga syntetiska testfall genererade annu. Klicka "Generera testfall" for att borja.'}
 				</div>
 			) : (
-				<div className="rounded-lg border bg-card">
-					<div className="p-4 border-b">
-						<h4 className="font-semibold">Testfall ({filteredCases.length})</h4>
-					</div>
-					<div className="divide-y max-h-96 overflow-y-auto">
-						{filteredCases.map((c) => (
-							<div key={c.id} className="flex items-start justify-between p-4 gap-4">
-								<div className="flex-1 min-w-0">
-									<p className="text-sm font-medium truncate">{c.question}</p>
-									<p className="text-xs text-muted-foreground mt-1">
-										{c.tool_id} &middot; {c.namespace}
-									</p>
-								</div>
-								<div className="flex items-center gap-2 shrink-0">
-									<Badge variant="outline" className="text-xs font-mono">
-										{c.quality_score != null
-											? c.quality_score.toFixed(1)
-											: "\u2014"}
-									</Badge>
-									<DifficultyBadge difficulty={c.difficulty} />
-									{c.roundtrip_verified ? (
-										<CheckCircle2 className="h-4 w-4 text-green-600" />
-									) : (
-										<XCircle className="h-4 w-4 text-muted-foreground" />
-									)}
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-muted-foreground hover:text-destructive"
-										disabled={deletingIds.has(c.id)}
-										onClick={() => handleDelete(c.id)}
-										title="Ta bort testfall"
-									>
-										{deletingIds.has(c.id) ? (
-											<Loader2 className="h-3.5 w-3.5 animate-spin" />
-										) : (
-											<Trash2 className="h-3.5 w-3.5" />
-										)}
-									</Button>
-								</div>
-							</div>
-						))}
-					</div>
-				</div>
+				<ToolGroupedCases cases={filteredCases} deletingIds={deletingIds} onDelete={handleDelete} />
 			)}
 		</div>
 	);
@@ -265,6 +222,113 @@ function StatCard({ label, value }: { label: string; value: string }) {
 		<div className="rounded-lg border bg-card p-4">
 			<p className="text-sm text-muted-foreground">{label}</p>
 			<p className="text-2xl font-bold mt-1">{value}</p>
+		</div>
+	);
+}
+
+const DIFFICULTY_ORDER = ["easy", "medium", "hard", "adversarial"];
+const DIFFICULTY_LABELS: Record<string, string> = {
+	easy: "LATT (direkta)",
+	medium: "MEDEL (kontextuella)",
+	hard: "SVAR (tvetydiga)",
+	adversarial: "ADVERSARIAL (bor INTE valja detta verktyg)",
+};
+
+function ToolGroupedCases({
+	cases,
+	deletingIds,
+	onDelete,
+}: {
+	cases: SyntheticCaseResponse[];
+	deletingIds: Set<string>;
+	onDelete: (id: string) => void;
+}) {
+	// Group by tool_id
+	const byTool = new Map<string, SyntheticCaseResponse[]>();
+	for (const c of cases) {
+		const list = byTool.get(c.tool_id) || [];
+		list.push(c);
+		byTool.set(c.tool_id, list);
+	}
+
+	return (
+		<div className="space-y-4">
+			{Array.from(byTool.entries())
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([toolId, toolCases]) => {
+					const verified = toolCases.filter((c) => c.roundtrip_verified).length;
+					const byDiff = new Map<string, SyntheticCaseResponse[]>();
+					for (const c of toolCases) {
+						const list = byDiff.get(c.difficulty) || [];
+						list.push(c);
+						byDiff.set(c.difficulty, list);
+					}
+
+					return (
+						<div key={toolId} className="rounded-lg border bg-card">
+							<div className="p-4 border-b flex items-center justify-between">
+								<div>
+									<h4 className="font-mono font-semibold text-sm">{toolId}</h4>
+									<p className="text-xs text-muted-foreground">
+										{toolCases[0]?.namespace} — {toolCases.length} testfall, {verified} verifierade
+									</p>
+								</div>
+								<div className="flex gap-1.5">
+									{DIFFICULTY_ORDER.map((d) => {
+										const count = byDiff.get(d)?.length ?? 0;
+										return (
+											<span key={d} className="text-xs text-muted-foreground">
+												<DifficultyBadge difficulty={d} /> {count}
+											</span>
+										);
+									})}
+								</div>
+							</div>
+							<div className="max-h-80 overflow-y-auto">
+								{DIFFICULTY_ORDER.filter((d) => byDiff.has(d)).map((difficulty) => (
+									<div key={difficulty}>
+										<div className="px-4 py-1.5 bg-muted/30 text-xs font-medium text-muted-foreground">
+											{DIFFICULTY_LABELS[difficulty] || difficulty}
+										</div>
+										<div className="divide-y">
+											{(byDiff.get(difficulty) || []).map((c) => (
+												<div key={c.id} className="flex items-start justify-between px-4 py-2.5 gap-4">
+													<div className="flex-1 min-w-0">
+														<p className="text-sm">{c.question}</p>
+													</div>
+													<div className="flex items-center gap-2 shrink-0">
+														<Badge variant="outline" className="text-xs font-mono">
+															{c.quality_score != null ? c.quality_score.toFixed(1) : "\u2014"}
+														</Badge>
+														{c.roundtrip_verified ? (
+															<CheckCircle2 className="h-4 w-4 text-green-600" />
+														) : (
+															<XCircle className="h-4 w-4 text-muted-foreground" />
+														)}
+														<Button
+															variant="ghost"
+															size="icon"
+															className="h-7 w-7 text-muted-foreground hover:text-destructive"
+															disabled={deletingIds.has(c.id)}
+															onClick={() => onDelete(c.id)}
+															title="Ta bort testfall"
+														>
+															{deletingIds.has(c.id) ? (
+																<Loader2 className="h-3.5 w-3.5 animate-spin" />
+															) : (
+																<Trash2 className="h-3.5 w-3.5" />
+															)}
+														</Button>
+													</div>
+												</div>
+											))}
+										</div>
+									</div>
+								))}
+							</div>
+						</div>
+					);
+				})}
 		</div>
 	);
 }

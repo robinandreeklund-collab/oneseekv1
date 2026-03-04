@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -12,6 +12,7 @@ import {
 	Orbit,
 	Rocket,
 	Sparkles,
+	Trash2,
 } from "lucide-react";
 import {
 	nexusApiService,
@@ -58,6 +59,8 @@ export function NexusDashboard() {
 	const [health, setHealth] = useState<NexusHealthResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [resetting, setResetting] = useState(false);
+	const [resetResult, setResetResult] = useState<string | null>(null);
 
 	useEffect(() => {
 		nexusApiService
@@ -67,15 +70,52 @@ export function NexusDashboard() {
 			.finally(() => setLoading(false));
 	}, []);
 
+	const handleReset = useCallback(() => {
+		if (!window.confirm("Nollställ ALL NEXUS-data? Routing-händelser, testfall, loop-körningar, snapshots — allt raderas.")) {
+			return;
+		}
+		setResetting(true);
+		setResetResult(null);
+		nexusApiService
+			.resetAll()
+			.then((res) => {
+				const total = Object.values(res.deleted).reduce((a, b) => a + b, 0);
+				setResetResult(`Raderade ${total} rader. Ladda om sidan.`);
+			})
+			.catch((err) => setResetResult(`Fel: ${err.message}`))
+			.finally(() => setResetting(false));
+	}, []);
+
 	return (
 		<div className="space-y-6">
 			{/* Header */}
-			<div>
-				<h1 className="text-3xl font-bold tracking-tight">NEXUS</h1>
-				<p className="text-muted-foreground mt-1">
-					Retrieval Intelligence Platform — precisionrouting, självförbättrande
-					eval och embedding-rymd-hälsa
-				</p>
+			<div className="flex items-center justify-between">
+				<div>
+					<h1 className="text-3xl font-bold tracking-tight">NEXUS</h1>
+					<p className="text-muted-foreground mt-1">
+						Retrieval Intelligence Platform — precisionrouting, självförbättrande
+						eval och embedding-rymd-hälsa
+					</p>
+				</div>
+				<div className="flex items-center gap-2">
+					{resetResult && (
+						<span className="text-xs text-muted-foreground">{resetResult}</span>
+					)}
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={handleReset}
+						disabled={resetting}
+						className="text-destructive hover:text-destructive"
+					>
+						{resetting ? (
+							<Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+						) : (
+							<Trash2 className="h-3.5 w-3.5 mr-1.5" />
+						)}
+						Nollställ NEXUS
+					</Button>
+				</div>
 			</div>
 
 			{/* Health Summary */}
@@ -186,81 +226,138 @@ function OverviewTab() {
 			.finally(() => setMetricsLoading(false));
 	}, []);
 
+	const pct = (v: number | null | undefined) =>
+		v != null ? `${(v * 100).toFixed(1)}%` : "—";
+	const num = (v: number | null | undefined, decimals = 4) =>
+		v != null ? v.toFixed(decimals) : "—";
+	const pctColor = (v: number | null | undefined, good: number, invert = false) => {
+		if (v == null) return undefined;
+		return invert ? (v <= good ? "green" : "red") : (v >= good ? "green" : "red");
+	};
+
 	return (
 		<div className="space-y-6">
-			{/* Key Performance Metrics */}
 			{metricsLoading ? (
 				<div className="flex items-center gap-2 text-muted-foreground">
 					<Loader2 className="h-4 w-4 animate-spin" />
 					Laddar metriker...
 				</div>
 			) : metrics ? (
-				<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-					<StatusCard
-						label="Band-0 Throughput"
-						value={
-							metrics.band0_rate != null
-								? `${(metrics.band0_rate * 100).toFixed(1)}%`
-								: "—"
-						}
-						color={
-							metrics.band0_rate != null && metrics.band0_rate >= 0.8
-								? "green"
-								: undefined
-						}
-					/>
-					<StatusCard
-						label="ECE Global"
-						value={
-							metrics.ece_global != null
-								? metrics.ece_global.toFixed(4)
-								: "—"
-						}
-						color={
-							metrics.ece_global != null && metrics.ece_global < 0.05
-								? "green"
-								: undefined
-						}
-					/>
-					<StatusCard
-						label="OOD Rate"
-						value={
-							metrics.ood_rate != null
-								? `${(metrics.ood_rate * 100).toFixed(1)}%`
-								: "—"
-						}
-						color={
-							metrics.ood_rate != null && metrics.ood_rate < 0.03
-								? "green"
-								: metrics.ood_rate != null && metrics.ood_rate >= 0.03
-									? "red"
-									: undefined
-						}
-					/>
-					<StatusCard
-						label="Platt-kalibrerad"
-						value={metrics.platt_calibrated ? "Ja" : "Nej"}
-						color={metrics.platt_calibrated ? "green" : "red"}
-					/>
-				</div>
-			) : null}
+				<>
+					{/* SECTION 1: Routing Health */}
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-base">Routing Health</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+								<StatusCard
+									label="Band-0 Throughput"
+									value={pct(metrics.band0_rate)}
+									color={pctColor(metrics.band0_rate, 0.8)}
+								/>
+								<StatusCard
+									label="Multi-intent detect"
+									value={pct(metrics.multi_intent_rate)}
+								/>
+								<StatusCard
+									label="Schema match rate"
+									value={pct(metrics.schema_match_rate)}
+									color={pctColor(metrics.schema_match_rate, 0.9)}
+								/>
+								<StatusCard
+									label="OOD rate (dark matter)"
+									value={pct(metrics.ood_rate)}
+									color={pctColor(metrics.ood_rate, 0.03, true)}
+								/>
+							</div>
+						</CardContent>
+					</Card>
 
-			{/* Additional counts */}
-			{metrics ? (
-				<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-					<StatusCard
-						label="Totala routing-händelser"
-						value={String(metrics.total_events)}
-					/>
-					<StatusCard
-						label="Verktyg indexerade"
-						value={String(metrics.total_tools)}
-					/>
-					<StatusCard
-						label="Hard negatives"
-						value={String(metrics.total_hard_negatives)}
-					/>
-				</div>
+					{/* SECTION 2: Calibration */}
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-base">Calibration</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+								<StatusCard
+									label="Global ECE"
+									value={num(metrics.ece_global)}
+									color={pctColor(metrics.ece_global, 0.05, true)}
+								/>
+								<StatusCard
+									label="Platt-kalibrerad"
+									value={metrics.platt_calibrated ? "Ja" : "Nej"}
+									color={metrics.platt_calibrated ? "green" : "red"}
+								/>
+								<StatusCard
+									label="Routing-händelser"
+									value={String(metrics.total_events)}
+								/>
+							</div>
+						</CardContent>
+					</Card>
+
+					{/* SECTION 3: Retrieval Quality */}
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-base">Retrieval Quality</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+								<StatusCard
+									label="Namespace Purity"
+									value={pct(metrics.namespace_purity)}
+									color={pctColor(metrics.namespace_purity, 0.88)}
+								/>
+								<StatusCard
+									label="Hard negatives"
+									value={String(metrics.total_hard_negatives)}
+								/>
+								<StatusCard
+									label="Reranker Delta"
+									value={metrics.reranker_delta != null ? `+${(metrics.reranker_delta * 100).toFixed(1)}pp` : "—"}
+									color={metrics.reranker_delta != null && metrics.reranker_delta > 0.12 ? "green" : undefined}
+								/>
+								<StatusCard
+									label="Verktyg indexerade"
+									value={String(metrics.total_tools)}
+								/>
+							</div>
+						</CardContent>
+					</Card>
+
+					{/* SECTION 4: Embedding Health */}
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-base">Embedding Health</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+								<StatusCard
+									label="Silhouette (global)"
+									value={num(metrics.silhouette_global, 3)}
+									color={pctColor(metrics.silhouette_global, 0.55)}
+								/>
+								<StatusCard
+									label="Inter-zone distance"
+									value={num(metrics.inter_zone_distance, 3)}
+									color={pctColor(metrics.inter_zone_distance, 0.55)}
+								/>
+								<StatusCard
+									label="Hubness rate"
+									value={pct(metrics.hubness_rate)}
+									color={pctColor(metrics.hubness_rate, 0.05, true)}
+								/>
+								<StatusCard
+									label="False negative rate"
+									value="—"
+								/>
+							</div>
+						</CardContent>
+					</Card>
+				</>
 			) : null}
 
 			<LiveRoutingPanel />
@@ -285,20 +382,45 @@ const PHASE_LABELS: Record<string, string> = {
 	intent_finetune: "Intent finetune",
 };
 
+const DEFAULT_TUNING = {
+	live_routing_enabled: false,
+	live_routing_phase: "shadow",
+	name_match_weight: 5.0,
+	keyword_weight: 3.0,
+	description_token_weight: 1.0,
+	example_query_weight: 2.0,
+	namespace_boost: 3.0,
+	embedding_weight: 4.0,
+	semantic_embedding_weight: 2.8,
+	structural_embedding_weight: 1.2,
+	rerank_candidates: 24,
+	tool_auto_score_threshold: 0.6,
+	tool_auto_margin_threshold: 0.25,
+	agent_auto_score_threshold: 0.55,
+	agent_auto_margin_threshold: 0.18,
+	intent_candidate_top_k: 3,
+	agent_candidate_top_k: 3,
+	tool_candidate_top_k: 5,
+} as LiveRoutingConfigResponse["current_config"];
+
 function LiveRoutingPanel() {
 	const [config, setConfig] = useState<LiveRoutingConfigResponse | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [usingDefaults, setUsingDefaults] = useState(false);
 
 	useEffect(() => {
 		nexusApiService
 			.getLiveRoutingConfig()
 			.then(setConfig)
-			.catch(() => {})
+			.catch(() => {
+				setConfig({ phases: PHASE_LABELS as unknown as Record<string, number>, current_config: DEFAULT_TUNING });
+				setUsingDefaults(true);
+			})
 			.finally(() => setLoading(false));
 	}, []);
 
-	const cfg = config?.current_config;
-	const currentPhase = cfg?.live_routing_phase ?? "shadow";
+	const cfg = config?.current_config ?? DEFAULT_TUNING;
+	const currentPhase = cfg.live_routing_phase ?? "shadow";
 
 	return (
 		<Card>
@@ -306,6 +428,9 @@ function LiveRoutingPanel() {
 				<div className="flex items-center gap-2">
 					<Settings className="h-4 w-4 text-muted-foreground" />
 					<CardTitle>Fas & Retrieval-vikter</CardTitle>
+					{usingDefaults && (
+						<span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">defaults</span>
+					)}
 				</div>
 				<Link
 					href="/admin/tools"
@@ -321,10 +446,6 @@ function LiveRoutingPanel() {
 						<Loader2 className="h-4 w-4 animate-spin" />
 						Laddar routing-konfiguration...
 					</div>
-				) : !cfg ? (
-					<p className="text-sm text-muted-foreground">
-						Kunde inte hämta routing-konfiguration.
-					</p>
 				) : (
 					<div className="space-y-4">
 						{/* Phase badges */}

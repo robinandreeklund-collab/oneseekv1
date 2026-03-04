@@ -783,3 +783,50 @@ async def seed_data(
     from app.nexus.seed import seed_nexus_data
 
     return await seed_nexus_data(session)
+
+
+# ------------------------------------------------------------------
+# Reset (Dev-mode)
+# ------------------------------------------------------------------
+
+
+@nexus_router.post("/reset")
+async def reset_all_data(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Truncate ALL NEXUS tables — useful during development.
+
+    Deletes routing events, synthetic cases, loop runs, space snapshots,
+    dark matter queries, hard negatives, pipeline metrics, and calibration params.
+    Zone configs are preserved (they are infrastructure).
+    """
+    from sqlalchemy import delete
+
+    from app.nexus.models import (
+        NexusAutoLoopRun,
+        NexusCalibrationParams,
+        NexusDarkMatterQuery,
+        NexusHardNegative,
+        NexusPipelineMetric,
+        NexusRoutingEvent,
+        NexusSpaceSnapshot,
+        NexusSyntheticCase,
+    )
+
+    counts: dict[str, int] = {}
+    for model in [
+        NexusRoutingEvent,
+        NexusSyntheticCase,
+        NexusAutoLoopRun,
+        NexusSpaceSnapshot,
+        NexusDarkMatterQuery,
+        NexusHardNegative,
+        NexusPipelineMetric,
+        NexusCalibrationParams,
+    ]:
+        result = await session.execute(delete(model))
+        counts[model.__tablename__] = result.rowcount  # type: ignore[attr-defined]
+
+    await session.commit()
+    return {"status": "ok", "deleted": counts}

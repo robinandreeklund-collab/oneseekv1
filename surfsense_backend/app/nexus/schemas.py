@@ -150,6 +150,8 @@ class HubnessReport(BaseModel):
 
 class SpaceHealthReport(BaseModel):
     global_silhouette: float | None = None
+    cluster_purity: float | None = None
+    confusion_risk: float | None = None
     zone_metrics: list[ZoneConfigResponse] = Field(default_factory=list)
     top_confusion_pairs: list[ConfusionPair] = Field(default_factory=list)
     hubness_alerts: list[HubnessReport] = Field(default_factory=list)
