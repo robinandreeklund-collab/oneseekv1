@@ -464,8 +464,8 @@ class MetadataOptimizer:
 
         if parsed is None:
             logger.warning(
-                "Failed to parse LLM response as JSON. First 500 chars: %s",
-                response_text[:500],
+                "Failed to parse LLM response as JSON. Full response:\n%s",
+                response_text,
             )
             return []
 
