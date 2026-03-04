@@ -163,7 +163,13 @@ _MULTI_INTENT_CONJUNCTIONS = re.compile(
 class QueryUnderstandingLayer:
     """Pre-routing query analysis — no LLM, <5ms target."""
 
-    def analyze(self, query: str) -> QueryAnalysisResult:
+    def analyze(
+        self,
+        query: str,
+        *,
+        domain_hints_map: dict[str, list[str]] | None = None,
+        category_hints_map: dict[str, list[str]] | None = None,
+    ) -> QueryAnalysisResult:
         # 1. Swedish normalization
         normalized = self._normalize_swedish(query)
 
@@ -174,8 +180,12 @@ class QueryUnderstandingLayer:
         sub_queries = self._detect_and_split_intents(normalized)
         is_multi = len(sub_queries) > 1
 
-        # 4. Domain hint scoring
-        domain_hints = self._score_domain_hints(normalized, entities)
+        # 4. Domain hint scoring (use dynamic hints from DB if provided)
+        domain_hints = self._score_domain_hints(
+            normalized, entities,
+            domain_hints_map=domain_hints_map,
+            category_hints_map=category_hints_map,
+        )
 
         # 5. Zone candidate scoring
         zone_candidates = self._resolve_zones(domain_hints, entities)
@@ -275,19 +285,33 @@ class QueryUnderstandingLayer:
 
         return [query]
 
-    def _score_domain_hints(self, query: str, entities: QueryEntities) -> list[str]:
+    def _score_domain_hints(
+        self,
+        query: str,
+        entities: QueryEntities,
+        *,
+        domain_hints_map: dict[str, list[str]] | None = None,
+        category_hints_map: dict[str, list[str]] | None = None,
+    ) -> list[str]:
         """Score which domain zones AND categories are relevant.
 
         Returns a list where the first entries are zone names (e.g. "kunskap")
         followed by category hints (e.g. "väder", "statistik").  The category
         hints let the AgentResolver boost the specific agent instead of
         treating all agents in the zone equally.
+
+        Args:
+            domain_hints_map: Dynamic zone→keywords map from DB. Falls back to static config.
+            category_hints_map: Dynamic agent→keywords map from DB. Falls back to static config.
         """
+        _domain_hints = domain_hints_map if domain_hints_map is not None else DOMAIN_HINTS
+        _category_hints = category_hints_map if category_hints_map is not None else CATEGORY_HINTS
+
         lower = query.lower()
         hints: list[str] = []
 
         # Zone-level hints
-        for zone, keywords in DOMAIN_HINTS.items():
+        for zone, keywords in _domain_hints.items():
             for kw in keywords:
                 if kw in lower:
                     if zone not in hints:
@@ -295,7 +319,7 @@ class QueryUnderstandingLayer:
                     break
 
         # Category-level hints (agent-granular)
-        for category, keywords in CATEGORY_HINTS.items():
+        for category, keywords in _category_hints.items():
             for kw in keywords:
                 if kw in lower:
                     if category not in hints:

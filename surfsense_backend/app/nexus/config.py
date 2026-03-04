@@ -261,6 +261,74 @@ def build_agents_from_metadata(
     return by_name, by_zone
 
 
+def build_hints_from_metadata(
+    agent_metadata_list: list[dict],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Build dynamic DOMAIN_HINTS and CATEGORY_HINTS from DB agent metadata.
+
+    Generates zone-level and agent-level keyword lookups from the effective
+    agent metadata, so QUL keyword matching reflects admin flow changes.
+
+    Args:
+        agent_metadata_list: List of agent metadata dicts from
+            agent_metadata_service.get_effective_agent_metadata().
+
+    Returns:
+        Tuple of (domain_hints, category_hints) dicts.
+        - domain_hints: zone_name → list of keywords (union of all agents in that zone)
+        - category_hints: agent_name → list of keywords
+    """
+    domain_hints: dict[str, list[str]] = {}
+    category_hints: dict[str, list[str]] = {}
+
+    for meta in agent_metadata_list:
+        agent_id = meta.get("agent_id", "")
+        if not agent_id:
+            continue
+
+        # Get keywords
+        keywords = meta.get("keywords", [])
+        if not isinstance(keywords, list):
+            keywords = []
+        kw_list = [str(k).lower() for k in keywords if k]
+
+        # Build category hints (agent-level)
+        if kw_list:
+            category_hints[agent_id] = kw_list
+
+        # Determine zone from routes
+        routes = meta.get("routes", [])
+        zone_name: str | None = None
+        for route_name in routes:
+            try:
+                zone_name = Zone(route_name).value
+                break
+            except ValueError:
+                continue
+
+        if zone_name is None:
+            zone_name = Zone.KUNSKAP.value
+
+        # Add keywords to the zone's domain hints
+        if zone_name not in domain_hints:
+            domain_hints[zone_name] = []
+        for kw in kw_list:
+            if kw not in domain_hints[zone_name]:
+                domain_hints[zone_name].append(kw)
+
+        # Also add description-derived terms: main_identifier, core_activity
+        # and the excludes list as negative signals
+        for extra_field in ("main_identifier", "core_activity", "unique_scope"):
+            val = meta.get(extra_field, "")
+            if val and isinstance(val, str):
+                # Extract meaningful words (>3 chars) as additional zone hints
+                for word in val.lower().split():
+                    if len(word) > 3 and word not in domain_hints[zone_name]:
+                        domain_hints[zone_name].append(word)
+
+    return domain_hints, category_hints
+
+
 # ---------------------------------------------------------------------------
 # Confidence Band Cascade
 # ---------------------------------------------------------------------------

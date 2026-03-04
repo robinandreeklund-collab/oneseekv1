@@ -106,27 +106,32 @@ class NexusService:
 
     async def _load_db_agents(
         self, session: AsyncSession
-    ) -> tuple[dict | None, dict | None]:
-        """Load agent definitions from DB (admin flow routing).
+    ) -> tuple[dict | None, dict | None, dict | None, dict | None]:
+        """Load agent definitions and hints from DB (admin flow routing).
 
-        Returns (agent_by_name, agents_by_zone) or (None, None) if no
-        overrides exist, in which case static config.py agents are used.
+        Returns (agent_by_name, agents_by_zone, domain_hints, category_hints)
+        or (None, None, None, None) if no overrides exist, in which case
+        static config.py values are used.
         """
         try:
-            from app.nexus.config import build_agents_from_metadata
+            from app.nexus.config import (
+                build_agents_from_metadata,
+                build_hints_from_metadata,
+            )
             from app.services.agent_metadata_service import (
                 get_effective_agent_metadata,
             )
 
             metadata = await get_effective_agent_metadata(session)
             if not metadata:
-                return None, None
+                return None, None, None, None
             by_name, by_zone = build_agents_from_metadata(metadata)
+            domain_hints, category_hints = build_hints_from_metadata(metadata)
             if by_name:
-                return by_name, by_zone
+                return by_name, by_zone, domain_hints, category_hints
         except Exception as e:
             logger.warning("Failed to load DB agents, using static config: %s", e)
-        return None, None
+        return None, None, None, None
 
     # ------------------------------------------------------------------
     # Health & Config
@@ -254,8 +259,38 @@ class NexusService:
     # Query Analysis (QUL only)
     # ------------------------------------------------------------------
 
+    def _analyze_query_with_hints(
+        self,
+        query: str,
+        *,
+        domain_hints_map: dict[str, list[str]] | None = None,
+        category_hints_map: dict[str, list[str]] | None = None,
+    ) -> QueryAnalysis:
+        """Run QUL analysis with optional dynamic hints from DB."""
+        result = self.qul.analyze(
+            query,
+            domain_hints_map=domain_hints_map,
+            category_hints_map=category_hints_map,
+        )
+
+        return QueryAnalysis(
+            original_query=result.original_query,
+            normalized_query=result.normalized_query,
+            sub_queries=result.sub_queries,
+            entities=QueryEntities(
+                locations=result.entities.locations,
+                times=result.entities.times,
+                organizations=result.entities.organizations,
+                topics=result.entities.topics,
+            ),
+            domain_hints=result.domain_hints,
+            zone_candidates=result.zone_candidates,
+            complexity=result.complexity,
+            is_multi_intent=result.is_multi_intent,
+        )
+
     def analyze_query(self, query: str) -> QueryAnalysis:
-        """Run QUL analysis on a query (no DB, no LLM)."""
+        """Run QUL analysis on a query (no DB, no LLM). Uses static hints."""
         result = self.qul.analyze(query)
 
         return QueryAnalysis(
@@ -302,13 +337,19 @@ class NexusService:
 
         start_time = time.monotonic()
 
-        # Step 1: QUL — Intent/Zone resolution
-        analysis = self.analyze_query(query)
+        # Load dynamic agents and hints from DB (admin flow) if available
+        db_agent_by_name, db_agents_by_zone, db_domain_hints, db_category_hints = (
+            await self._load_db_agents(session)
+        )
+
+        # Step 1: QUL — Intent/Zone resolution (with dynamic hints)
+        analysis = self._analyze_query_with_hints(
+            query,
+            domain_hints_map=db_domain_hints,
+            category_hints_map=db_category_hints,
+        )
 
         # Step 2: Agent Resolution — narrow from zone to specific agent(s)
-        # Load agents dynamically from DB (admin flow) if available
-        db_agent_by_name, db_agents_by_zone = await self._load_db_agents(session)
-
         agent_result = self.agent_resolver.resolve(
             analysis.normalized_query,
             analysis.zone_candidates,

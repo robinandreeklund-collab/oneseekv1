@@ -274,11 +274,17 @@ async def shadow_compare(
 @nexus_router.post("/routing/analyze", response_model=QueryAnalysis)
 async def analyze_query(
     request: AnalyzeQueryRequest,
+    session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Run QUL analysis on a query (no DB, no LLM)."""
-    return service.analyze_query(request.query)
+    """Run QUL analysis on a query, using dynamic hints from admin flow DB."""
+    _, _, db_domain_hints, db_category_hints = await service._load_db_agents(session)
+    return service._analyze_query_with_hints(
+        request.query,
+        domain_hints_map=db_domain_hints,
+        category_hints_map=db_category_hints,
+    )
 
 
 @nexus_router.post("/routing/route", response_model=RoutingDecision)
