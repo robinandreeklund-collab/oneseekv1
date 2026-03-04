@@ -128,13 +128,19 @@ class SynthForge:
                 if difficulty not in self.difficulties:
                     continue
 
+                # For non-adversarial cases the expected tool is always the
+                # tool we generated for.  The LLM sometimes returns a
+                # namespace prefix (e.g. "tools/trafik") instead of the real
+                # tool_id — force the known value to avoid wrong proposals.
+                expected = None if difficulty == "adversarial" else tool_id
+
                 cases.append(
                     GeneratedCase(
                         tool_id=tool_id,
                         namespace=namespace,
                         question=str(item.get("question", "")),
                         difficulty=difficulty,
-                        expected_tool=item.get("expected_tool"),
+                        expected_tool=expected,
                         expected_reason=str(item.get("expected_reason", "")),
                     )
                 )

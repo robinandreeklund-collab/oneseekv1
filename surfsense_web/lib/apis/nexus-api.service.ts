@@ -454,7 +454,9 @@ class NexusApiService {
 		);
 
 	// Auto Loop (Sprint 3)
-	startLoop = (request?: { category?: string }) =>
+	startLoop = (
+		request?: { category?: string; tool_ids?: string[]; namespace?: string },
+	) =>
 		fetchNexus<Record<string, string>>("/loop/start", {
 			method: "POST",
 			body: JSON.stringify(request || {}),

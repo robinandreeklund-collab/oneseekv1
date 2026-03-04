@@ -430,6 +430,8 @@ async def delete_forge_case(
 
 class LoopStartRequest(BaseModel):
     category: str | None = None
+    tool_ids: list[str] | None = None
+    namespace: str | None = None
 
 
 @nexus_router.post("/loop/start")
@@ -444,10 +446,15 @@ async def loop_start(
     Runs synchronously: loads test cases, evaluates routing, clusters
     failures, creates proposals, and returns results.
 
-    Pass `category` to run only on test cases for a specific domain (e.g. "smhi").
+    Pass `category` to run on a domain (e.g. "smhi"), `tool_ids` for
+    specific tools, or `namespace` for a namespace prefix.
     """
     cat = request.category if request else None
-    return await service.run_auto_loop(session, category=cat)
+    tids = request.tool_ids if request else None
+    ns = request.namespace if request else None
+    return await service.run_auto_loop(
+        session, category=cat, tool_ids=tids, namespace=ns
+    )
 
 
 @nexus_router.get("/loop/runs", response_model=list[AutoLoopRunResponse])

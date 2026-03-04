@@ -38,11 +38,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const BAND_LABELS = ["Band 0 (Exakt)", "Band 1 (Hog)", "Band 2 (Medel)", "Band 3 (Lag)"];
 
+type FilterMode = "all" | "category" | "namespace" | "tool";
+
 export function LoopTab() {
 	const [runs, setRuns] = useState<AutoLoopRunResponse[]>([]);
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
+	const [filterMode, setFilterMode] = useState<FilterMode>("all");
 	const [selectedCategory, setSelectedCategory] = useState<string>("");
+	const [selectedNamespace, setSelectedNamespace] = useState<string>("");
+	const [selectedToolId, setSelectedToolId] = useState<string>("");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
@@ -50,6 +55,18 @@ export function LoopTab() {
 	const [runDetails, setRunDetails] = useState<Record<string, LoopRunDetail>>({});
 	const [detailLoading, setDetailLoading] = useState<string | null>(null);
 	const [approving, setApproving] = useState<string | null>(null);
+
+	// Derive unique namespace prefixes from tools (first 2 segments)
+	const namespaces = Array.from(
+		new Set(
+			platformTools
+				.map((t) => {
+					const parts = t.namespace.split("/");
+					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
+				})
+				.filter(Boolean),
+		),
+	).sort();
 
 	const loadRuns = () => {
 		setLoading(true);
@@ -79,7 +96,14 @@ export function LoopTab() {
 
 	const handleStart = () => {
 		setStarting(true);
-		const request = selectedCategory ? { category: selectedCategory } : {};
+		let request: { category?: string; tool_ids?: string[]; namespace?: string } = {};
+		if (filterMode === "category" && selectedCategory) {
+			request = { category: selectedCategory };
+		} else if (filterMode === "namespace" && selectedNamespace) {
+			request = { namespace: selectedNamespace };
+		} else if (filterMode === "tool" && selectedToolId) {
+			request = { tool_ids: [selectedToolId] };
+		}
 		nexusApiService
 			.startLoop(request)
 			.then(() => {
@@ -88,6 +112,19 @@ export function LoopTab() {
 			.catch((err) => setError(err.message))
 			.finally(() => setStarting(false));
 	};
+
+	const filterLabel = (() => {
+		if (filterMode === "category" && selectedCategory) {
+			return CATEGORY_LABELS[selectedCategory] || selectedCategory;
+		}
+		if (filterMode === "namespace" && selectedNamespace) {
+			return selectedNamespace;
+		}
+		if (filterMode === "tool" && selectedToolId) {
+			return selectedToolId;
+		}
+		return null;
+	})();
 
 	const handleToggleExpand = useCallback(
 		(runId: string) => {
@@ -164,22 +201,74 @@ export function LoopTab() {
 						7-stegs pipeline: generera, eval, kluster, root cause, test, review, deploy
 					</p>
 				</div>
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-2 flex-wrap">
+					{/* Filter mode selector */}
 					<select
-						value={selectedCategory}
-						onChange={(e) => setSelectedCategory(e.target.value)}
+						value={filterMode}
+						onChange={(e) => setFilterMode(e.target.value as FilterMode)}
 						className="rounded-md border bg-background px-3 py-2 text-sm"
 					>
-						<option value="">Alla kategorier ({platformTools.length} verktyg)</option>
-						{categories
-							.filter((c) => c !== "external_model")
-							.map((cat) => (
-								<option key={cat} value={cat}>
-									{CATEGORY_LABELS[cat] || cat} (
-									{platformTools.filter((t) => t.category === cat).length})
+						<option value="all">Alla ({platformTools.length})</option>
+						<option value="category">Kategori</option>
+						<option value="namespace">Namespace</option>
+						<option value="tool">Verktyg</option>
+					</select>
+
+					{/* Category selector */}
+					{filterMode === "category" && (
+						<select
+							value={selectedCategory}
+							onChange={(e) => setSelectedCategory(e.target.value)}
+							className="rounded-md border bg-background px-3 py-2 text-sm"
+						>
+							<option value="">Valj kategori...</option>
+							{categories
+								.filter((c) => c !== "external_model")
+								.map((cat) => (
+									<option key={cat} value={cat}>
+										{CATEGORY_LABELS[cat] || cat} (
+										{platformTools.filter((t) => t.category === cat).length})
+									</option>
+								))}
+						</select>
+					)}
+
+					{/* Namespace selector */}
+					{filterMode === "namespace" && (
+						<select
+							value={selectedNamespace}
+							onChange={(e) => setSelectedNamespace(e.target.value)}
+							className="rounded-md border bg-background px-3 py-2 text-sm"
+						>
+							<option value="">Valj namespace...</option>
+							{namespaces.map((ns) => (
+								<option key={ns} value={ns}>
+									{ns} (
+									{platformTools.filter((t) => t.namespace.startsWith(ns)).length})
 								</option>
 							))}
-					</select>
+						</select>
+					)}
+
+					{/* Tool selector */}
+					{filterMode === "tool" && (
+						<select
+							value={selectedToolId}
+							onChange={(e) => setSelectedToolId(e.target.value)}
+							className="rounded-md border bg-background px-3 py-2 text-sm max-w-xs"
+						>
+							<option value="">Valj verktyg...</option>
+							{platformTools
+								.filter((t) => t.category !== "external_model")
+								.sort((a, b) => a.tool_id.localeCompare(b.tool_id))
+								.map((t) => (
+									<option key={t.tool_id} value={t.tool_id}>
+										{t.tool_id}
+									</option>
+								))}
+						</select>
+					)}
+
 					<Button onClick={handleStart} disabled={starting}>
 						{starting ? (
 							<Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -188,8 +277,8 @@ export function LoopTab() {
 						)}
 						{starting
 							? "Kor loop..."
-							: selectedCategory
-								? `Kor loop for ${CATEGORY_LABELS[selectedCategory] || selectedCategory}`
+							: filterLabel
+								? `Kor loop for ${filterLabel}`
 								: "Starta loop"}
 					</Button>
 				</div>

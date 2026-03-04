@@ -1758,6 +1758,8 @@ class NexusService:
         session: AsyncSession,
         *,
         category: str | None = None,
+        tool_ids: list[str] | None = None,
+        namespace: str | None = None,
     ) -> dict:
         """Run a complete auto-loop iteration inline.
 
@@ -1769,6 +1771,8 @@ class NexusService:
         Args:
             category: Optional category to filter test cases by (e.g. "smhi", "scb").
                       Only runs on test cases whose tool_id belongs to tools in that category.
+            tool_ids: Optional list of specific tool IDs to run on.
+            namespace: Optional namespace prefix to filter by (e.g. "tools/weather").
         """
         import uuid
 
@@ -1796,8 +1800,17 @@ class NexusService:
         result = await session.execute(select(NexusSyntheticCase).limit(500))
         all_cases = result.scalars().all()
 
-        # Filter by category if specified
-        if category:
+        # Filter test cases by tool_ids, namespace, or category
+        if tool_ids:
+            tid_set = set(tool_ids)
+            cases = [c for c in all_cases if c.tool_id in tid_set]
+        elif namespace:
+            cases = [
+                c
+                for c in all_cases
+                if c.namespace and c.namespace.startswith(namespace)
+            ]
+        elif category:
             from app.nexus.platform_bridge import get_platform_tools
 
             cat_tool_ids = {
