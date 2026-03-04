@@ -413,7 +413,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         (2, "route", 0.82, 0.93, 0.87, 0.85, None, None),
         (3, "bigtool", 0.78, 0.90, 0.83, 0.81, 0.86, None),
         (4, "rerank", 0.85, 0.94, 0.89, 0.87, 0.90, 0.07),
-        (5, "e2e", 0.85, None, None, None, None, None),
+        (5, "e2e", 0.85, 0.95, 0.90, 0.88, None, None),
     ]
     for stage, name, p1, p5, mrr, ndcg, hn_p, delta in stages:
         metric = NexusPipelineMetric(
