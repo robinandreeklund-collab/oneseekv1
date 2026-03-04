@@ -222,6 +222,11 @@ if config.AUTH_TYPE == "GOOGLE":
 
 app.include_router(crud_router, prefix="/api/v1", tags=["crud"])
 
+# NEXUS — Retrieval Intelligence Platform
+from app.nexus.routes import nexus_router
+
+app.include_router(nexus_router, prefix="/api/v1", tags=["nexus"])
+
 
 @app.get("/verify-token")
 async def authenticated_route(
