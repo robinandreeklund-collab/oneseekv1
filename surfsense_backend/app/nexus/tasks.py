@@ -41,11 +41,11 @@ async def _forge_generate_async(
             {
                 "tool_id": tid,
                 "name": tid.replace("_", " ").title(),
-                "description": schema.get("description", ""),
+                "description": getattr(schema, "description", ""),
                 "namespace": f"tools/{tid}",
-                "keywords": schema.get("keywords", []),
+                "keywords": getattr(schema, "keywords", []),
                 "excludes": [],
-                "geographic_scope": schema.get("geographic_scope", ""),
+                "geographic_scope": getattr(schema, "geographic_scope", ""),
             }
         )
 
