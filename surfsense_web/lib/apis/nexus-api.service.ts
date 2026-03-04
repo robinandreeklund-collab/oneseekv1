@@ -5,10 +5,9 @@
  * Expanded in subsequent sprints.
  */
 
+import { getBearerToken } from "../auth-utils";
+
 const getBackendUrl = (): string => {
-	if (typeof window !== "undefined") {
-		return process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000";
-	}
 	return process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000";
 };
 
@@ -17,8 +16,7 @@ async function fetchNexus<T>(
 	options: RequestInit = {},
 ): Promise<T> {
 	const url = `${getBackendUrl()}/api/v1/nexus${path}`;
-	const token =
-		typeof window !== "undefined" ? localStorage.getItem("token") : null;
+	const token = getBearerToken();
 
 	const res = await fetch(url, {
 		...options,
