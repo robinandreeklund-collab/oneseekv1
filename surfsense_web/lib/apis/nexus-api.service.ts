@@ -358,6 +358,35 @@ export interface LoopRunDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Live Routing Config Types
+// ---------------------------------------------------------------------------
+
+export interface LiveRoutingConfigResponse {
+	phases: Record<string, number>;
+	current_config: {
+		live_routing_enabled: boolean;
+		live_routing_phase: string;
+		name_match_weight: number;
+		keyword_weight: number;
+		description_token_weight: number;
+		example_query_weight: number;
+		namespace_boost: number;
+		embedding_weight: number;
+		semantic_embedding_weight: number;
+		structural_embedding_weight: number;
+		rerank_candidates: number;
+		tool_auto_score_threshold: number;
+		tool_auto_margin_threshold: number;
+		agent_auto_score_threshold: number;
+		agent_auto_margin_threshold: number;
+		intent_candidate_top_k: number;
+		agent_candidate_top_k: number;
+		tool_candidate_top_k: number;
+		[key: string]: unknown;
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Shadow Observer Types
 // ---------------------------------------------------------------------------
 
@@ -504,6 +533,10 @@ class NexusApiService {
 	// Ledger: Trend
 	getLedgerTrendTyped = (days = 30) =>
 		fetchNexus<MetricsTrend>(`/ledger/trend?days=${days}`);
+
+	// Live Routing Config
+	getLiveRoutingConfig = () =>
+		fetchNexus<LiveRoutingConfigResponse>("/tools/live-routing");
 
 	// Shadow Observer
 	getShadowReport = () =>

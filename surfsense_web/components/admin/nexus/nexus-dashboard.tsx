@@ -20,10 +20,12 @@ import {
 	type RoutingEventResponse,
 	type ECEReportResponse,
 	type CalibrationParamsResponse,
+	type LiveRoutingConfigResponse,
 } from "@/lib/apis/nexus-api.service";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThumbsUp, ThumbsDown, ExternalLink, Settings } from "lucide-react";
+import Link from "next/link";
 import { DarkMatterPanel } from "@/components/admin/nexus/shared/dark-matter-panel";
 import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
 import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
@@ -261,11 +263,132 @@ function OverviewTab() {
 				</div>
 			) : null}
 
+			<LiveRoutingPanel />
 			<ZoneHealthCard />
 			<BandDistribution />
 			<RoutingEventsPanel />
 			<CalibrationPanel />
 			<DarkMatterPanel />
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Live Routing Panel — shows current phase + key retrieval weights (read-only)
+// ---------------------------------------------------------------------------
+
+const PHASE_LABELS: Record<string, string> = {
+	shadow: "Shadow",
+	tool_gate: "Tool gate",
+	agent_auto: "Agent auto",
+	adaptive: "Adaptive",
+	intent_finetune: "Intent finetune",
+};
+
+function LiveRoutingPanel() {
+	const [config, setConfig] = useState<LiveRoutingConfigResponse | null>(null);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		nexusApiService
+			.getLiveRoutingConfig()
+			.then(setConfig)
+			.catch(() => {})
+			.finally(() => setLoading(false));
+	}, []);
+
+	const cfg = config?.current_config;
+	const currentPhase = cfg?.live_routing_phase ?? "shadow";
+
+	return (
+		<Card>
+			<CardHeader className="flex flex-row items-center justify-between">
+				<div className="flex items-center gap-2">
+					<Settings className="h-4 w-4 text-muted-foreground" />
+					<CardTitle>Fas & Retrieval-vikter</CardTitle>
+				</div>
+				<Link
+					href="/admin/tools"
+					className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+				>
+					Redigera i Verktyg
+					<ExternalLink className="h-3 w-3" />
+				</Link>
+			</CardHeader>
+			<CardContent>
+				{loading ? (
+					<div className="flex items-center gap-2 text-muted-foreground">
+						<Loader2 className="h-4 w-4 animate-spin" />
+						Laddar routing-konfiguration...
+					</div>
+				) : !cfg ? (
+					<p className="text-sm text-muted-foreground">
+						Kunde inte hämta routing-konfiguration.
+					</p>
+				) : (
+					<div className="space-y-4">
+						{/* Phase badges */}
+						<div>
+							<p className="text-xs text-muted-foreground mb-2">Live routing-fas</p>
+							<div className="flex flex-wrap items-center gap-2">
+								{Object.keys(config?.phases ?? PHASE_LABELS).map((phase) => {
+									const isActive = phase === currentPhase;
+									return (
+										<span
+											key={phase}
+											className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium ${
+												isActive
+													? "bg-green-600 text-white"
+													: "bg-muted text-muted-foreground"
+											}`}
+										>
+											{isActive ? "●" : "○"} {PHASE_LABELS[phase] ?? phase}
+										</span>
+									);
+								})}
+							</div>
+						</div>
+
+						{/* Key weights grid */}
+						<div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+							<WeightCell label="Name match" value={cfg.name_match_weight} />
+							<WeightCell label="Keyword" value={cfg.keyword_weight} />
+							<WeightCell label="Semantic emb." value={cfg.semantic_embedding_weight} />
+							<WeightCell label="Structural emb." value={cfg.structural_embedding_weight} />
+							<WeightCell label="Namespace boost" value={cfg.namespace_boost} />
+							<WeightCell label="Rerank candidates" value={cfg.rerank_candidates} />
+						</div>
+
+						{/* Thresholds */}
+						<div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+							<WeightCell label="Tool score thr." value={cfg.tool_auto_score_threshold} />
+							<WeightCell label="Tool margin thr." value={cfg.tool_auto_margin_threshold} />
+							<WeightCell label="Agent score thr." value={cfg.agent_auto_score_threshold} />
+							<WeightCell label="Agent margin thr." value={cfg.agent_auto_margin_threshold} />
+						</div>
+
+						{/* Summary line */}
+						<div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground pt-1 border-t">
+							<span>
+								Live routing:{" "}
+								<span className={cfg.live_routing_enabled ? "text-green-600 font-medium" : "text-red-500 font-medium"}>
+									{cfg.live_routing_enabled ? "Aktiverad" : "Inaktiverad"}
+								</span>
+							</span>
+							<span>Top-K: intent={cfg.intent_candidate_top_k}, agent={cfg.agent_candidate_top_k}, tool={cfg.tool_candidate_top_k}</span>
+						</div>
+					</div>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
+function WeightCell({ label, value }: { label: string; value: number | undefined }) {
+	return (
+		<div className="rounded border px-3 py-2">
+			<p className="text-xs text-muted-foreground truncate">{label}</p>
+			<p className="text-sm font-mono font-medium">{value ?? "—"}</p>
 		</div>
 	);
 }
