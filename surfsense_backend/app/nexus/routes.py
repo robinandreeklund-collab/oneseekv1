@@ -185,18 +185,17 @@ async def get_zone_metrics(
 @nexus_router.post("/forge/generate")
 async def forge_generate(
     request: ForgeGenerateRequest,
+    session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Trigger synthetic test case generation (background task placeholder)."""
-    from app.nexus.tasks import forge_generate_task
-
-    result = forge_generate_task(
+    """Generate synthetic test cases using the configured LLM."""
+    return await service.forge_generate(
+        session,
         tool_ids=request.tool_ids,
         difficulties=request.difficulties,
-        questions_per_difficulty=request.questions_per_difficulty,
+        questions_per_difficulty=request.questions_per_difficulty or 4,
     )
-    return result
 
 
 @nexus_router.get("/forge/cases", response_model=list[SyntheticCaseResponse])
@@ -431,3 +430,23 @@ async def get_calibration_ece(
 ):
     """Get ECE report across all zones."""
     return await service.get_ece_report(session)
+
+
+# ------------------------------------------------------------------
+# Seed / Demo Data
+# ------------------------------------------------------------------
+
+
+@nexus_router.post("/seed")
+async def seed_demo_data(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Populate NEXUS with realistic demo data for testing.
+
+    Inserts zone configs, routing events, space snapshots, synthetic cases,
+    loop runs, pipeline metrics, dark matter queries, and calibration params.
+    """
+    from app.nexus.seed import seed_nexus_data
+
+    return await seed_nexus_data(session)

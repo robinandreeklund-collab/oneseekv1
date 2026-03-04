@@ -96,12 +96,18 @@ class NexusService:
     # ------------------------------------------------------------------
 
     async def get_health(self, session: AsyncSession) -> NexusHealthResponse:
-        """Return system health summary."""
+        """Return system health summary including model info."""
+        from app.nexus.embeddings import get_embedding_info, get_reranker_info
+
         zones_count = (
             await session.scalar(select(func.count()).select_from(NexusZoneConfig)) or 0
         )
         events_count = (
             await session.scalar(select(func.count()).select_from(NexusRoutingEvent))
+            or 0
+        )
+        synth_count = (
+            await session.scalar(select(func.count()).select_from(NexusSyntheticCase))
             or 0
         )
 
@@ -110,6 +116,9 @@ class NexusService:
             version="2.0.0",
             zones_configured=zones_count,
             total_routing_events=events_count,
+            total_synthetic_cases=synth_count,
+            embedding_model=get_embedding_info(),
+            reranker=get_reranker_info(),
         )
 
     async def get_zones(self, session: AsyncSession) -> list[ZoneConfigResponse]:
@@ -201,7 +210,7 @@ class NexusService:
     ) -> RoutingDecision:
         """Run the full precision routing pipeline.
 
-        Pipeline: QUL → StR → OOD check → Calibrate → Band → Schema verify.
+        Pipeline: QUL → StR → Rerank → Calibrate → OOD → Band → Schema verify.
 
         Args:
             query: User query.
@@ -209,6 +218,8 @@ class NexusService:
             tool_entries: Pre-scored tool entries with zone/score.
                 If None, runs QUL-only analysis (no retrieval).
         """
+        from app.nexus.embeddings import nexus_rerank
+
         start_time = time.monotonic()
 
         # Step 1: QUL
@@ -228,21 +239,50 @@ class NexusService:
                 analysis.zone_candidates,
                 tool_entries,
             )
+
+            # Step 2b: Rerank with real cross-encoder if available
+            rerank_docs = [
+                {
+                    "document_id": c.tool_id,
+                    "content": f"{c.tool_id} {c.namespace} {c.description}",
+                    "score": c.raw_score,
+                    "document": {
+                        "id": c.tool_id,
+                        "title": c.tool_id,
+                        "document_type": "TOOL",
+                    },
+                }
+                for c in str_result.candidates
+            ]
+            reranked = nexus_rerank(query, rerank_docs)
+
+            # Build reranked score map
+            rerank_scores: dict[str, float] = {}
+            for doc in reranked:
+                doc_id = doc.get("document_id", "")
+                rerank_scores[doc_id] = doc.get("score", 0.0)
+
             top_score = str_result.top_score
             second_score = str_result.second_score
 
-            # Step 3: Calibrate scores
+            # Step 3: Calibrate scores (use reranked scores when available)
             for rank, c in enumerate(str_result.candidates):
-                calibrated = self.platt_scaler.calibrate(c.raw_score)
+                raw = rerank_scores.get(c.tool_id, c.raw_score)
+                calibrated = self.platt_scaler.calibrate(raw)
                 candidates.append(
                     RoutingCandidate(
                         tool_id=c.tool_id,
                         zone=c.zone,
-                        raw_score=c.raw_score,
+                        raw_score=raw,
                         calibrated_score=calibrated,
                         rank=rank,
                     )
                 )
+
+            # Re-sort by calibrated score after reranking
+            candidates.sort(key=lambda rc: rc.calibrated_score, reverse=True)
+            for i, rc in enumerate(candidates):
+                rc.rank = i
 
             if candidates:
                 raw_top_score = candidates[0].raw_score
@@ -304,7 +344,13 @@ class NexusService:
     # ------------------------------------------------------------------
 
     async def get_space_health(self, session: AsyncSession) -> SpaceHealthReport:
-        """Compute space health from latest snapshot or live tool data."""
+        """Compute space health from latest snapshot or live tool data.
+
+        Uses real embeddings from the configured embedding model when available,
+        falling back to stored UMAP coordinates from DB snapshots.
+        """
+        from app.nexus.embeddings import nexus_embed
+
         # Try to get recent snapshots from DB
         result = await session.execute(
             select(NexusSpaceSnapshot)
@@ -316,22 +362,36 @@ class NexusService:
         if not snapshots:
             return SpaceHealthReport(total_tools=0)
 
-        # Group snapshots into tool points
+        # Group snapshots into tool points — prefer real embeddings
         tools: list[ToolPoint] = []
         seen: set[str] = set()
         for snap in snapshots:
             if snap.tool_id in seen:
                 continue
             seen.add(snap.tool_id)
-            # Use UMAP coords as a proxy (real embeddings would be better)
-            if snap.umap_x is not None and snap.umap_y is not None:
+
+            zone = snap.namespace.split("/")[1] if "/" in snap.namespace else ""
+
+            # Try real embedding from the configured model
+            prefixed_text = f"[{zone.upper()[:5]}] {snap.tool_id} {snap.namespace}"
+            real_emb = nexus_embed(prefixed_text)
+
+            if real_emb is not None:
                 tools.append(
                     ToolPoint(
                         tool_id=snap.tool_id,
                         namespace=snap.namespace,
-                        zone=snap.namespace.split("/")[1]
-                        if "/" in snap.namespace
-                        else "",
+                        zone=zone,
+                        embedding=real_emb,
+                    )
+                )
+            elif snap.umap_x is not None and snap.umap_y is not None:
+                # Fallback to stored UMAP coords
+                tools.append(
+                    ToolPoint(
+                        tool_id=snap.tool_id,
+                        namespace=snap.namespace,
+                        zone=zone,
                         embedding=[snap.umap_x, snap.umap_y],
                     )
                 )
@@ -441,6 +501,81 @@ class NexusService:
     # ------------------------------------------------------------------
     # Synth Forge (Sprint 3)
     # ------------------------------------------------------------------
+
+    async def forge_generate(
+        self,
+        session: AsyncSession,
+        *,
+        tool_ids: list[str] | None = None,
+        difficulties: list[str] | None = None,
+        questions_per_difficulty: int = 4,
+    ) -> dict:
+        """Run Synth Forge generation with the configured LLM.
+
+        Calls the LLM to generate test questions, persists them to DB,
+        and returns a summary.
+        """
+        from app.nexus.llm import nexus_llm_call
+        from app.nexus.routing.schema_verifier import TOOL_SCHEMAS
+
+        # Build tool metadata from schema registry
+        tools: list[dict] = []
+        for tid, schema in TOOL_SCHEMAS.items():
+            tools.append(
+                {
+                    "tool_id": tid,
+                    "name": tid.replace("_", " ").title(),
+                    "description": schema.get("description", ""),
+                    "namespace": f"tools/{tid}",
+                    "keywords": schema.get("keywords", []),
+                    "excludes": [],
+                    "geographic_scope": schema.get("geographic_scope", ""),
+                }
+            )
+
+        if not tools:
+            return {"status": "error", "message": "No tools found in schema registry"}
+
+        # Configure forge
+        if difficulties:
+            self.synth_forge.difficulties = difficulties
+        self.synth_forge.questions_per_difficulty = questions_per_difficulty
+
+        # Run forge with real LLM
+        result = await self.synth_forge.run(
+            tools,
+            llm_call=nexus_llm_call,
+            tool_ids=tool_ids,
+        )
+
+        # Persist generated cases to DB
+        persisted = 0
+        for case in result.cases:
+            db_case = NexusSyntheticCase(
+                tool_id=case.tool_id,
+                namespace=case.namespace,
+                question=case.question,
+                difficulty=case.difficulty,
+                expected_tool=case.expected_tool,
+                roundtrip_verified=case.roundtrip_verified,
+                quality_score=case.quality_score,
+                generation_run_id=result.run_id,
+            )
+            session.add(db_case)
+            persisted += 1
+
+        if persisted > 0:
+            await session.commit()
+
+        return {
+            "status": "completed",
+            "run_id": str(result.run_id),
+            "total_generated": result.total_generated,
+            "total_verified": result.total_verified,
+            "persisted_to_db": persisted,
+            "by_difficulty": result.by_difficulty,
+            "errors": result.errors,
+        }
 
     async def get_synthetic_cases(
         self, session: AsyncSession, *, tool_id: str | None = None, limit: int = 100

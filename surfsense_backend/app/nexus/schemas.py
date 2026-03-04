@@ -16,6 +16,8 @@ class NexusHealthResponse(BaseModel):
     zones_configured: int = 0
     total_routing_events: int = 0
     total_synthetic_cases: int = 0
+    embedding_model: dict | None = None
+    reranker: dict | None = None
 
 
 # ---------------------------------------------------------------------------
