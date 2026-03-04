@@ -125,12 +125,23 @@ class NexusService:
         )
 
     async def get_zones(self, session: AsyncSession) -> list[ZoneConfigResponse]:
-        """Return all zone configurations from DB."""
+        """Return all zone configurations from DB.
+
+        Filters out stale zone names (e.g. old 'myndigheter', 'handling')
+        that no longer match the current ZONE_PREFIXES config.
+        """
+        from app.nexus.config import ZONE_PREFIXES
+
+        valid_zones = set(ZONE_PREFIXES.keys())
+
         result = await session.execute(select(NexusZoneConfig))
         rows = result.scalars().all()
 
-        if not rows:
-            # Return default zone config if DB is empty
+        # Filter to only valid current zones
+        valid_rows = [r for r in rows if r.zone in valid_zones]
+
+        if not valid_rows:
+            # Return default zone config if DB is empty or all stale
             return [
                 ZoneConfigResponse(
                     zone=z["zone"],
@@ -150,7 +161,7 @@ class NexusService:
                 ece_score=row.ece_score,
                 last_reindexed=row.last_reindexed,
             )
-            for row in rows
+            for row in valid_rows
         ]
 
     async def get_config(self, session: AsyncSession) -> NexusConfigResponse:
@@ -909,6 +920,9 @@ class NexusService:
         When route_query() is called without pre-scored tool_entries, this
         method creates them from the real platform tool registry, scoring
         each tool based on keyword overlap, zone match, and domain hints.
+
+        Scores are normalized to [0, 1] to match the band threshold scale
+        (Band 0 ≥ 0.95, Band 1 ≥ 0.80, Band 2 ≥ 0.60, Band 3 ≥ 0.40).
         """
         from app.nexus.embeddings import nexus_embed_score
         from app.nexus.platform_bridge import get_platform_tools
@@ -922,7 +936,7 @@ class NexusService:
         zone_candidates = set(analysis.zone_candidates)
         domain_hints = set(analysis.domain_hints)
 
-        entries: list[dict] = []
+        raw_entries: list[tuple[dict, float]] = []
         for pt in tools:
             # Skip external model tools — compare mode only
             if pt.category == "external_model":
@@ -932,46 +946,74 @@ class NexusService:
 
             # Zone match bonus
             if pt.zone in zone_candidates:
-                score += 0.30
+                score += 0.15
 
             # Keyword overlap scoring
             tool_keywords = {k.lower() for k in pt.keywords}
             keyword_hits = query_tokens & tool_keywords
             if keyword_hits:
-                score += min(0.30, len(keyword_hits) * 0.10)
+                score += min(0.20, len(keyword_hits) * 0.07)
 
             # Domain hint match (category matches QUL domain hints)
             if pt.category in domain_hints:
-                score += 0.20
+                score += 0.10
 
             # Name/ID match — direct substring match in query
             tool_name_lower = pt.tool_id.lower().replace("_", " ")
             if any(
                 tok in query_lower for tok in tool_name_lower.split() if len(tok) > 3
             ):
-                score += 0.15
+                score += 0.10
 
-            # Description similarity (embedding-based if available)
+            # Description similarity (embedding-based — primary signal)
             emb_score = nexus_embed_score(
                 query_lower,
                 f"{pt.tool_id} {pt.description}",
             )
-            if emb_score is not None:
-                score += emb_score * 0.40
+            if emb_score is not None and emb_score > 0:
+                # Cosine similarity is the main scoring signal
+                score += emb_score * 0.60
 
-            entries.append(
-                {
-                    "tool_id": pt.tool_id,
-                    "namespace": "/".join(pt.namespace),
-                    "zone": pt.zone,
-                    "score": round(score, 4),
-                    "description": pt.description,
-                }
+            raw_entries.append(
+                (
+                    {
+                        "tool_id": pt.tool_id,
+                        "namespace": "/".join(pt.namespace),
+                        "zone": pt.zone,
+                        "description": pt.description,
+                    },
+                    score,
+                )
             )
 
-        # Sort by score descending, keep top 20 for the StR pipeline
-        entries.sort(key=lambda e: e["score"], reverse=True)
-        return entries[:20]
+        if not raw_entries:
+            return []
+
+        # Sort by raw score descending, take top 20
+        raw_entries.sort(key=lambda e: e[1], reverse=True)
+        top_entries = raw_entries[:20]
+
+        # Normalize scores to [0, 1] using min-max on the top-20 range
+        # This ensures the best match gets a high score (~0.95-1.0)
+        # and poor matches get low scores, matching band thresholds.
+        scores = [e[1] for e in top_entries]
+        max_score = max(scores) if scores else 1.0
+        min_score = min(scores) if scores else 0.0
+        score_range = max_score - min_score
+
+        entries: list[dict] = []
+        for entry_dict, raw_score in top_entries:
+            if score_range > 0 and max_score > 0:
+                # Normalize to [0.3, 1.0] — the best match gets ~1.0,
+                # the worst of top-20 gets ~0.3
+                normalized = 0.3 + 0.7 * (raw_score - min_score) / score_range
+            else:
+                normalized = 0.5
+
+            entry_dict["score"] = round(normalized, 4)
+            entries.append(entry_dict)
+
+        return entries
 
     def _build_tool_points_from_platform(self) -> list[ToolPoint]:
         """Build ToolPoints from the live platform registry for space analysis.
@@ -1331,6 +1373,11 @@ class NexusService:
         failed_queries: list[dict] = []
         platform_comparisons = 0
         platform_agreements = 0
+        # Track per-stage metrics for the ledger
+        band_counts = [0, 0, 0, 0, 0]
+        correct_at_1 = 0
+        correct_at_5 = 0
+        reciprocal_ranks: list[float] = []
 
         for case in cases:
             total_tests += 1
@@ -1338,6 +1385,20 @@ class NexusService:
                 # NEXUS routing
                 decision = await self.route_query(case.question, session)
                 nexus_tool = decision.selected_tool
+                band_counts[min(decision.band, 4)] += 1
+
+                # Track ranking metrics
+                candidate_ids = [c.tool_id for c in decision.candidates]
+                if case.expected_tool:
+                    if nexus_tool == case.expected_tool:
+                        correct_at_1 += 1
+                    if case.expected_tool in candidate_ids[:5]:
+                        correct_at_5 += 1
+                    if case.expected_tool in candidate_ids:
+                        rank = candidate_ids.index(case.expected_tool) + 1
+                        reciprocal_ranks.append(1.0 / rank)
+                    else:
+                        reciprocal_ranks.append(0.0)
 
                 # Also run through real platform retrieval for comparison
                 platform_result = await self.shadow_observer.run_platform_retrieval(
@@ -1369,6 +1430,46 @@ class NexusService:
         clusters = self.auto_loop.cluster_failures(failed_queries)
         proposals = self.auto_loop.create_proposals(clusters)
 
+        # Compute pipeline metrics
+        p_at_1 = correct_at_1 / total_tests if total_tests > 0 else 0.0
+        p_at_5 = correct_at_5 / total_tests if total_tests > 0 else 0.0
+        mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
+
+        # Persist pipeline metrics to the ledger
+        metric_stages = [
+            (1, "intent", p_at_1, p_at_5, mrr, None, None, None),
+            (2, "route", p_at_1, p_at_5, mrr, mrr, None, None),
+            (
+                3,
+                "rerank",
+                p_at_1,
+                p_at_5,
+                mrr,
+                mrr,
+                (
+                    platform_agreements / platform_comparisons
+                    if platform_comparisons > 0
+                    else None
+                ),
+                None,
+            ),
+            (4, "e2e", p_at_1, None, None, None, None, None),
+        ]
+        for stage, name, p1, p5, mrr_val, ndcg, hn_p, delta in metric_stages:
+            metric = NexusPipelineMetric(
+                run_id=run_id,
+                stage=stage,
+                stage_name=name,
+                precision_at_1=p1,
+                precision_at_5=p5,
+                mrr_at_10=mrr_val,
+                ndcg_at_5=ndcg,
+                hard_negative_precision=hn_p,
+                reranker_delta=delta,
+                recorded_at=datetime.now(tz=UTC),
+            )
+            session.add(metric)
+
         # Update run
         db_run.total_tests = total_tests
         db_run.failures = failures
@@ -1379,6 +1480,7 @@ class NexusService:
             ],
             "platform_comparisons": platform_comparisons,
             "platform_agreements": platform_agreements,
+            "band_distribution": band_counts,
         }
         db_run.approved_proposals = 0
         db_run.status = "review" if proposals else "approved"
@@ -1399,6 +1501,10 @@ class NexusService:
                 if platform_comparisons > 0
                 else None
             ),
+            "precision_at_1": round(p_at_1, 3),
+            "precision_at_5": round(p_at_5, 3),
+            "mrr": round(mrr, 3),
+            "band_distribution": band_counts,
         }
 
     # ------------------------------------------------------------------

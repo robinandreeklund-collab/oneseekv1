@@ -14,6 +14,7 @@ import random
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.nexus.models import (
@@ -298,7 +299,14 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
     counts: dict[str, int] = {}
 
     # 1. Zone configs (aligned with real platform intents)
+    # Remove old/stale zone configs that don't match current ZONE_PREFIXES
+
     from app.nexus.config import ZONE_PREFIXES
+
+    old_zones = await session.execute(select(NexusZoneConfig))
+    for old_zone in old_zones.scalars().all():
+        if old_zone.zone not in ZONE_PREFIXES:
+            await session.delete(old_zone)
 
     for zone, prefix in ZONE_PREFIXES.items():
         zc = NexusZoneConfig(

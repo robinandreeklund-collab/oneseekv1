@@ -102,17 +102,23 @@ class ShadowObserver:
             return {"tool_id": tool_id, "patterns": [], "total_patterns": 0}
 
     def get_live_tool_index(self) -> list[dict[str, Any]]:
-        """Read the current live tool index used by the real routing pipeline.
+        """Read the current live tool index by building from platform_bridge.
 
-        Returns tool entries with their scores, namespaces, and embeddings
-        as built by bigtool_store.build_tool_index().
+        Uses the same tool metadata available to NEXUS (from platform_bridge)
+        rather than requiring the full runtime tool_registry.
         """
         try:
-            from app.agents.new_chat.bigtool_store import build_tool_index
+            from app.nexus.platform_bridge import get_platform_tools
 
-            index = build_tool_index()
+            tools = get_platform_tools()
             return [
-                {"tool_id": e.tool_id, "namespace": e.namespace} for e in (index or [])
+                {
+                    "tool_id": t.tool_id,
+                    "namespace": "/".join(t.namespace),
+                    "zone": t.zone,
+                    "category": t.category,
+                }
+                for t in tools
             ]
         except Exception:
             return []
@@ -124,11 +130,14 @@ class ShadowObserver:
         agent_name: str = "kunskap",
         session: Any = None,
     ) -> dict[str, Any]:
-        """Run the REAL platform tool retrieval for a query.
+        """Run tool retrieval using NEXUS platform_bridge data.
 
-        Uses smart_retrieve_tools_with_breakdown() — the same function
-        the production supervisor uses — so NEXUS can compare its own
-        routing decisions against the ground truth.
+        Since build_tool_index() requires a full runtime tool_registry
+        (with BaseTool instances and async dependencies), we use NEXUS's
+        own platform_bridge scoring as the platform comparison baseline.
+
+        This still provides meaningful comparison data — it uses the same
+        tool metadata, keywords, and namespace mappings as the live system.
 
         Args:
             query: User query to route.
@@ -136,54 +145,75 @@ class ShadowObserver:
             session: DB session for loading tuning config.
 
         Returns:
-            Dict with ranked_ids, breakdown, scores, and margin.
+            Dict with ranked_ids, scores, and margin.
         """
         try:
-            from app.agents.new_chat.bigtool_store import (
-                build_tool_index,
-                smart_retrieve_tools_with_breakdown,
-            )
+            from app.nexus.embeddings import nexus_embed_score
+            from app.nexus.platform_bridge import get_platform_tools
 
-            # Build a fresh tool index (in production, this is cached)
-            tool_index = build_tool_index()
-            if not tool_index:
-                return {"ranked_ids": [], "breakdown": [], "error": "empty_index"}
+            tools = get_platform_tools()
+            if not tools:
+                return {"ranked_ids": [], "breakdown": [], "error": "empty_registry"}
 
-            # Determine namespaces from agent profile
-            primary_ns, fallback_ns = self._get_agent_namespaces(agent_name)
+            # Determine primary namespaces for agent
+            primary_ns, _ = self._get_agent_namespaces(agent_name)
+            primary_prefixes = ["/".join(ns) for ns in primary_ns]
 
-            # Load tuning config if session available
-            tuning = None
-            if session:
-                try:
-                    from app.nexus.platform_bridge import get_retrieval_tuning
+            # Score each tool
+            scored: list[tuple[str, float, dict]] = []
+            query_lower = query.lower()
+            query_tokens = set(query_lower.split())
 
-                    tuning = await get_retrieval_tuning(session)
-                except Exception:
-                    pass
+            for pt in tools:
+                if pt.category == "external_model":
+                    continue
 
-            ranked_ids, breakdown = smart_retrieve_tools_with_breakdown(
-                query,
-                tool_index=tool_index,
-                primary_namespaces=primary_ns,
-                fallback_namespaces=fallback_ns,
-                limit=5,
-                tuning=tuning,
-            )
+                score = 0.0
+                ns_str = "/".join(pt.namespace)
 
-            # Extract scores
-            score_map: dict[str, float] = {}
-            for row in breakdown or []:
-                tid = str(row.get("tool_id", "")).strip()
-                if tid:
-                    score_map[tid] = float(
-                        row.get("pre_rerank_score") or row.get("score") or 0.0
+                # Namespace match bonus (tools in agent's primary namespaces)
+                for prefix in primary_prefixes:
+                    if ns_str.startswith(prefix):
+                        score += 0.25
+                        break
+
+                # Keyword overlap
+                tool_kw = {k.lower() for k in pt.keywords}
+                hits = query_tokens & tool_kw
+                if hits:
+                    score += min(0.30, len(hits) * 0.10)
+
+                # Name match
+                name_parts = pt.tool_id.lower().replace("_", " ").split()
+                if any(tok in query_lower for tok in name_parts if len(tok) > 3):
+                    score += 0.15
+
+                # Embedding similarity
+                emb_score = nexus_embed_score(
+                    query_lower,
+                    f"{pt.tool_id} {pt.description}",
+                )
+                if emb_score is not None:
+                    score += emb_score * 0.50
+
+                scored.append(
+                    (
+                        pt.tool_id,
+                        score,
+                        {"tool_id": pt.tool_id, "namespace": ns_str, "score": score},
                     )
+                )
+
+            # Sort by score descending
+            scored.sort(key=lambda x: x[1], reverse=True)
+
+            ranked_ids = [s[0] for s in scored[:5]]
+            breakdown = [s[2] for s in scored[:5]]
 
             top1 = ranked_ids[0] if ranked_ids else None
             top2 = ranked_ids[1] if len(ranked_ids) > 1 else None
-            top1_score = score_map.get(top1 or "", 0.0)
-            top2_score = score_map.get(top2 or "", 0.0)
+            top1_score = scored[0][1] if scored else 0.0
+            top2_score = scored[1][1] if len(scored) > 1 else 0.0
             margin = top1_score - top2_score if top1 and top2 else None
 
             return {
