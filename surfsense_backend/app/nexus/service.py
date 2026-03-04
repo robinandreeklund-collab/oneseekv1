@@ -535,6 +535,10 @@ class NexusService:
         platform_tools = get_platform_tools()
         tools: list[dict] = []
         for pt in platform_tools:
+            # Always exclude external model tools — they are for compare mode
+            # only and must never be invoked by forge or auto_loop
+            if pt.category == "external_model":
+                continue
             # Filter by category if specified
             if category and pt.category != category:
                 continue
