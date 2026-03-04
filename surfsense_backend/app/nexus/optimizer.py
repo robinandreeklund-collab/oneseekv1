@@ -366,6 +366,7 @@ class MetadataOptimizer:
 
         kwargs: dict[str, Any] = {
             "model": model_string,
+            "max_tokens": 16384,
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -394,6 +395,14 @@ class MetadataOptimizer:
         )
 
         response = await litellm.acompletion(**kwargs)
+
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if finish_reason and finish_reason != "stop":
+            logger.warning(
+                "Optimizer LLM response truncated (finish_reason=%s). "
+                "Consider increasing max_tokens.",
+                finish_reason,
+            )
 
         # Handle response — content may be string or list of content blocks
         raw_content = response.choices[0].message.content
