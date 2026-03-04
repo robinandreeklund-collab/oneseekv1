@@ -366,7 +366,7 @@ class MetadataOptimizer:
 
         kwargs: dict[str, Any] = {
             "model": model_string,
-            "max_tokens": 16384,
+            "max_tokens": 32768,
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
