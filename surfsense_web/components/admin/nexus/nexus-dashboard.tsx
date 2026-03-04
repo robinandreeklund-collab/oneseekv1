@@ -23,6 +23,7 @@ import { SpaceTab } from "@/components/admin/nexus/tabs/space-tab";
 import { ForgeTab } from "@/components/admin/nexus/tabs/forge-tab";
 import { LoopTab } from "@/components/admin/nexus/tabs/loop-tab";
 import { LedgerTab } from "@/components/admin/nexus/tabs/ledger-tab";
+import { DeployTab } from "@/components/admin/nexus/tabs/deploy-tab";
 
 function TabFallback() {
 	return (
@@ -152,7 +153,7 @@ export function NexusDashboard() {
 				</TabsContent>
 
 				<TabsContent value="deploy" className="mt-6">
-					<PlaceholderTab name="DEPLOY — Triple-gate Lifecycle" />
+					<DeployTab />
 				</TabsContent>
 			</Tabs>
 		</div>

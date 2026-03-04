@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.nexus.calibration.dats_scaler import ZonalTemperatureScaler
 from app.nexus.calibration.platt_scaler import PlattCalibratedReranker, PlattParams
 from app.nexus.layers.auto_loop import AutoLoop
+from app.nexus.layers.deploy_control import DeployControl
 from app.nexus.layers.eval_ledger import EvalLedger
 from app.nexus.layers.space_auditor import SpaceAuditor, ToolPoint
 from app.nexus.layers.synth_forge import SynthForge
@@ -40,15 +41,21 @@ from app.nexus.routing.select_then_route import SelectThenRoute
 from app.nexus.routing.zone_manager import ZoneManager
 from app.nexus.schemas import (
     AutoLoopRunResponse,
+    CalibrationParamsResponse,
     ConfusionPair,
     DarkMatterCluster,
+    ECEReport,
+    GateResult as GateResultSchema,
+    GateStatus as GateStatusSchema,
     HubnessReport,
     NexusConfigResponse,
     NexusHealthResponse,
     OODResult,
     PipelineMetricsSummary,
+    PromotionResult as PromotionResultSchema,
     QueryAnalysis,
     QueryEntities,
+    RollbackResult as RollbackResultSchema,
     RoutingCandidate,
     RoutingDecision,
     RoutingEventResponse,
@@ -81,6 +88,8 @@ class NexusService:
         self.hard_negative_miner = HardNegativeMiner()
         self.eval_ledger = EvalLedger()
         self.auto_loop = AutoLoop()
+        # Sprint 4 additions
+        self.deploy_control = DeployControl()
 
     # ------------------------------------------------------------------
     # Health & Config
@@ -676,3 +685,105 @@ class NexusService:
         )
         session.add(event)
         await session.flush()
+
+    # ------------------------------------------------------------------
+    # Deploy Control (Sprint 4)
+    # ------------------------------------------------------------------
+
+    async def get_gate_status(
+        self, tool_id: str, session: AsyncSession
+    ) -> GateStatusSchema:
+        """Evaluate all deployment gates for a tool."""
+        gate_status = self.deploy_control.evaluate_all_gates(
+            tool_id,
+            # In production, these would come from DB/computed metrics
+            silhouette_score=None,
+            success_rate=None,
+            description_clarity=None,
+        )
+        return GateStatusSchema(
+            tool_id=gate_status.tool_id,
+            gates=[
+                GateResultSchema(
+                    gate_number=g.gate_number,
+                    gate_name=g.gate_name,
+                    passed=g.passed,
+                    score=g.score,
+                    threshold=g.threshold,
+                    details=g.details,
+                )
+                for g in gate_status.gates
+            ],
+            all_passed=gate_status.all_passed,
+            recommendation=gate_status.recommendation,
+        )
+
+    async def promote_tool(
+        self, tool_id: str, session: AsyncSession
+    ) -> PromotionResultSchema:
+        """Promote a tool to the next lifecycle stage."""
+        result = self.deploy_control.promote(tool_id)
+        return PromotionResultSchema(
+            tool_id=result.tool_id,
+            success=result.success,
+            message=result.message,
+        )
+
+    async def rollback_tool(
+        self, tool_id: str, session: AsyncSession
+    ) -> RollbackResultSchema:
+        """Rollback a tool to ROLLED_BACK stage."""
+        result = self.deploy_control.rollback(tool_id)
+        return RollbackResultSchema(
+            tool_id=result.tool_id,
+            success=result.success,
+            message=result.message,
+        )
+
+    # ------------------------------------------------------------------
+    # Calibration (Sprint 4)
+    # ------------------------------------------------------------------
+
+    async def get_calibration_params(
+        self, session: AsyncSession
+    ) -> list[CalibrationParamsResponse]:
+        """Get all calibration parameters."""
+        result = await session.execute(
+            select(NexusCalibrationParam).order_by(
+                NexusCalibrationParam.fitted_at.desc()
+            )
+        )
+        rows = result.scalars().all()
+        return [
+            CalibrationParamsResponse(
+                id=row.id,
+                zone=row.zone,
+                calibration_method=row.calibration_method,
+                param_a=row.param_a,
+                param_b=row.param_b,
+                temperature=row.temperature,
+                ece_score=row.ece_score,
+                fitted_on_samples=row.fitted_on_samples,
+                fitted_at=row.fitted_at,
+                is_active=row.is_active,
+            )
+            for row in rows
+        ]
+
+    async def get_ece_report(self, session: AsyncSession) -> ECEReport:
+        """Get ECE report across all zones."""
+        result = await session.execute(
+            select(NexusCalibrationParam).where(
+                NexusCalibrationParam.is_active.is_(True)
+            )
+        )
+        rows = result.scalars().all()
+
+        per_zone: dict[str, float] = {}
+        for row in rows:
+            if row.ece_score is not None:
+                per_zone[row.zone] = row.ece_score
+
+        global_ece = sum(per_zone.values()) / len(per_zone) if per_zone else None
+
+        return ECEReport(global_ece=global_ece, per_zone=per_zone)

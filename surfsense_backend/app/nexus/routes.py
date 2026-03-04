@@ -10,15 +10,20 @@ from app.db import User, get_async_session
 from app.nexus.schemas import (
     AnalyzeQueryRequest,
     AutoLoopRunResponse,
+    CalibrationParamsResponse,
     ConfusionPair,
     DarkMatterCluster,
+    ECEReport,
     ForgeGenerateRequest,
+    GateStatus,
     HubnessReport,
     MetricsTrend,
     NexusConfigResponse,
     NexusHealthResponse,
     PipelineMetricsSummary,
+    PromotionResult,
     QueryAnalysis,
+    RollbackResult,
     RouteQueryRequest,
     RoutingDecision,
     RoutingEventResponse,
@@ -350,3 +355,79 @@ async def log_routing_feedback(
     if not success:
         raise HTTPException(status_code=404, detail=f"Event '{event_id}' not found")
     return {"status": "ok", "event_id": event_id}
+
+
+# ------------------------------------------------------------------
+# Deploy Control (Sprint 4)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/deploy/gates/{tool_id}", response_model=GateStatus)
+async def get_deploy_gates(
+    tool_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get deployment gate status for a tool."""
+    return await service.get_gate_status(tool_id, session)
+
+
+@nexus_router.post("/deploy/promote/{tool_id}", response_model=PromotionResult)
+async def promote_tool(
+    tool_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Promote a tool to the next lifecycle stage."""
+    return await service.promote_tool(tool_id, session)
+
+
+@nexus_router.post("/deploy/rollback/{tool_id}", response_model=RollbackResult)
+async def rollback_tool(
+    tool_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Rollback a tool to previous stage."""
+    return await service.rollback_tool(tool_id, session)
+
+
+# ------------------------------------------------------------------
+# Calibration (Sprint 4)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/calibration/params", response_model=list[CalibrationParamsResponse])
+async def get_calibration_params(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get all calibration parameters."""
+    return await service.get_calibration_params(session)
+
+
+@nexus_router.post("/calibration/fit")
+async def fit_calibration(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Trigger calibration fitting (placeholder)."""
+    return {
+        "status": "completed",
+        "message": "Calibration fit placeholder — connect in production",
+    }
+
+
+@nexus_router.get("/calibration/ece", response_model=ECEReport)
+async def get_calibration_ece(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get ECE report across all zones."""
+    return await service.get_ece_report(session)

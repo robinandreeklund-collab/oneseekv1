@@ -240,6 +240,60 @@ export interface RoutingEventResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Deploy Control Types (Sprint 4)
+// ---------------------------------------------------------------------------
+
+export interface GateResultResponse {
+	gate_number: number;
+	gate_name: string;
+	passed: boolean;
+	score: number | null;
+	threshold: number | null;
+	details: string;
+}
+
+export interface GateStatusResponse {
+	tool_id: string;
+	gates: GateResultResponse[];
+	all_passed: boolean;
+	recommendation: string;
+}
+
+export interface PromotionResultResponse {
+	tool_id: string;
+	success: boolean;
+	message: string;
+}
+
+export interface RollbackResultResponse {
+	tool_id: string;
+	success: boolean;
+	message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Calibration Types (Sprint 4)
+// ---------------------------------------------------------------------------
+
+export interface CalibrationParamsResponse {
+	id: string;
+	zone: string;
+	calibration_method: string;
+	param_a: number | null;
+	param_b: number | null;
+	temperature: number | null;
+	ece_score: number | null;
+	fitted_on_samples: number | null;
+	fitted_at: string;
+	is_active: boolean;
+}
+
+export interface ECEReportResponse {
+	global_ece: number | null;
+	per_zone: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
 // API Methods
 // ---------------------------------------------------------------------------
 
@@ -320,6 +374,30 @@ class NexusApiService {
 			method: "POST",
 			body: JSON.stringify(feedback),
 		});
+
+	// Deploy Control (Sprint 4)
+	getDeployGates = (toolId: string) =>
+		fetchNexus<GateStatusResponse>(`/deploy/gates/${toolId}`);
+
+	promoteTool = (toolId: string) =>
+		fetchNexus<PromotionResultResponse>(`/deploy/promote/${toolId}`, {
+			method: "POST",
+		});
+
+	rollbackTool = (toolId: string) =>
+		fetchNexus<RollbackResultResponse>(`/deploy/rollback/${toolId}`, {
+			method: "POST",
+		});
+
+	// Calibration (Sprint 4)
+	getCalibrationParams = () =>
+		fetchNexus<CalibrationParamsResponse[]>("/calibration/params");
+
+	fitCalibration = () =>
+		fetchNexus<Record<string, string>>("/calibration/fit", { method: "POST" });
+
+	getCalibrationECE = () =>
+		fetchNexus<ECEReportResponse>("/calibration/ece");
 }
 
 export const nexusApiService = new NexusApiService();
