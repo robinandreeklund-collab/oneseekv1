@@ -25,7 +25,24 @@ import {
 	nexusApiService,
 	type ToolSuggestionResponse,
 	type OptimizerResultResponse,
+	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
+
+const CATEGORY_LABELS: Record<string, string> = {
+	smhi: "SMHI (Väder)",
+	scb: "SCB (Statistik)",
+	kolada: "Kolada (Nyckeltal)",
+	riksdagen: "Riksdagen",
+	trafikverket: "Trafikverket",
+	bolagsverket: "Bolagsverket",
+	marketplace: "Marknadsplats",
+	skolverket: "Skolverket",
+	builtin: "Inbyggda verktyg",
+	geoapify: "Kartor (Geoapify)",
+	external_model: "Externa modeller",
+};
+
+type FilterMode = "namespace" | "category";
 
 // ---------------------------------------------------------------------------
 // Suggestion Card — diff view for a single tool
@@ -184,38 +201,77 @@ function SuggestionCard({
 // ---------------------------------------------------------------------------
 
 export function OptimizerTab() {
+	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
+	const [filterMode, setFilterMode] = useState<FilterMode>("namespace");
+	const [selectedNamespace, setSelectedNamespace] = useState<string>("");
 	const [selectedCategory, setSelectedCategory] = useState<string>("");
-	const [loading, setLoading] = useState(false);
+	const [loading, setLoading] = useState(true);
 	const [generating, setGenerating] = useState(false);
 	const [applying, setApplying] = useState(false);
 	const [result, setResult] = useState<OptimizerResultResponse | null>(null);
 	const [approvalMap, setApprovalMap] = useState<Record<string, boolean | null>>({});
 	const [applyResult, setApplyResult] = useState<string | null>(null);
 
-	// Load categories on mount
+	// Derive unique namespace prefixes from tools
+	const namespaces = Array.from(
+		new Set(
+			platformTools
+				.map((t) => {
+					const parts = t.namespace.split("/");
+					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
+				})
+				.filter(Boolean),
+		),
+	).sort();
+
+	// Load platform tools + categories on mount
 	useEffect(() => {
 		setLoading(true);
-		nexusApiService
-			.getOptimizerCategories()
-			.then((res) => setCategories(res.categories))
+		Promise.all([
+			nexusApiService.getPlatformTools(),
+			nexusApiService.getOptimizerCategories(),
+		])
+			.then(([toolsRes, catRes]) => {
+				setPlatformTools(toolsRes.tools);
+				setCategories(catRes.categories);
+			})
 			.catch(() => {})
 			.finally(() => setLoading(false));
 	}, []);
 
+	// Count tools for selected filter
+	const selectedToolCount = (() => {
+		if (filterMode === "namespace" && selectedNamespace) {
+			return platformTools.filter((t) => t.namespace.startsWith(selectedNamespace)).length;
+		}
+		if (filterMode === "category" && selectedCategory) {
+			return platformTools.filter((t) => t.category === selectedCategory).length;
+		}
+		return 0;
+	})();
+
+	const canGenerate =
+		(filterMode === "namespace" && selectedNamespace) ||
+		(filterMode === "category" && selectedCategory);
+
 	const handleGenerate = useCallback(async () => {
-		if (!selectedCategory) return;
+		if (!canGenerate) return;
 		setGenerating(true);
 		setResult(null);
 		setApprovalMap({});
 		setApplyResult(null);
 
+		const request: { category?: string; namespace?: string } = {};
+		if (filterMode === "namespace" && selectedNamespace) {
+			request.namespace = selectedNamespace;
+		} else if (filterMode === "category" && selectedCategory) {
+			request.category = selectedCategory;
+		}
+
 		try {
-			const res = await nexusApiService.optimizerGenerate({
-				category: selectedCategory,
-			});
+			const res = await nexusApiService.optimizerGenerate(request);
 			setResult(res);
-			// Initialize all as null (pending)
 			const map: Record<string, boolean | null> = {};
 			for (const s of res.suggestions) {
 				map[s.tool_id] = null;
@@ -223,7 +279,7 @@ export function OptimizerTab() {
 			setApprovalMap(map);
 		} catch (err) {
 			setResult({
-				category: selectedCategory,
+				category: selectedNamespace || selectedCategory,
 				total_tools: 0,
 				suggestions: [],
 				model_used: "",
@@ -232,7 +288,7 @@ export function OptimizerTab() {
 		} finally {
 			setGenerating(false);
 		}
-	}, [selectedCategory]);
+	}, [canGenerate, filterMode, selectedNamespace, selectedCategory]);
 
 	const handleApprove = (toolId: string) => {
 		setApprovalMap((prev) => ({
@@ -262,7 +318,6 @@ export function OptimizerTab() {
 		setApplying(true);
 		setApplyResult(null);
 
-		// Collect approved suggestions
 		const approved = result.suggestions
 			.filter((s) => approvalMap[s.tool_id] === true)
 			.map((s) => ({
@@ -300,71 +355,124 @@ export function OptimizerTab() {
 			<Alert>
 				<Sparkles className="h-4 w-4" />
 				<AlertDescription>
-					Använd AI (Claude Sonnet) för att optimera verktygsmetadata per kategori.
+					Använd AI (Claude Sonnet) för att optimera verktygsmetadata per namespace.
 					LLM:en ser alla verktyg i batchen och maximerar embedding-separation
 					mellan dem. Godkända förslag sparas som DB-overrides och påverkar
 					NEXUS-routing direkt.
 				</AlertDescription>
 			</Alert>
 
-			{/* Category Selection + Generate */}
+			{/* Filter + Generate */}
 			<Card>
 				<CardHeader>
 					<CardTitle className="text-base">Generera förslag</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<div className="flex items-end gap-3">
-						<div className="flex-1 max-w-xs">
-							<label className="text-sm text-muted-foreground mb-1.5 block">
+					<div className="space-y-4">
+						{/* Filter mode toggle */}
+						<div className="flex items-center gap-2">
+							<Button
+								variant={filterMode === "namespace" ? "default" : "outline"}
+								size="sm"
+								onClick={() => setFilterMode("namespace")}
+							>
+								Namespace
+							</Button>
+							<Button
+								variant={filterMode === "category" ? "default" : "outline"}
+								size="sm"
+								onClick={() => setFilterMode("category")}
+							>
 								Kategori
-							</label>
-							{loading ? (
-								<div className="flex items-center gap-2 text-muted-foreground h-9">
-									<Loader2 className="h-4 w-4 animate-spin" />
-									Laddar...
-								</div>
-							) : (
-								<Select
-									value={selectedCategory}
-									onValueChange={setSelectedCategory}
-								>
-									<SelectTrigger>
-										<SelectValue placeholder="Välj kategori..." />
-									</SelectTrigger>
-									<SelectContent>
-										{categories.map((cat) => (
-											<SelectItem key={cat} value={cat}>
-												{cat}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							)}
+							</Button>
 						</div>
 
-						<Button
-							onClick={handleGenerate}
-							disabled={!selectedCategory || generating}
-						>
-							{generating ? (
-								<>
-									<Loader2 className="h-4 w-4 animate-spin mr-2" />
-									Genererar...
-								</>
-							) : (
-								<>
-									<Sparkles className="h-4 w-4 mr-2" />
-									Generera
-								</>
-							)}
-						</Button>
-					</div>
+						<div className="flex items-end gap-3">
+							<div className="flex-1 max-w-sm">
+								{loading ? (
+									<div className="flex items-center gap-2 text-muted-foreground h-9">
+										<Loader2 className="h-4 w-4 animate-spin" />
+										Laddar verktyg...
+									</div>
+								) : filterMode === "namespace" ? (
+									<>
+										<label className="text-sm text-muted-foreground mb-1.5 block">
+											Namespace
+										</label>
+										<Select
+											value={selectedNamespace}
+											onValueChange={setSelectedNamespace}
+										>
+											<SelectTrigger>
+												<SelectValue placeholder="Välj namespace..." />
+											</SelectTrigger>
+											<SelectContent>
+												{namespaces.map((ns) => {
+													const count = platformTools.filter((t) =>
+														t.namespace.startsWith(ns),
+													).length;
+													return (
+														<SelectItem key={ns} value={ns}>
+															{ns} ({count} verktyg)
+														</SelectItem>
+													);
+												})}
+											</SelectContent>
+										</Select>
+									</>
+								) : (
+									<>
+										<label className="text-sm text-muted-foreground mb-1.5 block">
+											Kategori
+										</label>
+										<Select
+											value={selectedCategory}
+											onValueChange={setSelectedCategory}
+										>
+											<SelectTrigger>
+												<SelectValue placeholder="Välj kategori..." />
+											</SelectTrigger>
+											<SelectContent>
+												{categories.map((cat) => {
+													const count = platformTools.filter(
+														(t) => t.category === cat,
+													).length;
+													return (
+														<SelectItem key={cat} value={cat}>
+															{CATEGORY_LABELS[cat] || cat} ({count} verktyg)
+														</SelectItem>
+													);
+												})}
+											</SelectContent>
+										</Select>
+									</>
+								)}
+							</div>
 
-					{result?.model_used && (
-						<p className="text-xs text-muted-foreground mt-2">
-							Modell: {result.model_used}
-						</p>
-					)}
+							<Button
+								onClick={handleGenerate}
+								disabled={!canGenerate || generating}
+							>
+								{generating ? (
+									<>
+										<Loader2 className="h-4 w-4 animate-spin mr-2" />
+										Genererar...
+									</>
+								) : (
+									<>
+										<Sparkles className="h-4 w-4 mr-2" />
+										Generera{selectedToolCount > 0 ? ` (${selectedToolCount} verktyg)` : ""}
+									</>
+								)}
+							</Button>
+						</div>
+
+						{result?.model_used && (
+							<p className="text-xs text-muted-foreground">
+								Modell: {result.model_used}
+							</p>
+						)}
+					</div>
 				</CardContent>
 			</Card>
 
@@ -442,8 +550,7 @@ export function OptimizerTab() {
 				<Card>
 					<CardContent className="pt-6">
 						<p className="text-sm text-muted-foreground text-center">
-							Inga förändringar föreslogs — metadata är redan bra optimerad
-							för kategorin "{result.category}".
+							Inga förändringar föreslogs — metadata är redan bra optimerad.
 						</p>
 					</CardContent>
 				</Card>
