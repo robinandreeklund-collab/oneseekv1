@@ -92,12 +92,27 @@ export interface RoutingCandidate {
 	rank: number;
 }
 
+export interface AgentCandidateResponse {
+	name: string;
+	zone: string;
+	score: number;
+	matched_keywords: string[];
+}
+
+export interface AgentResolution {
+	selected_agents: string[];
+	candidates: AgentCandidateResponse[];
+	tool_namespaces: string[];
+}
+
 export interface RoutingDecision {
 	query_analysis: QueryAnalysis;
+	agent_resolution: AgentResolution | null;
 	band: number;
 	band_name: string;
 	candidates: RoutingCandidate[];
 	selected_tool: string | null;
+	selected_agent: string | null;
 	resolved_zone: string | null;
 	calibrated_confidence: number;
 	is_ood: boolean;
@@ -247,6 +262,7 @@ export interface RoutingEventResponse {
 	query_text: string | null;
 	band: number;
 	resolved_zone: string | null;
+	selected_agent: string | null;
 	selected_tool: string | null;
 	calibrated_confidence: number | null;
 	is_multi_intent: boolean | null;

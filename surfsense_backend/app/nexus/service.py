@@ -1,8 +1,8 @@
 """NEXUS Service — orchestrates all routing components.
 
-Central coordination layer that connects QUL → OOD → StR → Bands → Zone
-into a single routing pipeline.  Sprint 2 adds Select-Then-Route, Schema
-Verifier, DATS calibration, ECE monitoring, and Space Auditor.
+Central coordination layer that connects QUL → Agent → StR → Bands → Zone
+into a single routing pipeline.  The agent layer sits between intent/zone
+resolution and tool retrieval: Intent → Agent → Tool.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from app.nexus.models import (
     NexusSyntheticCase,
     NexusZoneConfig,
 )
+from app.nexus.routing.agent_resolver import AgentResolver
 from app.nexus.routing.confidence_bands import ConfidenceBandCascade
 from app.nexus.routing.hard_negative_bank import HardNegativeMiner
 from app.nexus.routing.ood_detector import DarkMatterDetector
@@ -43,6 +44,8 @@ from app.nexus.routing.select_then_route import SelectThenRoute
 from app.nexus.routing.shadow_observer import ShadowObserver
 from app.nexus.routing.zone_manager import ZoneManager
 from app.nexus.schemas import (
+    AgentCandidateResponse,
+    AgentResolution,
     AutoLoopRunResponse,
     CalibrationParamsResponse,
     ConfusionPair,
@@ -77,6 +80,7 @@ class NexusService:
 
     def __init__(self):
         self.qul = QueryUnderstandingLayer()
+        self.agent_resolver = AgentResolver()
         self.ood_detector = DarkMatterDetector()
         self.band_cascade = ConfidenceBandCascade()
         self.zone_manager = ZoneManager()
@@ -232,7 +236,7 @@ class NexusService:
         )
 
     # ------------------------------------------------------------------
-    # Full Routing Pipeline (Sprint 2: QUL → StR → OOD → Bands → Schema)
+    # Full Routing Pipeline: QUL → Agent → StR → OOD → Bands → Schema
     # ------------------------------------------------------------------
 
     async def route_query(
@@ -244,7 +248,10 @@ class NexusService:
     ) -> RoutingDecision:
         """Run the full precision routing pipeline.
 
-        Pipeline: QUL → StR → Rerank → Calibrate → OOD → Band → Schema verify.
+        Pipeline: QUL → Agent Resolution → StR → Rerank → Calibrate → OOD → Band → Schema.
+
+        The agent layer is the key difference from the old pipeline:
+        Intent (zone) → Agent (narrow) → Tool (specific).
 
         Args:
             query: User query.
@@ -256,8 +263,32 @@ class NexusService:
 
         start_time = time.monotonic()
 
-        # Step 1: QUL
+        # Step 1: QUL — Intent/Zone resolution
         analysis = self.analyze_query(query)
+
+        # Step 2: Agent Resolution — narrow from zone to specific agent(s)
+        agent_result = self.agent_resolver.resolve(
+            analysis.normalized_query,
+            analysis.zone_candidates,
+            domain_hints=analysis.domain_hints,
+            organizations=analysis.entities.organizations,
+        )
+        agent_namespaces = agent_result.tool_namespaces
+        selected_agent = agent_result.top_agent
+
+        agent_resolution = AgentResolution(
+            selected_agents=agent_result.selected_agents,
+            candidates=[
+                AgentCandidateResponse(
+                    name=c.agent.name,
+                    zone=c.agent.zone.value,
+                    score=round(c.score, 3),
+                    matched_keywords=c.matched_keywords,
+                )
+                for c in agent_result.candidates[:5]
+            ],
+            tool_namespaces=agent_namespaces,
+        )
 
         # Auto-build tool_entries from platform registry if not provided
         if tool_entries is None:
@@ -271,14 +302,15 @@ class NexusService:
         schema_verified = False
 
         if tool_entries:
-            # Step 2: Select-Then-Route
+            # Step 3: Select-Then-Route — filtered by agent namespaces
             str_result = self.str_pipeline.run(
                 query,
                 analysis.zone_candidates,
                 tool_entries,
+                agent_namespaces=agent_namespaces if agent_namespaces else None,
             )
 
-            # Step 2b: Rerank with real cross-encoder if available
+            # Step 3b: Rerank with real cross-encoder if available
             rerank_docs = [
                 {
                     "document_id": c.tool_id,
@@ -303,7 +335,7 @@ class NexusService:
             top_score = str_result.top_score
             second_score = str_result.second_score
 
-            # Step 3: Calibrate scores (use reranked scores when available)
+            # Step 4: Calibrate scores (use reranked scores when available)
             for rank, c in enumerate(str_result.candidates):
                 raw = rerank_scores.get(c.tool_id, c.raw_score)
                 calibrated = self.platt_scaler.calibrate(raw)
@@ -330,7 +362,7 @@ class NexusService:
                 )
                 selected_tool = candidates[0].tool_id
 
-            # Step 4: Schema verification on top candidate
+            # Step 5: Schema verification on top candidate
             if selected_tool:
                 sv_result = self.schema_verifier.verify(
                     selected_tool,
@@ -343,13 +375,13 @@ class NexusService:
                 if sv_result.confidence_penalty > 0:
                     top_score = max(0.0, top_score - sv_result.confidence_penalty)
 
-        # Step 5: OOD check
+        # Step 6: OOD check
         if top_score > 0:
             ood_result = self.ood_detector.detect([top_score, second_score])
         else:
             ood_result = OODResult(is_ood=False, energy_score=0.0)
 
-        # Step 6: Band classification
+        # Step 7: Band classification
         band_result = self.band_cascade.classify(
             top_score=top_score,
             second_score=second_score,
@@ -359,10 +391,12 @@ class NexusService:
 
         decision = RoutingDecision(
             query_analysis=analysis,
+            agent_resolution=agent_resolution,
             band=band_result.band,
             band_name=band_result.band_name,
             candidates=candidates,
             selected_tool=selected_tool,
+            selected_agent=selected_agent,
             resolved_zone=(
                 analysis.zone_candidates[0] if analysis.zone_candidates else None
             ),
@@ -882,6 +916,7 @@ class NexusService:
                 query_text=row.query_text,
                 band=row.band,
                 resolved_zone=row.resolved_zone,
+                selected_agent=getattr(row, "selected_agent", None),
                 selected_tool=row.selected_tool,
                 calibrated_confidence=row.calibrated_confidence,
                 is_multi_intent=row.is_multi_intent,
@@ -974,6 +1009,7 @@ class NexusService:
             query_hash=hashlib.sha256(query.encode()).hexdigest()[:16],
             band=decision.band,
             resolved_zone=decision.resolved_zone,
+            selected_agent=decision.selected_agent,
             selected_tool=decision.selected_tool,
             raw_reranker_score=raw_score,
             calibrated_confidence=decision.calibrated_confidence,

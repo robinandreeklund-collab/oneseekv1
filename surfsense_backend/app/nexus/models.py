@@ -224,6 +224,7 @@ class NexusRoutingEvent(Base):
     query_hash = Column(Text, nullable=True)
     band = Column(Integer, nullable=False, index=True)
     resolved_zone = Column(Text, nullable=True, index=True)
+    selected_agent = Column(Text, nullable=True, index=True)
     selected_tool = Column(Text, nullable=True)
     raw_reranker_score = Column(Float, nullable=True)
     calibrated_confidence = Column(Float, nullable=True)

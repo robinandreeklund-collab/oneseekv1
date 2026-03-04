@@ -3,7 +3,7 @@
 Single source of truth for all NEXUS-specific configuration values.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,144 @@ NAMESPACE_ZONE_MAP: dict[str, Zone] = {
     "tools/compare": Zone.JAMFORELSE,
     "tools/general": Zone.KUNSKAP,
 }
+
+
+# ---------------------------------------------------------------------------
+# Agent Architecture — the middle layer between Intent/Zone and Tools
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NexusAgent:
+    """An agent definition for NEXUS routing.
+
+    Each agent belongs to a zone (intent) and owns a set of tool namespace
+    prefixes.  Routing: Intent → Agent → Tool.
+    """
+
+    name: str
+    zone: Zone
+    description: str
+    primary_namespaces: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
+
+
+# 13 agents aligned with production supervisor_agent.py AgentDefinition list.
+# primary_namespaces control which tools belong to each agent.
+NEXUS_AGENTS: tuple[NexusAgent, ...] = (
+    NexusAgent(
+        name="åtgärd",
+        zone=Zone.KUNSKAP,
+        description="Generella uppgifter, realtidsåtgärder och verktygsexekvering",
+        primary_namespaces=("tools/action", "tools/general"),
+        keywords=("åtgärd", "gör", "utför", "verktyg"),
+    ),
+    NexusAgent(
+        name="väder",
+        zone=Zone.KUNSKAP,
+        description="SMHI väderdata, prognoser och Trafikverket vägväder",
+        primary_namespaces=("tools/weather",),
+        keywords=(
+            "väder", "vädret", "smhi", "temperatur", "regn", "prognos",
+            "snö", "vind", "vägväder",
+        ),
+    ),
+    NexusAgent(
+        name="kartor",
+        zone=Zone.SKAPANDE,
+        description="Kartgenerering via Geoapify",
+        primary_namespaces=("tools/kartor",),
+        keywords=("karta", "kartbild", "geoapify", "plats", "visa på karta"),
+    ),
+    NexusAgent(
+        name="media",
+        zone=Zone.SKAPANDE,
+        description="Podcast- och mediagenerering",
+        primary_namespaces=(),
+        keywords=("podcast", "media", "ljud", "bild", "generera"),
+    ),
+    NexusAgent(
+        name="kunskap",
+        zone=Zone.KUNSKAP,
+        description="Intern kunskapsbas, SurfSense-docs och webbsökning via Tavily",
+        primary_namespaces=("tools/knowledge",),
+        keywords=(
+            "dokument", "docs", "kunskap", "sök", "search", "notion",
+            "slack", "github", "sammanfatta",
+        ),
+    ),
+    NexusAgent(
+        name="webb",
+        zone=Zone.KUNSKAP,
+        description="Webbskrapning och länkförhandsgranskning",
+        primary_namespaces=(),
+        keywords=("webb", "länk", "url", "nyheter", "scrape"),
+    ),
+    NexusAgent(
+        name="kod",
+        zone=Zone.SKAPANDE,
+        description="Sandbox-kodexekvering och beräkningar",
+        primary_namespaces=("tools/code",),
+        keywords=("kod", "python", "script", "sandbox", "exekvera", "kör"),
+    ),
+    NexusAgent(
+        name="bolag",
+        zone=Zone.KUNSKAP,
+        description="Bolagsverket företagsinformation",
+        primary_namespaces=("tools/bolag",),
+        keywords=("bolag", "bolagsverket", "företag", "org", "organisationsnummer"),
+    ),
+    NexusAgent(
+        name="statistik",
+        zone=Zone.KUNSKAP,
+        description="SCB, Kolada, Skolverket statistik och nyckeltal",
+        primary_namespaces=("tools/statistics",),
+        keywords=(
+            "statistik", "scb", "kolada", "befolkning", "nyckeltal",
+            "skolverket", "utbildning", "kommun",
+        ),
+    ),
+    NexusAgent(
+        name="trafik",
+        zone=Zone.KUNSKAP,
+        description="Trafikverket realtidstrafik, tåg och vägdata",
+        primary_namespaces=("tools/trafik",),
+        keywords=(
+            "trafik", "trafiken", "trafikverket", "tåg", "väg", "kamera",
+            "järnväg", "störning",
+        ),
+    ),
+    NexusAgent(
+        name="riksdagen",
+        zone=Zone.KUNSKAP,
+        description="Riksdagsdokument, voteringar och propositioner",
+        primary_namespaces=("tools/politik",),
+        keywords=(
+            "riksdagen", "proposition", "betänkande", "motion", "votering",
+            "ledamot", "politik",
+        ),
+    ),
+    NexusAgent(
+        name="marknad",
+        zone=Zone.KUNSKAP,
+        description="Blocket, Tradera och marknadsplatser",
+        primary_namespaces=("tools/marketplace",),
+        keywords=("blocket", "tradera", "marknadsplats", "annons", "begagnat"),
+    ),
+    NexusAgent(
+        name="syntes",
+        zone=Zone.KUNSKAP,
+        description="Sammanfattning och syntes av resultat",
+        primary_namespaces=(),
+        keywords=("sammanfatta", "syntes", "summera"),
+    ),
+)
+
+# Lookup helpers
+AGENT_BY_NAME: dict[str, NexusAgent] = {a.name: a for a in NEXUS_AGENTS}
+AGENTS_BY_ZONE: dict[Zone, list[NexusAgent]] = {}
+for _a in NEXUS_AGENTS:
+    AGENTS_BY_ZONE.setdefault(_a.zone, []).append(_a)
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +421,10 @@ ZONE_HEALTH_TARGETS = ZoneHealthTargets()
 
 
 class PipelineStage(StrEnum):
-    """The 5 stages of the precision routing pipeline."""
+    """The 6 stages of the precision routing pipeline."""
 
     INTENT = "intent"
+    AGENT = "agent"
     ROUTE = "route"
     BIGTOOL = "bigtool"
     RERANK = "rerank"
@@ -294,10 +433,11 @@ class PipelineStage(StrEnum):
 
 PIPELINE_STAGES: list[tuple[int, str]] = [
     (1, PipelineStage.INTENT),
-    (2, PipelineStage.ROUTE),
-    (3, PipelineStage.BIGTOOL),
-    (4, PipelineStage.RERANK),
-    (5, PipelineStage.E2E),
+    (2, PipelineStage.AGENT),
+    (3, PipelineStage.ROUTE),
+    (4, PipelineStage.BIGTOOL),
+    (5, PipelineStage.RERANK),
+    (6, PipelineStage.E2E),
 ]
 
 

@@ -57,8 +57,8 @@ och ansvarar för:
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │                    ROUTING PIPELINE                             │  │
 │  │                                                                │  │
-│  │  Fråga → QUL → StR → Rerank → Kalibrering → OOD → Band → SV  │  │
-│  │         (1)    (2)    (3)       (4)          (5)   (6)   (7)   │  │
+│  │  Fråga → QUL → Agent → StR → Rerank → Kalib → OOD → Band→ SV │  │
+│  │         (1)    (2)     (3)    (4)      (5)    (6)   (7)   (8) │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐  ┌───────┐  │
@@ -126,49 +126,69 @@ och ansvarar för:
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│ STEG 2: Select-Then-Route (StR)             │
+│ STEG 2: Agent Resolution                    │
 │                                             │
-│ • Välj zoner: ["kunskap"]                   │
-│ • Ladda verktyg från Platform Bridge        │
-│ • Per-zon retrieval (top-5 per zon):        │
+│ • Zon: "kunskap" → 10 kandidat-agenter      │
+│ • Keyword-scoring per agent:                │
+│                                             │
+│   väder:     1.50  (match: "vädret")        │
+│   statistik: 1.00  (ingen keyword match)    │
+│   trafik:    1.00  (ingen keyword match)    │
+│   ...                                       │
+│                                             │
+│ • Vald agent: "väder"                       │
+│ • Agent-namespaces: ["tools/weather"]       │
+│                                             │
+│ → Bara verktyg i tools/weather skickas      │
+│   vidare till StR (inte alla 50+ verktyg)   │
+│                                             │
+│ Tid: <2 ms (ingen LLM, ingen DB)           │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 3: Select-Then-Route (StR)             │
+│                                             │
+│ • Filtrerat av agent: tools/weather         │
+│ • Ladda SMHI-verktyg från Platform Bridge   │
+│ • Per-zon retrieval (top-5):                │
 │                                             │
 │   smhi_weather         0.92                 │
-│   scb_population       0.15                 │
-│   trafikverket_kameror 0.08                 │
-│   kolada_nyckeltal     0.06                 │
-│   riksdagen_ledamoter  0.04                 │
+│   smhi_temperature     0.71                 │
+│   smhi_forecast_10day  0.65                 │
+│   smhi_road_weather    0.40                 │
 │                                             │
 │ • Merge & sortera → max 15 kandidater       │
 └────────┬────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│ STEG 3: Cross-encoder Reranking             │
+│ STEG 4: Cross-encoder Reranking             │
 │                                             │
 │ • flashrank ms-marco-MultiBERT-L-12         │
-│ • Rerankar top-kandidater:                  │
+│ • Rerankar top-kandidater (inom agenten):   │
 │                                             │
 │   smhi_weather         0.95                 │
-│   scb_population       0.18                 │
-│   trafikverket_kameror 0.12                 │
+│   smhi_temperature     0.72                 │
+│   smhi_forecast_10day  0.68                 │
 │                                             │
 │ Tid: ~50 ms                                 │
 └────────┬────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│ STEG 4: Platt-kalibrering                   │
+│ STEG 5: Platt-kalibrering                   │
 │                                             │
 │ • Sigmoid-transform: P = 1/(1+exp(A*x-B))  │
 │ • Raw 0.95 → Calibrated 0.94               │
-│ • Raw 0.18 → Calibrated 0.11               │
+│ • Raw 0.72 → Calibrated 0.65               │
 │                                             │
-│ Margin: 0.94 - 0.11 = 0.83                 │
+│ Margin: 0.94 - 0.65 = 0.29                 │
 └────────┬────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│ STEG 5: OOD-detektion (Out-of-Distribution) │
+│ STEG 6: OOD-detektion (Out-of-Distribution) │
 │                                             │
 │ • Energy Score = -2.1                       │
 │   (under threshold -5.0 → in-distribution) │
@@ -177,9 +197,9 @@ och ansvarar för:
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│ STEG 6: Confidence Band Classification      │
+│ STEG 7: Confidence Band Classification      │
 │                                             │
-│ • top_score=0.94, margin=0.83               │
+│ • top_score=0.94, margin=0.29               │
 │ • Band 0: score≥0.95 & margin≥0.20? NEJ    │
 │ • Band 1: score≥0.80 & margin≥0.10? JA ✓   │
 │                                             │
@@ -188,7 +208,7 @@ och ansvarar för:
          │
          ▼
 ┌─────────────────────────────────────────────┐
-│ STEG 7: Schema Verification                 │
+│ STEG 8: Schema Verification                 │
 │                                             │
 │ • Verktyg: smhi_weather                     │
 │ • Required params: ["location"]             │
@@ -204,13 +224,14 @@ och ansvarar för:
 │                                             │
 │ {                                           │
 │   selected_tool: "smhi_weather",            │
+│   selected_agent: "väder",                  │
 │   calibrated_confidence: 0.94,              │
 │   band: 1,                                  │
 │   band_name: "VERIFY",                      │
 │   is_ood: false,                            │
 │   schema_verified: true,                    │
 │   resolved_zone: "kunskap",                 │
-│   latency_ms: 145                           │
+│   latency_ms: 147                           │
 │ }                                           │
 └─────────────────────────────────────────────┘
 ```
@@ -291,12 +312,13 @@ tools/compare    → jämförelse
 Användarfråga
     │
     ├───► PRODUKTION (live routing)
-    │     supervisor_v2 → intent_node → planner → executor
-    │     bigtool_store.smart_retrieve_tools_with_breakdown()
+    │     supervisor_v2 → intent_node → agent_resolver → planner → executor
+    │     Intent → Agent → Tool (via bigtool_store)
     │     ToolRetrievalTuning (vikter: name=5.0, keyword=3.0, ...)
     │
     └───► NEXUS (analys & utvärdering)
-          QUL → StR → Rerank → Calibrate → OOD → Band → Schema
+          QUL → Agent → StR → Rerank → Calibrate → OOD → Band → Schema
+          Intent → Agent → Tool (samma 3-lagers-modell)
           Loggar resultat, jämför med produktion via Shadow Observer
 ```
 
@@ -348,7 +370,7 @@ QUL analyserar frågan **utan LLM och utan databasanrop** (mål: <5 ms).
 | 2 | Entitetsextraktion | Hittar platser (290 kommuner), tider, organisationer, ämnen |
 | 3 | Multi-intent-detektion | Upptäcker sammansatta frågor ("väder OCH trafikinfo") |
 | 4 | Domain-hint scoring | Matchar keywords mot domänbanker |
-| 5 | Zon-kandidat-resolution | Avgör vilka zoner som är relevanta |
+| 5 | Zon-kandidat-resolution | Avgör vilka zoner (intents) som är relevanta |
 | 6 | Komplexitetsklassificering | `simple` / `compound` / `complex` |
 
 **Gazetteers & banker:**
@@ -357,11 +379,50 @@ QUL analyserar frågan **utan LLM och utan databasanrop** (mål: <5 ms).
 - Svenska myndigheter: SMHI, SCB, Riksdagen, Trafikverket, etc.
 - Domain hints per zon (50+ keywords per kategori)
 
-### Steg 2: Select-Then-Route (StR)
+### Steg 2: Agent Resolution
+
+**Fil:** `app/nexus/routing/agent_resolver.py`
+
+Agentresolution är **mellanlaget** mellan intent/zon och verktyg. Givet en zon
+väljs den bäst matchande agenten, som begränsar vilka verktyg som skickas vidare.
+
+**13 agenter** (samma som produktionen):
+
+| Agent | Zon | Primary Namespaces | Typfråga |
+|-------|-----|--------------------|----------|
+| väder | kunskap | `tools/weather` | "Vad är vädret i Gbg?" |
+| statistik | kunskap | `tools/statistics` | "Befolkning i Stockholm" |
+| trafik | kunskap | `tools/trafik` | "Trafikstörningar E6" |
+| riksdagen | kunskap | `tools/politik` | "Senaste propositionen" |
+| bolag | kunskap | `tools/bolag` | "Info om Volvo AB" |
+| marknad | kunskap | `tools/marketplace` | "Cyklar på Blocket" |
+| kunskap | kunskap | `tools/knowledge` | "Sök i mina dokument" |
+| webb | kunskap | — | "Sammanfatta denna länk" |
+| åtgärd | kunskap | `tools/action`, `tools/general` | "Gör detta" |
+| kartor | skapande | `tools/kartor` | "Visa karta över Malmö" |
+| kod | skapande | `tools/code` | "Kör Python-script" |
+| media | skapande | — | "Skapa en podcast" |
+| syntes | kunskap | — | "Sammanfatta allt" |
+
+**Scoring** (per agent, ingen LLM, <2 ms):
+```
+score = 1.0  (bas — zon matchar)
+     + 0.3   per keyword-match i frågan
+     + 0.2   per organisation-entitet match
+```
+
+Agenten med högst score väljs. Dess `primary_namespaces` filtrerar verktygen:
+- "Vad är vädret?" → väder → bara `tools/weather`-verktyg
+- "SCB befolkning" → statistik → bara `tools/statistics`-verktyg
+
+Om agent-filtret ger 0 verktyg faller StR tillbaka till ofiltrerad sökning.
+
+### Steg 3: Select-Then-Route (StR)
 
 **Fil:** `app/nexus/routing/select_then_route.py`
 
-StR-mönstret undviker cross-zone pollution genom zonspecifik retrieval:
+StR-mönstret undviker cross-zone pollution genom zonspecifik retrieval.
+**Nytt: filtrerat av agentens namespaces.**
 
 1. **Välj zoner** baserat på QUL:s zon-kandidater (max 2)
 2. **Per-zon retrieval** — top-5 verktyg per vald zon
@@ -376,14 +437,14 @@ raw_score += 0.02  per matchande keyword
 raw_score = min(1.0, raw_score)  # Klipp till [0, 1]
 ```
 
-### Steg 3: Cross-encoder Reranking
+### Steg 4: Cross-encoder Reranking
 
 **Fil:** `app/nexus/embeddings.py`
 
 Använder `flashrank ms-marco-MultiBERT-L-12` (samma modell som produktion) för att
 reordna kandidater med mer semantisk förståelse.
 
-### Steg 4: Platt-kalibrering
+### Steg 5: Platt-kalibrering
 
 **Fil:** `app/nexus/calibration/platt_scaler.py`
 
@@ -395,7 +456,7 @@ P(correct) = 1 / (1 + exp(A × raw_score - B))
 
 Parametrar A och B fittas på historiska routing-events via L-BFGS-B optimering.
 
-### Steg 5: OOD-detektion
+### Steg 6: OOD-detektion
 
 **Fil:** `app/nexus/routing/ood_detector.py`
 
@@ -414,11 +475,11 @@ OOD-frågor klassificeras i 6 kategorier:
 - `conflicting` — Motstridiga krav
 - `underspecified` — Information saknas
 
-### Steg 6: Confidence Band Cascade
+### Steg 7: Confidence Band Cascade
 
 Se [sektion 10](#10-confidence-band-cascade) för detaljer.
 
-### Steg 7: Schema Verification
+### Steg 8: Schema Verification
 
 **Fil:** `app/nexus/routing/schema_verifier.py`
 
@@ -503,15 +564,16 @@ Statusar: `pending → running → analyzing → proposing → review → approv
 
 **Fil:** `app/nexus/layers/eval_ledger.py`
 
-Spårar precision-metriker i 5 pipeline-steg:
+Spårar precision-metriker i 6 pipeline-steg:
 
 | Steg | Namn | Vad mäts |
 |------|------|----------|
 | 1 | Intent routing | Rätt zon vald? |
-| 2 | Route selection | Rätt verktygskandidat? |
-| 3 | Bigtool retrieval | Rätt i top-k? |
-| 4 | Reranker effect | Förbättring efter reranking? |
-| 5 | End-to-end | Hela kedjan korrekt? |
+| 2 | Agent selection | Rätt agent vald? |
+| 3 | Route selection | Rätt verktygskandidat? |
+| 4 | Bigtool retrieval | Rätt i top-k? |
+| 5 | Reranker effect | Förbättring efter reranking? |
+| 6 | End-to-end | Hela kedjan korrekt? |
 
 Metriker per steg:
 - **Precision@1** — Rätt verktyg på plats 1
@@ -576,28 +638,37 @@ Problem:
 
 ### Problemet utan NEXUS
 
-OneSeeks supervisor väljer agent baserat på intent:
-- kunskap → `kunskap`-agent
-- skapande → `skapande`-agent
-- jämförelse → `compare`-agent
+OneSeeks supervisor väljer agent med LLM-baserad klassificering. 13 agenter:
+väder, statistik, trafik, riksdagen, bolag, marknad, kunskap, webb, åtgärd,
+kartor, kod, media, syntes.
 
-Agenten har ett namespace med tillgängliga verktyg, men:
-- Agent-val baseras på intent, inte verktygskvalitet
-- Ingen feedback-loop vid felval
-- Ingen spårning av agent-verktyg-koppling
+Problem:
+- Agent-val kräver LLM-anrop (~200ms)
+- Ingen kalibrering av agent-confidence
+- Svårt att identifiera systematiska felval
 
 ### Hur NEXUS förbättrar
 
-1. **Namespace purity tracking:** NEXUS mäter hur ofta rätt agent/namespace väljs via
+1. **Agent Resolution utan LLM (<2 ms):** Keyword-baserad scoring per agent mot frågan.
+   Varje agent har `primary_namespaces` som filtrerar verktyg.
+
+2. **3-lagers routing:** Intent → Agent → Tool. Agenten är det smala filtret som
+   reducerar tusentals verktyg till en hanterbar uppsättning (t.ex. väder-agenten
+   ser bara `tools/weather`).
+
+3. **Agent-specifik eval:** Eval Ledger steg 2 mäter agent selection precision —
+   "valdes rätt agent?"
+
+4. **Namespace purity tracking:** NEXUS mäter hur ofta rätt agent/namespace väljs via
    `namespace_purity` metriken (mål: >92%)
 
-2. **Shadow comparison:** Shadow Observer jämför NEXUS routing-beslut med produktionens
-   agent-val och loggar avvikelser
+5. **Shadow comparison:** Shadow Observer jämför NEXUS agent-val med produktionens
+   agent_resolver och loggar avvikelser
 
-3. **Auto Loop metadata-förslag:** Om Auto Loop identifierar att verktyg hamnar i fel
+6. **Auto Loop metadata-förslag:** Om Auto Loop identifierar att verktyg hamnar i fel
    agent-namespace, föreslår den namespace-ändring
 
-4. **Dark Matter-analys:** Frågor som hamnar i OOD (ingen agent matchar) klustras och
+7. **Dark Matter-analys:** Frågor som hamnar i OOD (ingen agent matchar) klustras och
    analyseras — kan leda till nya agent-definitioner
 
 ---
@@ -864,7 +935,8 @@ surfsense_backend/app/nexus/
 │
 ├── routing/
 │   ├── qul.py                         # Query Understanding Layer
-│   ├── select_then_route.py           # Select-Then-Route pattern
+│   ├── agent_resolver.py              # Agent Resolution (Intent → Agent)
+│   ├── select_then_route.py           # Select-Then-Route (Agent → Tool)
 │   ├── confidence_bands.py            # 5-band cascade
 │   ├── ood_detector.py                # Energy + KNN OOD-detektion
 │   ├── schema_verifier.py             # Post-selection param/geo/temporal check

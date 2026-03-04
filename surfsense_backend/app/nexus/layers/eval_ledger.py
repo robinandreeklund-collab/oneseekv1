@@ -122,6 +122,7 @@ class EvalLedger:
         expected_tool: str,
         *,
         intent_results: list[str] | None = None,
+        agent_results: list[str] | None = None,
         route_results: list[str] | None = None,
         bigtool_results: list[str] | None = None,
         rerank_results: list[str] | None = None,
@@ -134,6 +135,7 @@ class EvalLedger:
             query: The query text.
             expected_tool: The correct tool ID.
             intent_results: Ranked results from intent routing.
+            agent_results: Ranked agent names from agent resolution.
             route_results: Ranked results from route selection.
             bigtool_results: Ranked results from bigtool retrieval.
             rerank_results: Ranked results from reranker.
@@ -147,9 +149,10 @@ class EvalLedger:
 
         stage_data = [
             (1, "intent", intent_results),
-            (2, "route", route_results),
-            (3, "bigtool", bigtool_results),
-            (4, "rerank", rerank_results),
+            (2, "agent", agent_results),
+            (3, "route", route_results),
+            (4, "bigtool", bigtool_results),
+            (5, "rerank", rerank_results),
         ]
 
         for stage_num, stage_name, ranked in stage_data:
@@ -168,7 +171,7 @@ class EvalLedger:
                 )
             )
 
-        # Reranker delta (stage 4 vs stage 3)
+        # Reranker delta (stage 5 vs stage 4)
         if bigtool_results and rerank_results:
             pre_mrr = compute_mrr(bigtool_results, expected_tool, k=10)
             post_mrr = compute_mrr(rerank_results, expected_tool, k=10)
@@ -183,7 +186,7 @@ class EvalLedger:
         if e2e_result is not None:
             results.append(
                 StageResult(
-                    stage=5,
+                    stage=6,
                     stage_name="e2e",
                     namespace=namespace,
                     precision_at_1=1.0 if e2e_result == expected_tool else 0.0,

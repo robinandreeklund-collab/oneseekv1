@@ -145,6 +145,7 @@ class SelectThenRoute:
         *,
         max_zones: int = 2,
         per_zone_k: int = PER_ZONE_TOP_K,
+        agent_namespaces: list[str] | None = None,
     ) -> StRResult:
         """Run the full Select-Then-Route pipeline.
 
@@ -154,10 +155,27 @@ class SelectThenRoute:
             tool_entries: Tool entries with zone and score pre-computed.
             max_zones: Max zones to search.
             per_zone_k: Top-k per zone.
+            agent_namespaces: If provided, only consider tools whose namespace
+                starts with one of these prefixes.  This is the key integration
+                point for the agent layer: Intent → Agent → Tool.
 
         Returns:
             StRResult with candidates, scores, and margin.
         """
+        # Filter tools by agent namespaces when provided
+        if agent_namespaces:
+            filtered_entries = [
+                t
+                for t in tool_entries
+                if any(
+                    t.get("namespace", "").startswith(ns)
+                    for ns in agent_namespaces
+                )
+            ]
+            # Fall back to unfiltered if agent filter yields nothing
+            if filtered_entries:
+                tool_entries = filtered_entries
+
         zones = self.select_zones(zone_candidates, max_zones=max_zones)
         candidates = self.retrieve_per_zone(
             query,

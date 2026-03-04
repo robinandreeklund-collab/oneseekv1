@@ -63,12 +63,27 @@ class RoutingCandidate(BaseModel):
     rank: int
 
 
+class AgentCandidateResponse(BaseModel):
+    name: str
+    zone: str
+    score: float
+    matched_keywords: list[str] = Field(default_factory=list)
+
+
+class AgentResolution(BaseModel):
+    selected_agents: list[str] = Field(default_factory=list)
+    candidates: list[AgentCandidateResponse] = Field(default_factory=list)
+    tool_namespaces: list[str] = Field(default_factory=list)
+
+
 class RoutingDecision(BaseModel):
     query_analysis: QueryAnalysis
+    agent_resolution: AgentResolution | None = None
     band: int  # 0-4
     band_name: str
     candidates: list[RoutingCandidate] = Field(default_factory=list)
     selected_tool: str | None = None
+    selected_agent: str | None = None
     resolved_zone: str | None = None
     calibrated_confidence: float = 0.0
     is_ood: bool = False
@@ -324,6 +339,7 @@ class RoutingEventResponse(BaseModel):
     query_text: str | None = None
     band: int
     resolved_zone: str | None = None
+    selected_agent: str | None = None
     selected_tool: str | None = None
     calibrated_confidence: float | None = None
     is_multi_intent: bool | None = None

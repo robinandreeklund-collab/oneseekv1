@@ -93,8 +93,8 @@ export function NexusDashboard() {
 				<div>
 					<h1 className="text-3xl font-bold tracking-tight">NEXUS</h1>
 					<p className="text-muted-foreground mt-1">
-						Retrieval Intelligence Platform — precisionrouting, självförbättrande
-						eval och embedding-rymd-hälsa
+						Retrieval Intelligence Platform — Intent → Agent → Tool precision routing,
+						självförbättrande eval och embedding-rymd-hälsa
 					</p>
 				</div>
 				<div className="flex items-center gap-2">
@@ -565,6 +565,7 @@ function RoutingEventsPanel() {
 									<th className="pb-2 pr-4">Fråga</th>
 									<th className="pb-2 pr-4">Band</th>
 									<th className="pb-2 pr-4">Zon</th>
+									<th className="pb-2 pr-4">Agent</th>
 									<th className="pb-2 pr-4">Verktyg</th>
 									<th className="pb-2 pr-4">Confidence</th>
 									<th className="pb-2 pr-4">OOD</th>
@@ -590,6 +591,13 @@ function RoutingEventsPanel() {
 											</span>
 										</td>
 										<td className="py-2 pr-4">{evt.resolved_zone ?? "—"}</td>
+										<td className="py-2 pr-4">
+											{evt.selected_agent ? (
+												<span className="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 text-xs font-medium">
+													{evt.selected_agent}
+												</span>
+											) : "—"}
+										</td>
 										<td className="py-2 pr-4">{evt.selected_tool ?? "—"}</td>
 										<td className="py-2 pr-4">
 											{evt.calibrated_confidence != null
