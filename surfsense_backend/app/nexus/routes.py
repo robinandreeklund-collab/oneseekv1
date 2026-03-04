@@ -805,8 +805,9 @@ async def reset_all_data(
 
     from app.nexus.models import (
         NexusAutoLoopRun,
-        NexusCalibrationParams,
+        NexusCalibrationParam,
         NexusDarkMatterQuery,
+        NexusDeployState,
         NexusHardNegative,
         NexusPipelineMetric,
         NexusRoutingEvent,
@@ -823,7 +824,8 @@ async def reset_all_data(
         NexusDarkMatterQuery,
         NexusHardNegative,
         NexusPipelineMetric,
-        NexusCalibrationParams,
+        NexusCalibrationParam,
+        NexusDeployState,
     ]:
         result = await session.execute(delete(model))
         counts[model.__tablename__] = result.rowcount  # type: ignore[attr-defined]
