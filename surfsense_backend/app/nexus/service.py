@@ -1,7 +1,8 @@
 """NEXUS Service — orchestrates all routing components.
 
-Central coordination layer that connects QUL → OOD → Bands → Zone
-into a single routing pipeline.
+Central coordination layer that connects QUL → OOD → StR → Bands → Zone
+into a single routing pipeline.  Sprint 2 adds Select-Then-Route, Schema
+Verifier, DATS calibration, ECE monitoring, and Space Auditor.
 """
 
 from __future__ import annotations
@@ -9,27 +10,38 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from datetime import UTC
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.nexus.calibration.dats_scaler import ZonalTemperatureScaler
 from app.nexus.calibration.platt_scaler import PlattCalibratedReranker, PlattParams
+from app.nexus.layers.space_auditor import SpaceAuditor, ToolPoint
 from app.nexus.models import (
     NexusCalibrationParam,
     NexusRoutingEvent,
+    NexusSpaceSnapshot,
     NexusZoneConfig,
 )
 from app.nexus.routing.confidence_bands import ConfidenceBandCascade
 from app.nexus.routing.ood_detector import DarkMatterDetector
 from app.nexus.routing.qul import QueryUnderstandingLayer
+from app.nexus.routing.schema_verifier import SchemaVerifier
+from app.nexus.routing.select_then_route import SelectThenRoute
 from app.nexus.routing.zone_manager import ZoneManager
 from app.nexus.schemas import (
+    ConfusionPair,
+    HubnessReport,
     NexusConfigResponse,
     NexusHealthResponse,
     OODResult,
     QueryAnalysis,
     QueryEntities,
+    RoutingCandidate,
     RoutingDecision,
+    SpaceHealthReport,
+    SpaceSnapshot,
     ZoneConfigResponse,
 )
 
@@ -45,6 +57,11 @@ class NexusService:
         self.band_cascade = ConfidenceBandCascade()
         self.zone_manager = ZoneManager()
         self.platt_scaler = PlattCalibratedReranker()
+        # Sprint 2 additions
+        self.str_pipeline = SelectThenRoute(zone_manager=self.zone_manager)
+        self.schema_verifier = SchemaVerifier()
+        self.dats_scaler = ZonalTemperatureScaler()
+        self.space_auditor = SpaceAuditor()
 
     # ------------------------------------------------------------------
     # Health & Config
@@ -61,7 +78,7 @@ class NexusService:
 
         return NexusHealthResponse(
             status="ok",
-            version="1.0.0",
+            version="2.0.0",
             zones_configured=zones_count,
             total_routing_events=events_count,
         )
@@ -143,31 +160,88 @@ class NexusService:
         )
 
     # ------------------------------------------------------------------
-    # Full Routing Pipeline
+    # Full Routing Pipeline (Sprint 2: QUL → StR → OOD → Bands → Schema)
     # ------------------------------------------------------------------
 
     async def route_query(
-        self, query: str, session: AsyncSession
+        self,
+        query: str,
+        session: AsyncSession,
+        *,
+        tool_entries: list[dict] | None = None,
     ) -> RoutingDecision:
         """Run the full precision routing pipeline.
 
-        Pipeline: QUL → OOD check → Band classification → Zone resolution
+        Pipeline: QUL → StR → OOD check → Calibrate → Band → Schema verify.
 
-        Note: In Sprint 1, this runs without actual tool retrieval.
-        Sprint 2 adds Select-Then-Route with real embeddings.
+        Args:
+            query: User query.
+            session: DB session.
+            tool_entries: Pre-scored tool entries with zone/score.
+                If None, runs QUL-only analysis (no retrieval).
         """
         start_time = time.monotonic()
 
         # Step 1: QUL
         analysis = self.analyze_query(query)
 
-        # Step 2: OOD check (placeholder logits until StR is implemented)
-        # In Sprint 2, this will use actual retrieval scores
-        ood_result = OODResult(is_ood=False, energy_score=0.0)
+        candidates: list[RoutingCandidate] = []
+        selected_tool: str | None = None
+        top_score = 0.0
+        second_score = 0.0
+        raw_top_score: float | None = None
+        schema_verified = False
 
-        # Step 3: Band classification (placeholder scores)
-        # In Sprint 2, this will use calibrated reranker scores
-        band_result = self.band_cascade.classify(top_score=0.0, second_score=0.0)
+        if tool_entries:
+            # Step 2: Select-Then-Route
+            str_result = self.str_pipeline.run(
+                query, analysis.zone_candidates, tool_entries,
+            )
+            top_score = str_result.top_score
+            second_score = str_result.second_score
+
+            # Step 3: Calibrate scores
+            for rank, c in enumerate(str_result.candidates):
+                calibrated = self.platt_scaler.calibrate(c.raw_score)
+                candidates.append(
+                    RoutingCandidate(
+                        tool_id=c.tool_id,
+                        zone=c.zone,
+                        raw_score=c.raw_score,
+                        calibrated_score=calibrated,
+                        rank=rank,
+                    )
+                )
+
+            if candidates:
+                raw_top_score = candidates[0].raw_score
+                top_score = candidates[0].calibrated_score
+                second_score = candidates[1].calibrated_score if len(candidates) > 1 else 0.0
+                selected_tool = candidates[0].tool_id
+
+            # Step 4: Schema verification on top candidate
+            if selected_tool:
+                sv_result = self.schema_verifier.verify(
+                    selected_tool,
+                    query=query,
+                    entities_locations=analysis.entities.locations,
+                    entities_times=analysis.entities.times,
+                    entities_organizations=analysis.entities.organizations,
+                )
+                schema_verified = sv_result.verified
+                if sv_result.confidence_penalty > 0:
+                    top_score = max(0.0, top_score - sv_result.confidence_penalty)
+
+        # Step 5: OOD check
+        if top_score > 0:
+            ood_result = self.ood_detector.detect([top_score, second_score])
+        else:
+            ood_result = OODResult(is_ood=False, energy_score=0.0)
+
+        # Step 6: Band classification
+        band_result = self.band_cascade.classify(
+            top_score=top_score, second_score=second_score,
+        )
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
 
@@ -175,21 +249,158 @@ class NexusService:
             query_analysis=analysis,
             band=band_result.band,
             band_name=band_result.band_name,
-            candidates=[],
-            selected_tool=None,
+            candidates=candidates,
+            selected_tool=selected_tool,
             resolved_zone=(
                 analysis.zone_candidates[0] if analysis.zone_candidates else None
             ),
-            calibrated_confidence=band_result.top_score,
+            calibrated_confidence=top_score,
             is_ood=ood_result.is_ood,
-            schema_verified=False,
+            schema_verified=schema_verified,
             latency_ms=elapsed_ms,
         )
 
         # Log routing event
-        await self._log_routing_event(session, query, decision)
+        await self._log_routing_event(session, query, decision, raw_top_score)
 
         return decision
+
+    # ------------------------------------------------------------------
+    # Space Auditor (Sprint 2)
+    # ------------------------------------------------------------------
+
+    async def get_space_health(
+        self, session: AsyncSession
+    ) -> SpaceHealthReport:
+        """Compute space health from latest snapshot or live tool data."""
+        # Try to get recent snapshots from DB
+        result = await session.execute(
+            select(NexusSpaceSnapshot)
+            .order_by(NexusSpaceSnapshot.snapshot_at.desc())
+            .limit(500)
+        )
+        snapshots = result.scalars().all()
+
+        if not snapshots:
+            return SpaceHealthReport(total_tools=0)
+
+        # Group snapshots into tool points
+        tools: list[ToolPoint] = []
+        seen: set[str] = set()
+        for snap in snapshots:
+            if snap.tool_id in seen:
+                continue
+            seen.add(snap.tool_id)
+            # Use UMAP coords as a proxy (real embeddings would be better)
+            if snap.umap_x is not None and snap.umap_y is not None:
+                tools.append(
+                    ToolPoint(
+                        tool_id=snap.tool_id,
+                        namespace=snap.namespace,
+                        zone=snap.namespace.split("/")[1] if "/" in snap.namespace else "",
+                        embedding=[snap.umap_x, snap.umap_y],
+                    )
+                )
+
+        if len(tools) < 2:
+            return SpaceHealthReport(total_tools=len(tools))
+
+        report = self.space_auditor.compute_separation_matrix(tools)
+
+        zones = await self.get_zones(session)
+
+        return SpaceHealthReport(
+            global_silhouette=report.global_silhouette,
+            zone_metrics=zones,
+            top_confusion_pairs=[
+                ConfusionPair(
+                    tool_a=cp.tool_a,
+                    tool_b=cp.tool_b,
+                    similarity=cp.similarity,
+                    zone_a=cp.zone_a,
+                    zone_b=cp.zone_b,
+                )
+                for cp in report.confusion_pairs[:10]
+            ],
+            hubness_alerts=[
+                HubnessReport(
+                    tool_id=h.tool_id,
+                    hubness_score=h.actual_rate,
+                    times_as_nearest_neighbor=h.times_as_nn,
+                )
+                for h in report.hubness_alerts[:5]
+            ],
+            total_tools=report.total_tools,
+        )
+
+    async def get_space_snapshot(
+        self, session: AsyncSession
+    ) -> SpaceSnapshot:
+        """Get latest UMAP snapshot for visualization."""
+        from datetime import datetime
+
+        result = await session.execute(
+            select(NexusSpaceSnapshot)
+            .order_by(NexusSpaceSnapshot.snapshot_at.desc())
+            .limit(500)
+        )
+        snapshots = result.scalars().all()
+
+        if not snapshots:
+            return SpaceSnapshot(
+                snapshot_at=datetime.now(tz=UTC),
+                points=[],
+            )
+
+        points = []
+        for snap in snapshots:
+            points.append({
+                "tool_id": snap.tool_id,
+                "x": snap.umap_x,
+                "y": snap.umap_y,
+                "zone": snap.namespace.split("/")[1] if "/" in snap.namespace else "",
+                "cluster": snap.cluster_label,
+            })
+
+        return SpaceSnapshot(
+            snapshot_at=snapshots[0].snapshot_at,
+            points=points,
+        )
+
+    async def get_confusion_pairs(
+        self, session: AsyncSession, *, limit: int = 20
+    ) -> list[ConfusionPair]:
+        """Get top confusion pairs from latest space analysis."""
+        report = await self.get_space_health(session)
+        return report.top_confusion_pairs[:limit]
+
+    async def get_hubness_alerts(
+        self, session: AsyncSession, *, limit: int = 10
+    ) -> list[HubnessReport]:
+        """Get hubness alerts from latest space analysis."""
+        report = await self.get_space_health(session)
+        return report.hubness_alerts[:limit]
+
+    async def get_zone_metrics(
+        self, zone: str, session: AsyncSession
+    ) -> ZoneConfigResponse | None:
+        """Get metrics for a specific zone."""
+        result = await session.execute(
+            select(NexusZoneConfig).where(NexusZoneConfig.zone == zone)
+        )
+        row = result.scalars().first()
+        if not row:
+            return None
+        return ZoneConfigResponse(
+            zone=row.zone,
+            prefix_token=row.prefix_token,
+            silhouette_score=row.silhouette_score,
+            inter_zone_min_distance=row.inter_zone_min_distance,
+            ood_energy_threshold=row.ood_energy_threshold,
+            band0_rate=row.band0_rate,
+            ece_score=row.ece_score,
+            last_reindexed=row.last_reindexed,
+        )
 
     # ------------------------------------------------------------------
     # Calibration Loading
@@ -220,7 +431,11 @@ class NexusService:
     # ------------------------------------------------------------------
 
     async def _log_routing_event(
-        self, session: AsyncSession, query: str, decision: RoutingDecision
+        self,
+        session: AsyncSession,
+        query: str,
+        decision: RoutingDecision,
+        raw_score: float | None = None,
     ) -> None:
         """Persist a routing decision to the database."""
         event = NexusRoutingEvent(
@@ -229,7 +444,7 @@ class NexusService:
             band=decision.band,
             resolved_zone=decision.resolved_zone,
             selected_tool=decision.selected_tool,
-            raw_reranker_score=None,
+            raw_reranker_score=raw_score,
             calibrated_confidence=decision.calibrated_confidence,
             is_multi_intent=decision.query_analysis.is_multi_intent,
             sub_query_count=len(decision.query_analysis.sub_queries),

@@ -19,6 +19,7 @@ import {
 } from "@/lib/apis/nexus-api.service";
 import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
 import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
+import { SpaceTab } from "@/components/admin/nexus/tabs/space-tab";
 
 function TabFallback() {
 	return (
@@ -132,7 +133,7 @@ export function NexusDashboard() {
 				</TabsContent>
 
 				<TabsContent value="space" className="mt-6">
-					<PlaceholderTab name="RYMD — Embedding Zone Health" />
+					<SpaceTab />
 				</TabsContent>
 
 				<TabsContent value="forge" className="mt-6">

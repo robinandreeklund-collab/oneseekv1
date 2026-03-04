@@ -106,6 +106,45 @@ export interface RoutingDecision {
 }
 
 // ---------------------------------------------------------------------------
+// Space Auditor Types (Sprint 2)
+// ---------------------------------------------------------------------------
+
+export interface ConfusionPair {
+	tool_a: string;
+	tool_b: string;
+	similarity: number;
+	zone_a: string | null;
+	zone_b: string | null;
+}
+
+export interface HubnessReport {
+	tool_id: string;
+	hubness_score: number;
+	times_as_nearest_neighbor: number;
+}
+
+export interface SpaceHealthReport {
+	global_silhouette: number | null;
+	zone_metrics: ZoneConfigResponse[];
+	top_confusion_pairs: ConfusionPair[];
+	hubness_alerts: HubnessReport[];
+	total_tools: number;
+}
+
+export interface SpaceSnapshotPoint {
+	tool_id: string;
+	x: number;
+	y: number;
+	zone: string;
+	cluster: number;
+}
+
+export interface SpaceSnapshot {
+	snapshot_at: string;
+	points: SpaceSnapshotPoint[];
+}
+
+// ---------------------------------------------------------------------------
 // API Methods
 // ---------------------------------------------------------------------------
 
@@ -129,6 +168,18 @@ class NexusApiService {
 			method: "POST",
 			body: JSON.stringify({ query }),
 		});
+
+	// Space Auditor (Sprint 2)
+	getSpaceHealth = () => fetchNexus<SpaceHealthReport>("/space/health");
+
+	getSpaceSnapshot = () => fetchNexus<SpaceSnapshot>("/space/snapshot");
+
+	getConfusion = () => fetchNexus<ConfusionPair[]>("/space/confusion");
+
+	getHubness = () => fetchNexus<HubnessReport[]>("/space/hubness");
+
+	getZoneMetrics = (zone: string) =>
+		fetchNexus<ZoneConfigResponse>(`/zones/${zone}/metrics`);
 }
 
 export const nexusApiService = new NexusApiService();

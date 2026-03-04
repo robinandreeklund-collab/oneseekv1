@@ -8,11 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import User, get_async_session
 from app.nexus.schemas import (
     AnalyzeQueryRequest,
+    ConfusionPair,
+    HubnessReport,
     NexusConfigResponse,
     NexusHealthResponse,
     QueryAnalysis,
     RouteQueryRequest,
     RoutingDecision,
+    SpaceHealthReport,
+    SpaceSnapshot,
     ZoneConfigResponse,
 )
 from app.nexus.service import NexusService
@@ -91,7 +95,72 @@ async def route_query(
 ):
     """Run the full precision routing pipeline.
 
-    Sprint 1: QUL → OOD → Band classification (placeholder scores).
-    Sprint 2: Adds Select-Then-Route with real embeddings.
+    Sprint 2: QUL → StR → OOD → Calibrate → Bands → Schema verify.
     """
     return await service.route_query(request.query, session)
+
+
+# ------------------------------------------------------------------
+# Space Auditor (Sprint 2)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/space/health", response_model=SpaceHealthReport)
+async def get_space_health(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get space auditor health report — silhouette, confusion, hubness."""
+    return await service.get_space_health(session)
+
+
+@nexus_router.get("/space/snapshot", response_model=SpaceSnapshot)
+async def get_space_snapshot(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get latest UMAP 2D projection for visualization."""
+    return await service.get_space_snapshot(session)
+
+
+@nexus_router.get("/space/confusion", response_model=list[ConfusionPair])
+async def get_confusion_pairs(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get top confusion pairs — tools that are dangerously similar."""
+    return await service.get_confusion_pairs(session)
+
+
+@nexus_router.get("/space/hubness", response_model=list[HubnessReport])
+async def get_hubness_alerts(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get hubness alerts — tools that dominate nearest-neighbor results."""
+    return await service.get_hubness_alerts(session)
+
+
+# ------------------------------------------------------------------
+# Zone-specific Metrics (Sprint 2)
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/zones/{zone}/metrics", response_model=ZoneConfigResponse)
+async def get_zone_metrics(
+    zone: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Get detailed metrics for a specific zone."""
+    result = await service.get_zone_metrics(zone, session)
+    if result is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=f"Zone '{zone}' not found")
+    return result
