@@ -13,6 +13,7 @@ import {
 	Mic,
 	FileText,
 	FlaskConical,
+	Orbit,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -59,6 +60,12 @@ const ADMIN_NAV_ITEMS = [
 		href: "/admin/devlog",
 		icon: FlaskConical,
 		description: "Hantera dev-inlägg och tester",
+	},
+	{
+		title: "NEXUS",
+		href: "/admin/nexus",
+		icon: Orbit,
+		description: "Retrieval Intelligence Platform",
 	},
 ];
 

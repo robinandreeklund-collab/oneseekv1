@@ -1,0 +1,1258 @@
+# NEXUS — Retrieval Intelligence Platform
+
+> Komplett dokumentation: Från fråga till svar, integration med OneSeek, och hur NEXUS
+> förbättrar val av intent, agent och verktyg.
+
+---
+
+## Innehållsförteckning
+
+1. [Vad är NEXUS?](#1-vad-är-nexus)
+2. [Arkitekturöversikt](#2-arkitekturöversikt)
+3. [Hur en fråga flödar genom systemet](#3-hur-en-fråga-flödar-genom-systemet)
+4. [Integration med OneSeek](#4-integration-med-oneseek)
+5. [Routing Pipeline — Steg för steg](#5-routing-pipeline--steg-för-steg)
+6. [5-Lager Evalueringsstack](#6-5-lager-evalueringsstack)
+7. [Metadata Optimizer](#7-metadata-optimizer)
+8. [Dynamisk konfiguration](#8-dynamisk-konfiguration)
+9. [Hur NEXUS förbättrar Intent-val](#9-hur-nexus-förbättrar-intent-val)
+10. [Hur NEXUS förbättrar Agent-val](#10-hur-nexus-förbättrar-agent-val)
+11. [Hur NEXUS förbättrar Verktygs-val](#11-hur-nexus-förbättrar-verktygs-val)
+12. [Confidence Band Cascade](#12-confidence-band-cascade)
+13. [Kalibrering & OOD-detektion](#13-kalibrering--ood-detektion)
+14. [Dashboard & Övervakning](#14-dashboard--övervakning)
+15. [API-referens](#15-api-referens)
+16. [Filstruktur](#16-filstruktur)
+
+---
+
+## 1. Vad är NEXUS?
+
+NEXUS (Nexus Evaluation & eXperimental Utility System) är OneSeeks **precisions-routing och
+självförbättrande evalueringsplattform**. Systemet körs parallellt med produktionsroutingen
+och ansvarar för:
+
+- **Precision Routing** — Avgör vilken intent, agent och verktyg som bäst matchar en fråga
+- **Embedding-rymdanalys** — Övervakar hur väl separerade verktyg är i vektorutrymmet
+- **Syntetisk testgenerering** — Skapar testfrågor automatiskt med LLM
+- **Självförbättrande loop** — Identifierar och fixar routing-svagheter autonomt
+- **Triple-gate deploy** — Kvalitetssäkrar verktyg innan de når produktion
+- **Metadata Optimizer** — LLM-driven batch-optimering av verktygsmetadata per namespace
+- **Dynamisk konfiguration** — Agenter, domain hints och category hints laddas från admin flow DB
+
+### Nyckelprinciper
+
+| Princip | Beskrivning |
+|---------|-------------|
+| **Ingen duplicering** | NEXUS importerar verktygsdefinitioner direkt från plattformen |
+| **Read-only observation** | Shadow Observer ändrar aldrig produktionsroutingen |
+| **Riktiga modeller** | Använder samma embeddings och reranker som produktionssystemet |
+| **Embedding-first** | Cosine similarity är bassignalen, inte keywords |
+| **Onormaliserade scores** | Scores i [0, 1] matchar band-trösklar direkt |
+
+---
+
+## 2. Arkitekturöversikt
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                         NEXUS PLATTFORM                              │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │                    ROUTING PIPELINE                             │  │
+│  │                                                                │  │
+│  │  Fråga → QUL → Agent → StR → Rerank → Kalib → OOD → Band→ SV │  │
+│  │         (1)    (2)     (3)    (4)      (5)    (6)   (7)   (8) │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐  ┌───────┐  │
+│  │  SPACE   │  │  SYNTH   │  │   AUTO   │  │  EVAL   │  │DEPLOY │  │
+│  │ AUDITOR  │  │  FORGE   │  │   LOOP   │  │ LEDGER  │  │CONTROL│  │
+│  │ (Lager 1)│  │ (Lager 2)│  │ (Lager 3)│  │(Lager 4)│  │(L. 5) │  │
+│  └──────────┘  └──────────┘  └──────────┘  └─────────┘  └───────┘  │
+│                                                                      │
+│  ┌──────────────────────────┐  ┌─────────────────────────────────┐  │
+│  │  METADATA OPTIMIZER      │  │  PIPELINE EXPLORER               │  │
+│  │  (LLM-driven batch-opt.) │  │  (interaktiv routing-testbänk)   │  │
+│  └──────────────────────────┘  └─────────────────────────────────┘  │
+│                                                                      │
+│  ┌────────────────────┐  ┌─────────────────────────────────────┐    │
+│  │  PLATFORM BRIDGE   │  │          SHADOW OBSERVER             │    │
+│  │  (verktygimport)   │  │  (jämför med produktionsrouting)     │    │
+│  └────────────────────┘  └─────────────────────────────────────┘    │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │                    DATABAS (nexus_* tabeller)                   │  │
+│  │  routing_events | synthetic_cases | auto_loop_runs | zones ... │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+         │                                    ▲
+         │ importerar verktyg                 │ läser feedback
+         ▼                                    │
+┌──────────────────────────────────────────────────────────────────────┐
+│                      ONESEEK PLATTFORM                               │
+│                                                                      │
+│  bigtool_store.py → ToolIndexEntry, TOOL_KEYWORDS                    │
+│  tools/registry.py → BUILTIN_TOOLS, domain *_TOOL_DEFINITIONS       │
+│  retrieval_feedback → success/failure-signaler                       │
+│  config → embedding-modell, LiteLLM                                  │
+│  intent_definition_service → intent-definitioner                     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Hur en fråga flödar genom systemet
+
+### 3.1 Komplett flöde — Exempelquery
+
+**Fråga:** *"Vad är vädret i Stockholm imorgon?"*
+
+```
+┌─────────────────┐
+│ Användare skriver│
+│ "Vad är vädret  │
+│ i Stockholm     │
+│ imorgon?"       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 1: Query Understanding Layer (QUL)     │
+│                                             │
+│ • Normalisering: "vad är väder stockholm    │
+│   imorgon"                                  │
+│ • Entiteter:                                │
+│   - locations: ["Stockholm"]                │
+│   - times: ["imorgon"]                      │
+│ • Domain hints: ["väder", "smhi"]           │
+│ • Zon-kandidater: ["kunskap"]               │
+│ • Komplexitet: "simple"                     │
+│ • Multi-intent: false                       │
+│                                             │
+│ Tid: <5 ms (ingen LLM, ingen DB)           │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 2: Agent Resolution                    │
+│                                             │
+│ • Zon: "kunskap" → 10 kandidat-agenter      │
+│ • Keyword-scoring per agent:                │
+│                                             │
+│   väder:     1.50  (match: "vädret")        │
+│   statistik: 1.00  (ingen keyword match)    │
+│   trafik:    1.00  (ingen keyword match)    │
+│   ...                                       │
+│                                             │
+│ • Vald agent: "väder"                       │
+│ • Agent-namespaces: ["tools/weather"]       │
+│                                             │
+│ → Bara verktyg i tools/weather skickas      │
+│   vidare till StR (inte alla 50+ verktyg)   │
+│                                             │
+│ Tid: <2 ms (ingen LLM, ingen DB)           │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 3: Select-Then-Route (StR)             │
+│                                             │
+│ • Filtrerat av agent: tools/weather         │
+│ • Ladda SMHI-verktyg från Platform Bridge   │
+│ • Per-zon retrieval (top-5):                │
+│                                             │
+│   smhi_weather         0.92                 │
+│   smhi_temperature     0.71                 │
+│   smhi_forecast_10day  0.65                 │
+│   smhi_road_weather    0.40                 │
+│                                             │
+│ • Merge & sortera → max 15 kandidater       │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 4: Cross-encoder Reranking             │
+│                                             │
+│ • flashrank ms-marco-MultiBERT-L-12         │
+│ • Rerankar top-kandidater (inom agenten):   │
+│                                             │
+│   smhi_weather         0.95                 │
+│   smhi_temperature     0.72                 │
+│   smhi_forecast_10day  0.68                 │
+│                                             │
+│ Tid: ~50 ms                                 │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 5: Platt-kalibrering                   │
+│                                             │
+│ • Sigmoid-transform: P = 1/(1+exp(A*x-B))  │
+│ • Raw 0.95 → Calibrated 0.94               │
+│ • Raw 0.72 → Calibrated 0.65               │
+│                                             │
+│ Margin: 0.94 - 0.65 = 0.29                 │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 6: OOD-detektion (Out-of-Distribution) │
+│                                             │
+│ • Energy Score = -2.1                       │
+│   (under threshold -5.0 → in-distribution) │
+│ • is_ood = false                            │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 7: Confidence Band Classification      │
+│                                             │
+│ • top_score=0.94, margin=0.29               │
+│ • Band 0: score≥0.95 & margin≥0.20? NEJ    │
+│ • Band 1: score≥0.80 & margin≥0.10? JA ✓   │
+│                                             │
+│ → Band 1 (VERIFY): Snabb namespace-check    │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ STEG 8: Schema Verification                 │
+│                                             │
+│ • Verktyg: smhi_weather                     │
+│ • Required params: ["location"]             │
+│ • Query har location="Stockholm" ✓          │
+│ • Geographic scope: "sweden"                │
+│ • Stockholm i Sverige ✓                     │
+│ • schema_verified = true                    │
+└────────┬────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────┐
+│ RESULTAT: RoutingDecision                   │
+│                                             │
+│ {                                           │
+│   selected_tool: "smhi_weather",            │
+│   selected_agent: "väder",                  │
+│   calibrated_confidence: 0.94,              │
+│   band: 1,                                  │
+│   band_name: "VERIFY",                      │
+│   is_ood: false,                            │
+│   schema_verified: true,                    │
+│   resolved_zone: "kunskap",                 │
+│   latency_ms: 147                           │
+│ }                                           │
+└─────────────────────────────────────────────┘
+```
+
+### 3.2 Parallellt: Shadow Observer
+
+Samtidigt som NEXUS kör sin pipeline jämförs beslutet med produktionssystemets routing:
+
+```
+NEXUS valde:   smhi_weather  (confidence 0.94)
+Produktion:    smhi_weather  (live retrieval score)
+→ Agreement: true  (loggas till shadow report)
+```
+
+---
+
+## 4. Integration med OneSeek
+
+### 4.1 Platform Bridge — Ingen duplicering
+
+NEXUS importerar **direkt** från produktionskoden. Inga kopior, inga egna verktygsdefinitioner.
+
+```python
+# platform_bridge.py importerar från:
+from app.agents.new_chat.bigtool_store import (
+    TOOL_KEYWORDS,
+    TOOL_NAMESPACE_OVERRIDES,
+    namespace_for_tool,
+)
+from app.agents.new_chat.tools.registry import BUILTIN_TOOLS
+from app.agents.new_chat.tools.smhi_tools import SMHI_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.scb_tools import SCB_TOOL_DEFINITIONS
+# ... alla domänverktyg
+```
+
+Varje verktyg representeras som en `PlatformTool`:
+
+| Fält | Beskrivning | Exempel |
+|------|-------------|---------|
+| `tool_id` | Unikt verktygs-ID | `smhi_weather` |
+| `name` | Visningsnamn | `SMHI Väderprognos` |
+| `description` | Kort beskrivning | `Hämtar väderdata...` |
+| `category` | Domängrupp | `smhi` |
+| `namespace` | Hierarkisk plats | `("tools", "weather", "smhi")` |
+| `zone` | Intent-zon | `kunskap` |
+| `keywords` | Söktermer | `["väder", "prognos", "temperatur"]` |
+| `geographic_scope` | Geoområde | `sweden` |
+| `temporal_scope` | Tidsomfång | `forecast` |
+
+### 4.2 Fyra zoner = Fyra intents
+
+NEXUS zon-system är **direkt mappat** till OneSeeks intent-definitioner:
+
+| Zon | Prefix | Intent | Beskrivning |
+|-----|--------|--------|-------------|
+| **kunskap** | `[KUNSK]` | kunskap | Sökning, väder, statistik, politik |
+| **skapande** | `[SKAP]` | skapande | Kod, kartor, media, podcasts |
+| **jämförelse** | `[JAMFR]` | jämförelse | Jämför externa AI-modeller |
+| **konversation** | `[KONV]` | konversation | Smalltalk, hälsningar |
+
+Namespace-mappning:
+```
+tools/knowledge  → kunskap
+tools/weather    → kunskap
+tools/politik    → kunskap
+tools/statistics → kunskap
+tools/trafik     → kunskap
+tools/bolag      → kunskap
+tools/action     → skapande
+tools/code       → skapande
+tools/kartor     → skapande
+tools/compare    → jämförelse
+```
+
+### 4.3 Produktion vs NEXUS — Två parallella vägar
+
+```
+Användarfråga
+    │
+    ├───► PRODUKTION (live routing)
+    │     supervisor_v2 → intent_node → agent_resolver → planner → executor
+    │     Intent → Agent → Tool (via bigtool_store)
+    │     ToolRetrievalTuning (vikter: name=5.0, keyword=3.0, ...)
+    │
+    └───► NEXUS (analys & utvärdering)
+          QUL → Agent → StR → Rerank → Calibrate → OOD → Band → Schema
+          Intent → Agent → Tool (samma 3-lagers-modell)
+          Loggar resultat, jämför med produktion via Shadow Observer
+```
+
+NEXUS **ändrar aldrig** produktionens routing direkt. Istället:
+1. Analyserar routing-kvalitet
+2. Identifierar svagheter (confusion, OOD, felrouting)
+3. Genererar förbättringsförslag (metadata, keywords, descriptions)
+4. Föreslår ändringar som en människa granskar och godkänner
+
+### 4.4 Delade resurser
+
+| Resurs | Fil | Hur NEXUS använder |
+|--------|-----|-------------------|
+| Embedding-modell | `app/config` | Samma KBLab sentence-bert |
+| Reranker | `RerankerService` | Samma flashrank cross-encoder |
+| Databas | `app/db.py` | Delar Base/Session, egna `nexus_*` tabeller |
+| Auth | `app/users.py` | Samma JWT-autentisering |
+| LLM | LiteLLM config | Synth Forge, Deploy Gate 3 & Metadata Optimizer |
+| Verktygsregister | `bigtool_store.py` | Read-only import |
+| Retrieval feedback | `retrieval_feedback.py` | Läser success/failure-signaler |
+| Tool metadata overrides | `tool_metadata_service.py` | Optimizer skriver, routing läser |
+| Admin flow DB | `admin_flow_service` | Dynamiska agenter, hints, intents |
+
+### 4.5 Minimal påverkan på existerande kod
+
+NEXUS kräver bara **2 rader** i befintlig kod:
+
+```python
+# app/app.py — EN rad
+app.include_router(nexus_router, prefix="/api/v1")
+
+# celery_worker.py — EN rad (om auto-loop tasks behövs)
+from app.nexus.tasks import *  # noqa
+```
+
+---
+
+## 5. Routing Pipeline — Steg för steg
+
+### Steg 1: Query Understanding Layer (QUL)
+
+**Fil:** `app/nexus/routing/qul.py`
+
+QUL analyserar frågan **utan LLM och utan databasanrop** (mål: <5 ms).
+
+**Delsteg:**
+
+| # | Delsteg | Vad det gör |
+|---|---------|-------------|
+| 1 | Svensk normalisering | Expanderar förkortningar (smhi → Sveriges meteorologiska...) |
+| 2 | Entitetsextraktion | Hittar platser (290 kommuner), tider, organisationer, ämnen |
+| 3 | Multi-intent-detektion | Upptäcker sammansatta frågor ("väder OCH trafikinfo") |
+| 4 | Domain-hint scoring | Matchar keywords mot domänbanker (stöder dynamiska hints från DB) |
+| 5 | Zon-kandidat-resolution | Avgör vilka zoner (intents) som är relevanta |
+| 6 | Komplexitetsklassificering | `simple` / `compound` / `complex` |
+
+**Gazetteers & banker:**
+- 290 svenska kommuner + förkortningar (sthlm, gbg, etc.)
+- Tidsuttryck: "imorgon", "idag", "nästa vecka", "2024-03-15"
+- Svenska myndigheter: SMHI, SCB, Riksdagen, Trafikverket, etc.
+- Domain hints per zon (50+ keywords per kategori)
+
+**Dynamiska hints (nytt):**
+QUL accepterar valfria `domain_hints_map` och `category_hints_map` parametrar.
+Om dessa skickas in (laddade från admin flow DB) används de istället för de
+statiska hint-bankerna. Detta gör att hints kan uppdateras via admin-panelen
+utan koddeploy.
+
+### Steg 2: Agent Resolution
+
+**Fil:** `app/nexus/routing/agent_resolver.py`
+
+Agentresolution är **mellanlaget** mellan intent/zon och verktyg. Givet en zon
+väljs den bäst matchande agenten, som begränsar vilka verktyg som skickas vidare.
+
+**Dynamisk agent-laddning (nytt):**
+Agent Resolver stöder dynamiska lookups via `agent_by_name` och `agents_by_zone`
+parametrar. Om dessa skickas in (laddade från admin flow DB) används de istället
+för den statiska `AGENTS_BY_ZONE`-konfigurationen. Agenter kan därmed läggas till,
+ändras eller tas bort via admin-panelen utan koddeploy.
+
+**13+ agenter** (laddas dynamiskt eller faller tillbaka till statisk config):
+
+| Agent | Zon | Primary Namespaces | Typfråga |
+|-------|-----|--------------------|----------|
+| väder | kunskap | `tools/weather` | "Vad är vädret i Gbg?" |
+| statistik | kunskap | `tools/statistics` | "Befolkning i Stockholm" |
+| trafik | kunskap | `tools/trafik` | "Trafikstörningar E6" |
+| riksdagen | kunskap | `tools/politik` | "Senaste propositionen" |
+| bolag | kunskap | `tools/bolag` | "Info om Volvo AB" |
+| marknad | kunskap | `tools/marketplace` | "Cyklar på Blocket" |
+| kunskap | kunskap | `tools/knowledge` | "Sök i mina dokument" |
+| webb | kunskap | — | "Sammanfatta denna länk" |
+| åtgärd | kunskap | `tools/action`, `tools/general` | "Gör detta" |
+| kartor | skapande | `tools/kartor` | "Visa karta över Malmö" |
+| kod | skapande | `tools/code` | "Kör Python-script" |
+| media | skapande | — | "Skapa en podcast" |
+| syntes | kunskap | — | "Sammanfatta allt" |
+
+**Scoring** (per agent, ingen LLM, <2 ms):
+```
+score = 1.0  (bas — zon matchar)
+     + 0.3   per keyword-match i frågan
+     + 0.2   per organisation-entitet match
+```
+
+Agenten med högst score väljs. Dess `primary_namespaces` filtrerar verktygen:
+- "Vad är vädret?" → väder → bara `tools/weather`-verktyg
+- "SCB befolkning" → statistik → bara `tools/statistics`-verktyg
+
+Om agent-filtret ger 0 verktyg faller StR tillbaka till ofiltrerad sökning.
+
+### Steg 3: Select-Then-Route (StR)
+
+**Fil:** `app/nexus/routing/select_then_route.py`
+
+StR-mönstret undviker cross-zone pollution genom zonspecifik retrieval.
+**Nytt: filtrerat av agentens namespaces.**
+
+1. **Välj zoner** baserat på QUL:s zon-kandidater (max 2)
+2. **Per-zon retrieval** — top-5 verktyg per vald zon
+3. **Merge** — sammanfoga alla kandidater
+4. **Score** — embedding cosine similarity som bassignal
+
+Scoring-strategi:
+```
+raw_score = embedding_similarity(query, tool_description)  # [0, 1]
+raw_score += 0.05  om zon matchar QUL:s kandidater
+raw_score += 0.02  per matchande keyword
+raw_score = min(1.0, raw_score)  # Klipp till [0, 1]
+```
+
+### Steg 4: Cross-encoder Reranking
+
+**Fil:** `app/nexus/embeddings.py`
+
+Använder `flashrank ms-marco-MultiBERT-L-12` (samma modell som produktion) för att
+reordna kandidater med mer semantisk förståelse.
+
+### Steg 5: Platt-kalibrering
+
+**Fil:** `app/nexus/calibration/platt_scaler.py`
+
+Konverterar raw reranker-scores till kalibrerade sannolikheter:
+
+```
+P(correct) = 1 / (1 + exp(A × raw_score - B))
+```
+
+Parametrar A och B fittas på historiska routing-events via L-BFGS-B optimering.
+
+### Steg 6: OOD-detektion
+
+**Fil:** `app/nexus/routing/ood_detector.py`
+
+Dual-gate approach för att fånga "dark matter" (frågor utan matchande verktyg):
+
+| Gate | Metod | Tröskel | Syfte |
+|------|-------|---------|-------|
+| Gate 1 | Energy Score | -5.0 | Primär OOD-detektion |
+| Gate 2 | KNN Distance (FAISS, k=5) | 2.5 | Backup för borderline-fall |
+
+OOD-frågor klassificeras i 6 kategorier:
+- `no_tool` — Inget matchande verktyg finns
+- `geo_scope` — Utanför geografisk räckvidd (t.ex. "väder i Paris")
+- `temporal_scope` — Historiska/framtida datum utanför scope
+- `ambiguous` — Flertydig fråga
+- `conflicting` — Motstridiga krav
+- `underspecified` — Information saknas
+
+### Steg 7: Confidence Band Cascade
+
+Se [sektion 12](#12-confidence-band-cascade) för detaljer.
+
+### Steg 8: Schema Verification
+
+**Fil:** `app/nexus/routing/schema_verifier.py`
+
+Post-selection validering som kontrollerar att det valda verktygets krav matchar frågan:
+
+| Check | Vad det kontrollerar | Penalty |
+|-------|---------------------|---------|
+| Required params | Saknad location, municipality, etc. | -0.10 per param |
+| Geographic scope | Utländsk fråga för Sverige-verktyg | -0.15 |
+| Temporal scope | Historisk fråga för prognos-verktyg | -0.10 |
+
+Om penalty sänker confidence under nästa band-tröskel → verktyget nedgraderas eller avvisas.
+
+---
+
+## 6. 5-Lager Evalueringsstack
+
+NEXUS har 5 lager som kontinuerligt förbättrar routing-kvaliteten:
+
+### Lager 1: Space Auditor
+
+**Fil:** `app/nexus/layers/space_auditor.py`
+
+Analyserar embedding-utrymmet:
+
+- **UMAP 2D-projektion** — Visualiserar alla verktyg i 2D
+- **Silhouette score** — Mäter klusterseparation (mål: >0.60)
+- **Confusion pairs** — Identifierar verktyg som är farligt nära varandra
+- **Hubness detection** — Hittar verktyg som dyker upp som nearest-neighbor oproportionerligt ofta
+- **Cluster purity** — Hur rena zon-klustren är (mål: >0.85)
+
+### Lager 2: Synth Forge
+
+**Fil:** `app/nexus/layers/synth_forge.py`
+
+Genererar syntetiska testfrågor automatiskt med LLM:
+
+| Svårighetsgrad | Beskrivning | Syfte |
+|----------------|-------------|-------|
+| **EASY** | Frågor som tydligt mappar till verktyget | Baseline-verifiering |
+| **MEDIUM** | Verktyget behövs men nämns inte explicit | Semantisk förståelse |
+| **HARD** | Disambiguation mot liknande verktyg | Separation-test |
+| **ADVERSARIAL** | Ska INTE välja detta verktyg | Negativ träning |
+
+Varje fråga genomgår **roundtrip-verifiering**: `query → retrieve → kontrollera om rätt verktyg
+är i top-k`.
+
+Mål: 16 testfrågor per verktyg (4 svårigheter × 4 frågor).
+
+### Lager 3: Auto Loop
+
+**Fil:** `app/nexus/layers/auto_loop.py`
+
+7-stegs självförbättrande pipeline:
+
+```
+┌─────────────────────────────────────────────────┐
+│ 1. GENERERA testfrågor (Synth Forge)            │
+│    ↓                                            │
+│ 2. EVALUERA mot aktuell routing                 │
+│    (alla testfall, batch-processade)             │
+│    ↓                                            │
+│ 3. KLUSTRA feltyper (DBSCAN)                    │
+│    "Alla SMHI-verktyg förväxlas med varandra"    │
+│    ↓                                            │
+│ 4. LLM ROOT CAUSE per kluster                   │
+│    "Beskrivningarna är för lika"                 │
+│    ↓                                            │
+│ 5. TESTA FIX i isolation (embedding delta)       │
+│    "Ny beskrivning ger +0.05 separation"         │
+│    ↓                                            │
+│ 6. HUMAN REVIEW-kö                              │
+│    Visa förslag med diff + motivering            │
+│    ↓                                            │
+│ 7. DEPLOY & REINDEX (om godkänt)                │
+│    Uppdatera metadata, räkna om embeddings       │
+└─────────────────────────────────────────────────┘
+```
+
+Statusar: `pending → running → analyzing → proposing → review → approved/rejected → deployed`
+
+**Berikade förslag (enriched proposals):**
+
+Varje Loop-förslag lagras med fullständig kontext för granskning:
+
+| Fält | Beskrivning |
+|------|-------------|
+| `tool_id` | Verktyget som förslaget gäller |
+| `field` | Metadata-fält (t.ex. "description", "keywords") |
+| `current_value` | Nuvarande värde |
+| `proposed_value` | Föreslaget nytt värde |
+| `embedding_delta` | Förändring i embedding-separation (cosine distance) |
+| `reason` | LLM-motivering |
+| `failed_queries` | Lista med misslyckade testfrågor som ledde till förslaget |
+
+Varje `failed_query` innehåller routing-kontext:
+```json
+{
+  "query": "Vad är temperaturen i Göteborg?",
+  "expected_tool": "smhi_temperature",
+  "got_tool": "smhi_weather",
+  "resolved_zone": "kunskap",
+  "selected_agent": "väder",
+  "band": 1,
+  "confidence": 0.872,
+  "difficulty": "HARD"
+}
+```
+
+Loop-tab visar detta som en diff-vy (rött = nuvarande, grönt = föreslaget)
+med expanderbar tabell för relaterade frågor.
+
+### Lager 4: Eval Ledger
+
+**Fil:** `app/nexus/layers/eval_ledger.py`
+
+Spårar precision-metriker i 6 pipeline-steg:
+
+| Steg | Namn | Vad mäts |
+|------|------|----------|
+| 1 | Intent routing | Rätt zon vald? |
+| 2 | Agent selection | Rätt agent vald? |
+| 3 | Route selection | Rätt verktygskandidat? |
+| 4 | Bigtool retrieval | Rätt i top-k? |
+| 5 | Reranker effect | Förbättring efter reranking? |
+| 6 | End-to-end | Hela kedjan korrekt? |
+
+Metriker per steg:
+- **Precision@1** — Rätt verktyg på plats 1
+- **Precision@5** — Rätt verktyg i top 5
+- **MRR@10** — Mean Reciprocal Rank i top 10
+- **nDCG@5** — Normalized Discounted Cumulative Gain
+- **Hard negative precision** — Korrekt avvisade hard negatives
+- **Reranker delta** — Skillnad pre/post reranking
+
+### Lager 5: Deploy Control
+
+**Fil:** `app/nexus/layers/deploy_control.py`
+
+Triple-gate lifecycle: `REVIEW → STAGING → LIVE`
+
+| Gate | Namn | Krav |
+|------|------|------|
+| **Gate 1** | Separation | Silhouette score ≥ 0.65 |
+| **Gate 2** | Eval | Success ≥ 80%, hard neg ≥ 85%, adversarial ≥ 80% |
+| **Gate 3** | LLM Judge | Description clarity ≥ 4.0, keyword relevance ≥ 4.0, disambiguation ≥ 4.0 |
+
+Gate 3 använder en riktig LLM (via LiteLLM) som bedömer verktygets metadata kvalitativt
+på en 1-5-skala.
+
+---
+
+## 7. Metadata Optimizer
+
+**Fil:** `app/nexus/optimizer.py`
+
+Metadata Optimizer använder en LLM (Claude Sonnet via `config_id=-24`) för att
+batch-optimera verktygsmetadata per namespace eller kategori. LLM:en ser ALLA
+verktyg i batchen samtidigt för att maximera embedding-separation.
+
+### Flöde
+
+```
+┌─────────────────────────────────────────────────────┐
+│ 1. VÄLJ NAMESPACE/KATEGORI                          │
+│    Användaren väljer t.ex. "tools/weather"           │
+│    ↓                                                │
+│ 2. LADDA VERKTYG + BEFINTLIGA OVERRIDES              │
+│    Platform Bridge + GlobalToolMetadataOverride       │
+│    ↓                                                │
+│ 3. BYGG PROMPT                                      │
+│    Alla verktyg som JSON + instruktioner             │
+│    "Optimera descriptions, keywords, excludes..."    │
+│    ↓                                                │
+│ 4. LLM-ANROP (Claude Sonnet, temp=0.7)              │
+│    Returnerar structured JSON med förslag            │
+│    ↓                                                │
+│ 5. GRANSKA I DASHBOARD                               │
+│    Diff-vy: rött = nuvarande, grönt = föreslaget    │
+│    Per-verktyg approve/reject                        │
+│    ↓                                                │
+│ 6. TILLÄMPA GODKÄNDA                                 │
+│    upsert_global_tool_metadata_overrides()           │
+│    invalidate_cache() + clear_tool_caches()          │
+│    → NEXUS och produktion plockar upp ändringar      │
+└─────────────────────────────────────────────────────┘
+```
+
+### Optimerade fält
+
+LLM:en optimerar följande metadata per verktyg:
+
+| Fält | Syfte | Constraint |
+|------|-------|-----------|
+| `description` | Semantiskt distinkt per verktyg (cosine separation) | Max 300 tecken |
+| `keywords` | Specifika söktermer, inte generella | Lista |
+| `example_queries` | Realistiska svenska frågor | 3 stycken |
+| `excludes` | Verktyg/ämnen som INTE ska matcha | Lista |
+| `geographic_scope` | Specifik scope (Sverige, Norden, Globalt) | Sträng |
+
+### System-prompt (sammanfattning)
+
+LLM:en instrueras att:
+1. Maximera embedding-separation mellan verktyg i batchen
+2. Skriva semantiskt distinkta descriptions (för cosine similarity)
+3. Använda specifika keywords (inte generella)
+4. Generera realistiska svenska exempelfrågor
+5. Definiera tydliga excludes för disambiguation
+
+### API-endpoints
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/optimizer/categories` | GET | Lista tillgängliga kategorier |
+| `/api/v1/nexus/optimizer/generate` | POST | Generera LLM-förslag per namespace/kategori |
+| `/api/v1/nexus/optimizer/apply` | POST | Tillämpa godkända förslag som DB-overrides |
+
+### Skillnad mot Auto Loop
+
+| | Auto Loop | Metadata Optimizer |
+|---|-----------|-------------------|
+| **Trigger** | Automatisk (testfel) | Manuell (admin startar) |
+| **Input** | Misslyckade testfrågor | Alla verktyg i namespace |
+| **Fokus** | Fixa specifika routing-fel | Batch-optimera hela gruppen |
+| **Granularitet** | Per fält, per verktyg | Alla fält, alla verktyg |
+| **LLM ser** | Ett verktyg + felkontext | Alla verktyg i batchen |
+
+---
+
+## 8. Dynamisk konfiguration
+
+NEXUS stöder dynamisk laddning av agenter, domain hints och category hints från
+admin flow-databasen. Detta ersätter behovet av koddeploy vid konfigurationsändringar.
+
+### Dynamiska agenter
+
+**Fil:** `app/nexus/routing/agent_resolver.py`
+
+Agent Resolver accepterar `agent_by_name` och `agents_by_zone` parametrar.
+Om dessa skickas in (laddade från admin flow DB via `NexusService._load_db_agents()`)
+används de istället för den statiska `AGENTS_BY_ZONE`-konfigurationen.
+
+```python
+# Dynamisk laddning
+result = agent_resolver.resolve(
+    query=normalized_query,
+    zone_candidates=zones,
+    agent_by_name=db_agents_by_name,    # Från admin flow DB
+    agents_by_zone=db_agents_by_zone,   # Från admin flow DB
+)
+```
+
+Om DB-agenter inte finns faller systemet tillbaka till statisk config utan fel.
+
+### Dynamiska domain hints & category hints
+
+**Fil:** `app/nexus/routing/qul.py`
+
+QUL accepterar valfria `domain_hints_map` och `category_hints_map`:
+
+```python
+result = qul.analyze(
+    query="Vad är vädret?",
+    domain_hints_map=db_domain_hints,    # Från admin flow DB
+    category_hints_map=db_category_hints, # Från admin flow DB
+)
+```
+
+Domain hints styr vilka zon-kandidater som identifieras.
+Category hints styr vilka agenter som boostar sin score.
+
+### Konfigurationsflöde
+
+```
+Admin Flow DB (web UI) → NexusService._load_db_agents()
+                            ↓
+                   ┌────────┴────────┐
+                   │                 │
+            domain_hints_map    agents_by_zone
+            category_hints_map  agent_by_name
+                   │                 │
+                   ▼                 ▼
+              QUL.analyze()    AgentResolver.resolve()
+```
+
+Ändringar i admin flow-panelen tar effekt direkt vid nästa routing-anrop.
+
+---
+
+## 9. Hur NEXUS förbättrar Intent-val
+
+### Problemet utan NEXUS
+
+OneSeeks supervisor agent rotar intent baserat på LLM-klassificering:
+
+```
+Fråga → LLM → "kunskap" / "skapande" / "jämförelse" / "konversation"
+```
+
+Problem:
+- LLM-anrop kostar tid (~200ms) och pengar
+- Ingen kalibrering av confidence
+- Gränsfall hanteras dåligt (t.ex. "skapa en karta över SCB-statistik" = skapande ELLER kunskap?)
+
+### Hur NEXUS förbättrar
+
+1. **QUL pre-screening (<5ms):** Identifierar zon-kandidater genom keyword-matchning och
+   entitetsextraktion — UTAN LLM-anrop
+
+2. **Zone-aware retrieval:** StR hämtar verktyg från kandidat-zoner separat, undviker cross-zone
+   pollution
+
+3. **Multi-intent detection:** Upptäcker sammansatta frågor ("väder OCH trafikinfo") och kan
+   föreslå decomposition
+
+4. **Band-0 direct routing:** >80% av frågorna kan routas DIREKT (band 0) utan LLM-anrop
+   baserat på embedding-similarity — sparar tid och kostnad
+
+5. **Continuous monitoring:** Eval Ledger steg 1 mäter intent routing precision och identifierar
+   trender
+
+---
+
+## 10. Hur NEXUS förbättrar Agent-val
+
+### Problemet utan NEXUS
+
+OneSeeks supervisor väljer agent med LLM-baserad klassificering. 13 agenter:
+väder, statistik, trafik, riksdagen, bolag, marknad, kunskap, webb, åtgärd,
+kartor, kod, media, syntes.
+
+Problem:
+- Agent-val kräver LLM-anrop (~200ms)
+- Ingen kalibrering av agent-confidence
+- Svårt att identifiera systematiska felval
+
+### Hur NEXUS förbättrar
+
+1. **Agent Resolution utan LLM (<2 ms):** Keyword-baserad scoring per agent mot frågan.
+   Varje agent har `primary_namespaces` som filtrerar verktyg.
+
+2. **3-lagers routing:** Intent → Agent → Tool. Agenten är det smala filtret som
+   reducerar tusentals verktyg till en hanterbar uppsättning (t.ex. väder-agenten
+   ser bara `tools/weather`).
+
+3. **Agent-specifik eval:** Eval Ledger steg 2 mäter agent selection precision —
+   "valdes rätt agent?"
+
+4. **Namespace purity tracking:** NEXUS mäter hur ofta rätt agent/namespace väljs via
+   `namespace_purity` metriken (mål: >92%)
+
+5. **Shadow comparison:** Shadow Observer jämför NEXUS agent-val med produktionens
+   agent_resolver och loggar avvikelser
+
+6. **Auto Loop metadata-förslag:** Om Auto Loop identifierar att verktyg hamnar i fel
+   agent-namespace, föreslår den namespace-ändring
+
+7. **Dark Matter-analys:** Frågor som hamnar i OOD (ingen agent matchar) klustras och
+   analyseras — kan leda till nya agent-definitioner
+
+---
+
+## 11. Hur NEXUS förbättrar Verktygs-val
+
+### Problemet utan NEXUS
+
+Bigtool Store hämtar verktyg via viktad scoring:
+```
+score = name_match×5.0 + keyword×3.0 + embedding×4.0 + ...
+```
+
+Problem:
+- Vikterna är heuristiska, inte kalibrerade
+- Ingen OOD-detektion (väljer alltid "nåt")
+- Confusion mellan liknande verktyg (smhi_weather vs smhi_temperature)
+- Ingen schema-validering (väljer verktyg utan nödvändiga parametrar)
+
+### Hur NEXUS förbättrar
+
+1. **Embedding-first scoring:** NEXUS använder cosine similarity som bassignal istället för
+   heuristiska vikter. Bonusar för zon/keyword-matchning är små tillägg (+0.05, +0.02)
+
+2. **Cross-encoder reranking:** Flashrank-modellen rerankar top-kandidater med djupare
+   semantisk förståelse
+
+3. **Platt-kalibrering:** Raw scores kalibreras till sannolikheter, vilket gör band-trösklar
+   meningsfulla ("0.95 = 95% sannolikhet att detta är rätt verktyg")
+
+4. **Schema verification:** Post-selection kontroll säkerställer att frågan innehåller
+   nödvändiga parametrar (location, tidsperiod, etc.)
+
+5. **Confusion pair monitoring:** Space Auditor identifierar verktygspar som är farligt lika
+   i embedding-space och flaggar dem för separation
+
+6. **Hard negative mining:** Systematisk identifiering av verktyg som ofta felaktigt väljs
+   istället för det korrekta verktyget
+
+7. **Syntetisk testning:** Forge genererar adversarial-frågor som testar disambiguation
+
+8. **Självförbättring:** Auto Loop identifierar routing-fel, analyserar orsaker, och föreslår
+   metadataförbättringar (bättre beskrivningar, keywords, etc.)
+
+---
+
+## 12. Confidence Band Cascade
+
+Routing-beslut klassificeras i 5 band baserat på kalibrerad confidence:
+
+| Band | Score | Margin | Namn | Åtgärd | Latens |
+|------|-------|--------|------|--------|--------|
+| **0** | ≥0.95 | ≥0.20 | DIRECT | Direkt routing, ingen LLM | ~5ms |
+| **1** | ≥0.80 | ≥0.10 | VERIFY | Snabb namespace-verifiering | ~50ms |
+| **2** | ≥0.60 | — | TOP-3 LLM | Presentera top-3, LLM väljer | ~150ms |
+| **3** | ≥0.40 | — | DECOMPOSE | Dela upp/reformulera frågan | ~200ms |
+| **4** | <0.40 | — | OOD FALLBACK | Ingen matchning, generell fallback | — |
+
+**Mål:** >80% av alla frågor ska hamna i Band 0 (DIRECT) = routing utan LLM-anrop.
+
+**Margin** = absolut skillnad mellan top-1 och top-2 score. Hög margin = hög separation =
+säkrare val.
+
+---
+
+## 13. Kalibrering & OOD-detektion
+
+### Platt-kalibrering
+
+Konverterar raw reranker-scores till kalibrerade sannolikheter. Fittas på historiska
+routing-events med `scipy.optimize.minimize` (L-BFGS-B).
+
+```
+P(correct) = 1 / (1 + exp(A × raw_score - B))
+```
+
+**Mål:** ECE (Expected Calibration Error) <0.05 för band 0-1, <0.10 för band 2.
+
+### DATS (Distance-Aware Temperature Scaling)
+
+Per-zone kalibrering som tar hänsyn till avstånd från zone centroid:
+
+```
+T_effective = T_base × (1 + α × distance_from_centroid)
+```
+
+Zoner långt från centroid får högre temperatur (mer osäkerhet).
+
+### OOD-detektion
+
+**Dual-gate approach:**
+
+1. **Energy Score:** `E(x) = -log(Σ exp(f_i(x)))` — hög energi = ovanlig input
+2. **KNN Distance:** FAISS-baserad nearest-neighbor search — stort avstånd = OOD
+
+**Borderline-fall:** Om energy score är i gråzonen (mellan threshold och threshold×0.7),
+aktiveras KNN som backup.
+
+**Dark Matter:** OOD-frågor klustras med DBSCAN och presenteras i dashboarden som
+potentiella nya verktyg.
+
+---
+
+## 14. Dashboard & Övervakning
+
+NEXUS har ett komplett admin-dashboard tillgängligt på `/admin/nexus` med **8 flikar**:
+
+### Pipeline Explorer (ny)
+
+Interaktiv routing-testbänk:
+- Skriv en fråga och kör hela NEXUS-pipelinen steg för steg
+- Visar QUL-analys, agent-kandidater, verktygs-ranking, band-klassificering
+- Expanderbara steg med detaljerad data (scores, candidates, metadata)
+- Färgkodade band-badges (grön=0, blå=1, gul=2, orange=3, röd=4)
+
+### Översikt
+
+Precision-dashboard med 4 sektioner:
+
+| Sektion | Metriker |
+|---------|----------|
+| **Routing Health** | Band-0 rate, multi-intent detect, schema match, OOD rate |
+| **Calibration** | Global ECE, Platt-kalibrerad, routing-händelser |
+| **Retrieval Quality** | Namespace purity, hard negatives, reranker delta, verktyg indexerade |
+| **Embedding Health** | Silhouette (global), inter-zone distance, hubness rate |
+
+Plus: Fas & Retrieval-vikter panel med live routing-konfiguration (phase badges, key weights, thresholds).
+Plus: Routing Events Panel med senaste 20 händelser och feedback (thumbs up/down).
+Plus: Kalibreringspanel med ECE per zon och Platt-parametrar.
+
+### RYMD (Space Auditor)
+
+- UMAP 2D-visualisering av alla verktyg
+- Silhouette score, cluster purity, confusion risk
+- Hubness-varningar
+- Confusion matrix
+
+### FORGE (Synth Forge)
+
+- Generera testfrågor per verktyg/kategori/namespace
+- Visa frågor grupperade per verktyg och svårighetsgrad
+- Roundtrip-verifieringsstatus
+
+### LOOP (Auto Loop)
+
+- Starta auto-loop per kategori/namespace/verktyg med batch_size och max_iterations
+- Visa loop-historik med status och filter (all/category/namespace/tool)
+- **Berikade förslag med diff-vy:**
+  - Nuvarande vs föreslaget värde (rött/grönt side-by-side)
+  - Embedding delta per förslag
+  - Expanderbar tabell med misslyckade testfrågor
+  - Routing-kontext: query, expected vs got tool, zon, agent, band, confidence
+- Per-förslag godkänn/avvisa + "Godkänn alla"
+- Platform comparison stats (NEXUS vs produktion agreement %)
+- Multi-iteration support med per-iteration metriker
+
+### LEDGER (Eval Ledger)
+
+- 5-stage pipeline metriker
+- Per-namespace breakdown
+- 30-dagars trend
+- Reranker pre/post delta
+
+### DEPLOY (Deploy Control)
+
+- Triple-gate status per verktyg
+- Promote/Rollback med bekräftelsedialog
+- Detaljer per gate med krav och tröskelförklaringar
+
+### OPTIMIZER (Metadata Optimizer, ny)
+
+- Filterläge: **Namespace** eller **Kategori** (toggle)
+- Namespace-dropdown med verktygantal (t.ex. "tools/weather (5)")
+- Kategori-dropdown som alternativ
+- "Generera"-knapp → LLM-anrop → förslag
+- Diff-vy per verktyg: nuvarande vs föreslaget (alla ändrade fält)
+- Per-verktyg approve/reject
+- "Godkänn alla" + "Tillämpa" för att spara som DB-overrides
+- Visar LLM-motivering per förslag
+
+---
+
+## 15. API-referens
+
+### Health & Config
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/health` | GET | Systemstatus, version, antal zoner |
+| `/api/v1/nexus/zones` | GET | Alla zon-konfigurationer |
+| `/api/v1/nexus/config` | GET | Komplett NEXUS-konfiguration |
+| `/api/v1/nexus/overview/metrics` | GET | Aggregerade precision-metriker |
+
+### Plattformsverktyg
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/tools` | GET | Lista alla plattformsverktyg (filtreras på category/zone/namespace) |
+| `/api/v1/nexus/tools/categories` | GET | Verktygsantal per kategori |
+| `/api/v1/nexus/tools/agents` | GET | Lista dynamiskt laddade agenter |
+| `/api/v1/nexus/tools/intents` | GET | Effektiva intent-definitioner (default + DB-overrides) |
+| `/api/v1/nexus/tools/live-routing` | GET | Live routing-fas och retrieval-vikter |
+
+### Routing
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/routing/analyze` | POST | QUL-analys med dynamiska DB-hints |
+| `/api/v1/nexus/routing/route` | POST | Full routing pipeline |
+| `/api/v1/nexus/routing/events` | GET | Routing-historik (paginated, max 200) |
+| `/api/v1/nexus/routing/band-distribution` | GET | Band-fördelning |
+| `/api/v1/nexus/routing/events/{id}/feedback` | POST | Logga feedback (implicit/explicit) |
+
+### Shadow Observer
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/shadow/report` | GET | Jämförelserapport |
+| `/api/v1/nexus/shadow/feedback/{tool_id}` | GET | Feedback-signaler för verktyg |
+| `/api/v1/nexus/shadow/compare` | POST | Rout query genom NEXUS + produktionsplattform |
+
+### Space Auditor
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/space/health` | GET | Separation-metriker |
+| `/api/v1/nexus/space/snapshot` | GET | UMAP-koordinater |
+| `/api/v1/nexus/space/confusion` | GET | Confusion-par |
+| `/api/v1/nexus/space/hubness` | GET | Hubness-varningar |
+| `/api/v1/nexus/zones/{zone}/metrics` | GET | Zon-specifika metriker |
+
+### Synth Forge
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/forge/generate` | POST | Generera testfrågor (per namespace/kategori/verktyg) |
+| `/api/v1/nexus/forge/cases` | GET | Lista testfall (filtreras på tool_id) |
+| `/api/v1/nexus/forge/cases/{id}` | DELETE | Radera testfall |
+
+### Auto Loop
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/loop/start` | POST | Starta auto-loop (category/namespace/tool_ids/batch_size/max_iterations) |
+| `/api/v1/nexus/loop/runs` | GET | Lista körningar |
+| `/api/v1/nexus/loop/runs/{id}` | GET | Detaljerad körningsinfo med berikade förslag + failed queries |
+| `/api/v1/nexus/loop/runs/{id}/approve` | POST | Godkänn förslag |
+
+### Eval Ledger
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/ledger/metrics` | GET | Pipeline-metriker (5 steg) |
+| `/api/v1/nexus/ledger/trend` | GET | Metriker-trend (1-90 dagar) |
+
+### Deploy Control
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/deploy/gates/{tool_id}` | GET | Gate-status |
+| `/api/v1/nexus/deploy/promote/{tool_id}` | POST | Promota verktyg |
+| `/api/v1/nexus/deploy/rollback/{tool_id}` | POST | Rulla tillbaka |
+
+### Kalibrering
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/calibration/params` | GET | Kalibreringsparametrar |
+| `/api/v1/nexus/calibration/fit` | POST | Fitta Platt-skalare |
+| `/api/v1/nexus/calibration/ece` | GET | ECE per zon |
+
+### Dark Matter
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/dark-matter/clusters` | GET | OOD-kluster |
+| `/api/v1/nexus/dark-matter/{cluster_id}/review` | POST | Granska kluster |
+
+### Metadata Optimizer
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/optimizer/categories` | GET | Lista tillgängliga kategorier |
+| `/api/v1/nexus/optimizer/generate` | POST | Generera LLM-förslag (category eller namespace) |
+| `/api/v1/nexus/optimizer/apply` | POST | Tillämpa godkända förslag som DB-overrides |
+
+### Admin & Dev
+
+| Endpoint | Metod | Beskrivning |
+|----------|-------|-------------|
+| `/api/v1/nexus/seed` | POST | Fyll NEXUS med infrastruktur-seeddata |
+| `/api/v1/nexus/reset` | POST | Nollställ all NEXUS-data (dev-mode) |
+
+---
+
+## 16. Filstruktur
+
+### Backend
+
+```
+surfsense_backend/app/nexus/
+├── __init__.py
+├── config.py                          # Zoner, band-trösklar, konstanter
+├── models.py                          # SQLAlchemy: 9 nexus_* tabeller
+├── schemas.py                         # Pydantic request/response-typer (inkl. optimizer)
+├── service.py                         # Orchestrator: kopplar alla komponenter
+├── routes.py                          # FastAPI endpoints (/api/v1/nexus/...) — 40+ endpoints
+├── platform_bridge.py                 # Import från produktion (verktyg, intents, agenter)
+├── embeddings.py                      # Koppling till embedding-modell & reranker
+├── llm.py                             # LiteLLM-anrop (Forge, Deploy Gate 3)
+├── optimizer.py                       # LLM-driven metadata-optimering per namespace/kategori
+├── seed.py                            # Infrastruktur-seeddata
+├── tasks.py                           # Celery async tasks
+│
+├── routing/
+│   ├── qul.py                         # Query Understanding Layer (dynamiska hints)
+│   ├── agent_resolver.py              # Agent Resolution (dynamiska agenter från DB)
+│   ├── select_then_route.py           # Select-Then-Route (Agent → Tool)
+│   ├── confidence_bands.py            # 5-band cascade
+│   ├── ood_detector.py                # Energy + KNN OOD-detektion
+│   ├── schema_verifier.py             # Post-selection param/geo/temporal check
+│   ├── zone_manager.py                # Zone-arkitektur
+│   ├── hard_negative_bank.py          # False-negative mining
+│   └── shadow_observer.py             # Jämför NEXUS vs produktion
+│
+├── calibration/
+│   ├── platt_scaler.py                # Platt sigmoid-kalibrering
+│   ├── dats_scaler.py                 # Distance-Aware Temperature Scaling
+│   └── ece_monitor.py                 # Expected Calibration Error
+│
+└── layers/
+    ├── space_auditor.py               # UMAP, silhouette, confusion, hubness
+    ├── synth_forge.py                 # LLM-genererade testfrågor (4 svårigheter)
+    ├── auto_loop.py                   # 7-stegs självförbättring (berikade förslag)
+    ├── eval_ledger.py                 # 5-stage pipeline-metriker
+    └── deploy_control.py              # Triple-gate lifecycle
+```
+
+### Frontend
+
+```
+surfsense_web/
+├── app/admin/nexus/
+│   ├── page.tsx                       # /admin/nexus huvudsida
+│   └── layout.tsx
+│
+├── components/admin/nexus/
+│   ├── nexus-dashboard.tsx            # Tab-orchestrator (8 flikar) + Översikt
+│   ├── tabs/
+│   │   ├── pipeline-explorer-tab.tsx  # PIPELINE EXPLORER: Interaktiv routing-testbänk
+│   │   ├── space-tab.tsx              # RYMD: UMAP + separation + confusion
+│   │   ├── forge-tab.tsx              # FORGE: Testgenerering per namespace
+│   │   ├── loop-tab.tsx               # LOOP: Auto-loop + berikade förslag med diff-vy
+│   │   ├── ledger-tab.tsx             # LEDGER: Pipeline-metriker
+│   │   ├── deploy-tab.tsx             # DEPLOY: Triple-gate lifecycle
+│   │   └── optimizer-tab.tsx          # OPTIMIZER: LLM metadata-optimering per namespace
+│   └── shared/
+│       ├── zone-health-card.tsx       # Zon-hälso-widget
+│       ├── confusion-matrix.tsx       # Confusion-par
+│       ├── band-distribution.tsx      # Band-fördelning chart
+│       └── dark-matter-panel.tsx      # OOD-kluster
+│
+└── lib/apis/
+    └── nexus-api.service.ts           # TypeScript API-klient (alla endpoints + typer)
+```
+
+### Databas (nexus_* tabeller)
+
+| Tabell | Syfte |
+|--------|-------|
+| `nexus_routing_events` | Varje routing-beslut |
+| `nexus_synthetic_cases` | Genererade testfrågor |
+| `nexus_auto_loop_runs` | Auto-loop körningar |
+| `nexus_space_snapshots` | UMAP embeddings |
+| `nexus_dark_matter_queries` | OOD-frågor |
+| `nexus_zone_config` | Zon-metriker |
+| `nexus_calibration_params` | Platt A/B parametrar |
+| `nexus_pipeline_metrics` | Eval Ledger steg-metriker |
+| `nexus_hard_negatives` | Hard negative bank |
+| `nexus_deploy_states` | Lifecycle-status per verktyg |
+
+---
+
+## Målmetriker
+
+| Metrik | Mål | Beskrivning |
+|--------|-----|-------------|
+| Band-0 Throughput | >80% | Andel frågor som routas direkt utan LLM |
+| ECE Global | <0.05 | Kalibrerad confidence matchar faktisk precision |
+| Namespace Purity | >92% | Rätt zon/namespace varje gång |
+| OOD Rate | <3% | Andel frågor utan matchande verktyg |
+| Reranker Delta | >+12pp | Cross-encoder förbättrar över bi-encoder |
+| Syntetiska testfall/verktyg | 16 | 4 svårigheter × 4 frågor |
+| Schema Match Rate | >95% | Valda verktyg har nödvändiga parametrar |
+| Multi-intent Detection | >90% | Sammansatta frågor identifieras korrekt |
