@@ -137,7 +137,7 @@ class AgentResolver:
 
             # Category hint bonus — strongly boosts the right agent
             if agent.name in category_hints:
-                score += 0.5
+                score += 1.5
                 matched_kw.append(f"category:{agent.name}")
 
             # Keyword matching

@@ -1203,9 +1203,9 @@ class NexusService:
             if keyword_hits:
                 score += min(0.09, len(keyword_hits) * 0.03)
 
-            # BONUS: Domain hint match (+0.03)
+            # BONUS: Domain hint match (+0.10)
             if pt.category in domain_hints:
-                score += 0.03
+                score += 0.10
 
             # BONUS: Name/ID direct match (+0.05)
             tool_name_lower = pt.tool_id.lower().replace("_", " ")

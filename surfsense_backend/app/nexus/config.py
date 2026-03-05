@@ -492,13 +492,6 @@ DOMAIN_HINTS: dict[str, list[str]] = {
         "webb",
         "länk",
         "nyheter",
-        "nyheter",
-        # General knowledge
-        "vad är",
-        "hur mycket",
-        "hur många",
-        "hitta",
-        "information",
         # Education
         "skola",
         "utbildning",
@@ -512,20 +505,16 @@ DOMAIN_HINTS: dict[str, list[str]] = {
         # From real intent_definition_service "skapande" keywords
         "skapa",
         "generera",
-        "gör",
         "rita",
         "podcast",
-        "bild",
         "karta",
         "kartbild",
         "kod",
         "script",
         "python",
         "sandbox",
-        "fil",
-        "skriv",
         "exekvera",
-        "kör",
+        "skriv kod",
     ],
     Zone.JAMFORELSE: [
         # From real intent_definition_service "jämförelse" keywords

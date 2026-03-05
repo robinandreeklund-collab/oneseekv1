@@ -310,18 +310,27 @@ class QueryUnderstandingLayer:
         lower = query.lower()
         hints: list[str] = []
 
-        # Zone-level hints
+        # Zone-level hints (word-boundary matching to avoid partial hits)
         for zone, keywords in _domain_hints.items():
             for kw in keywords:
-                if kw in lower:
+                # Multi-word keywords use substring, single words use \b
+                if " " in kw:
+                    matched = kw in lower
+                else:
+                    matched = bool(re.search(rf"\b{re.escape(kw)}\b", lower))
+                if matched:
                     if zone not in hints:
                         hints.append(zone)
                     break
 
-        # Category-level hints (agent-granular)
+        # Category-level hints (agent-granular, same word-boundary logic)
         for category, keywords in _category_hints.items():
             for kw in keywords:
-                if kw in lower:
+                if " " in kw:
+                    matched = kw in lower
+                else:
+                    matched = bool(re.search(rf"\b{re.escape(kw)}\b", lower))
+                if matched:
                     if category not in hints:
                         hints.append(category)
                     break
