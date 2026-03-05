@@ -25,6 +25,7 @@ import {
 	type LoopProposal,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
+import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
 
 const CATEGORY_LABELS: Record<string, string> = {
 	"": "Alla kategorier",
@@ -491,6 +492,9 @@ export function LoopTab() {
 					</Button>
 				</div>
 			</div>
+
+			{/* Concurrency control */}
+			<ConcurrencyControl />
 
 			{/* Stats */}
 			<div className="grid grid-cols-1 md:grid-cols-4 gap-4">

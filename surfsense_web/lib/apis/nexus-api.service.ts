@@ -422,6 +422,21 @@ export interface LoopRunDetail {
 // Live Routing Config Types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Concurrency Settings Types
+// ---------------------------------------------------------------------------
+
+export interface ConcurrencySettingsResponse {
+	max_concurrency: number;
+	active_tasks: number;
+	peak_active: number;
+}
+
+export interface ConcurrencyUpdateResponse {
+	max_concurrency: number;
+	previous: number;
+}
+
 export interface LiveRoutingConfigResponse {
 	phases: Record<string, number>;
 	current_config: {
@@ -627,6 +642,16 @@ class NexusApiService {
 	// Ledger: Trend
 	getLedgerTrendTyped = (days = 30) =>
 		fetchNexus<MetricsTrend>(`/ledger/trend?days=${days}`);
+
+	// Concurrency Settings
+	getConcurrencySettings = () =>
+		fetchNexus<ConcurrencySettingsResponse>("/settings/concurrency");
+
+	updateConcurrency = (maxConcurrency: number) =>
+		fetchNexus<ConcurrencyUpdateResponse>("/settings/concurrency", {
+			method: "PUT",
+			body: JSON.stringify({ max_concurrency: maxConcurrency }),
+		});
 
 	// Live Routing Config
 	getLiveRoutingConfig = () =>

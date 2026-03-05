@@ -63,6 +63,20 @@ class ForgePool:
     def max_concurrency(self) -> int:
         return self._max
 
+    def resize(self, new_max: int) -> None:
+        """Change the concurrency limit at runtime.
+
+        Creates a new semaphore with the updated limit.  In-flight tasks
+        continue with the old semaphore until they finish; new tasks will
+        use the new one.
+        """
+        if new_max < 1:
+            raise ValueError("max_concurrency must be >= 1")
+        old = self._max
+        self._max = new_max
+        self._sem = asyncio.Semaphore(new_max)
+        logger.info("ForgePool resized: %d → %d", old, new_max)
+
     @property
     def active_tasks(self) -> int:
         return self._active_tasks

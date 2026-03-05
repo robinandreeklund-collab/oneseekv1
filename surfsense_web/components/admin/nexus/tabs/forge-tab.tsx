@@ -12,6 +12,7 @@ import {
 	type SyntheticCaseResponse,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
+import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
 
 const CATEGORY_LABELS: Record<string, string> = {
 	"": "Alla kategorier",
@@ -287,6 +288,9 @@ export function ForgeTab() {
 					</Button>
 				</div>
 			</div>
+
+			{/* Concurrency control */}
+			<ConcurrencyControl />
 
 			{/* Search */}
 			<div className="relative">

@@ -101,6 +101,51 @@ async def get_overview_metrics(
 
 
 # ------------------------------------------------------------------
+# Concurrency Settings
+# ------------------------------------------------------------------
+
+
+@nexus_router.get("/settings/concurrency")
+async def get_concurrency_settings(
+    user: User = Depends(current_active_user),
+):
+    """Get current forge pool concurrency settings."""
+    from app.agents.new_chat.forge_pool import forge_pool
+
+    return {
+        "max_concurrency": forge_pool.max_concurrency,
+        "active_tasks": forge_pool.active_tasks,
+        "peak_active": forge_pool.peak_active,
+    }
+
+
+class ConcurrencyUpdateRequest(BaseModel):
+    max_concurrency: int
+
+
+@nexus_router.put("/settings/concurrency")
+async def update_concurrency_settings(
+    request: ConcurrencyUpdateRequest,
+    user: User = Depends(current_active_user),
+):
+    """Update forge pool max concurrency at runtime."""
+    from app.agents.new_chat.forge_pool import forge_pool
+
+    if request.max_concurrency < 1 or request.max_concurrency > 64:
+        raise HTTPException(
+            status_code=400,
+            detail="max_concurrency must be between 1 and 64",
+        )
+
+    old = forge_pool.max_concurrency
+    forge_pool.resize(request.max_concurrency)
+    return {
+        "max_concurrency": forge_pool.max_concurrency,
+        "previous": old,
+    }
+
+
+# ------------------------------------------------------------------
 # Platform Tools Registry
 # ------------------------------------------------------------------
 
