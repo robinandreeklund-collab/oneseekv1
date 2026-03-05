@@ -192,6 +192,36 @@ for _a in NEXUS_AGENTS:
     AGENTS_BY_ZONE.setdefault(_a.zone, []).append(_a)
 
 
+def _resolve_namespaces_from_flow_tools(
+    flow_tools: list[dict],
+) -> tuple[str, ...]:
+    """Resolve real namespace prefixes by looking up each flow_tool in the platform.
+
+    Admin flow stores tool-to-agent mappings as flow_tools.  The actual
+    namespace for each tool comes from bigtool_store / platform_bridge, not
+    from the agent's own namespace field.  This function collects the unique
+    namespace *prefixes* (first two segments, e.g. "tools/knowledge") that
+    the agent's tools actually belong to.
+
+    Falls back to an empty tuple if no tools can be resolved.
+    """
+    try:
+        from app.nexus.platform_bridge import get_platform_tools
+        tools_by_id = {t.tool_id: t for t in get_platform_tools()}
+    except Exception:
+        return ()
+
+    prefixes: list[str] = []
+    for ft in flow_tools:
+        tid = ft.get("tool_id", "")
+        pt = tools_by_id.get(tid)
+        if pt and len(pt.namespace) >= 2:
+            prefix = f"{pt.namespace[0]}/{pt.namespace[1]}"
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+    return tuple(prefixes)
+
+
 def build_agents_from_metadata(
     agent_metadata_list: list[dict],
 ) -> tuple[dict[str, NexusAgent], dict[Zone, list[NexusAgent]]]:
@@ -224,16 +254,24 @@ def build_agents_from_metadata(
             except ValueError:
                 continue
 
-        # Build namespace tuple from metadata namespace field
-        # Admin stores as list like ["agents", "weather"] → "tools/weather"
-        ns_parts = meta.get("namespace", [])
+        # Build namespace prefixes from the agent's actual flow_tools.
+        # This resolves to the REAL namespaces (e.g. "tools/knowledge",
+        # "tools/statistics") instead of the simplified admin-flow
+        # namespace field (e.g. ["agents", "skolverket"] → "tools/skolverket"
+        # which doesn't match any real tool namespace).
+        flow_tools = meta.get("flow_tools", [])
         primary_namespaces: tuple[str, ...] = ()
-        if isinstance(ns_parts, list) and len(ns_parts) >= 2:
-            # Map "agents/X" style to "tools/X" for NEXUS compatibility
-            ns_prefix = ns_parts[0] if ns_parts[0] != "agents" else "tools"
-            primary_namespaces = (f"{ns_prefix}/{ns_parts[1]}",)
-        elif isinstance(ns_parts, str) and ns_parts:
-            primary_namespaces = (ns_parts,)
+        if flow_tools:
+            primary_namespaces = _resolve_namespaces_from_flow_tools(flow_tools)
+
+        # Fallback: derive from the namespace field if flow_tools didn't resolve
+        if not primary_namespaces:
+            ns_parts = meta.get("namespace", [])
+            if isinstance(ns_parts, list) and len(ns_parts) >= 2:
+                ns_prefix = ns_parts[0] if ns_parts[0] != "agents" else "tools"
+                primary_namespaces = (f"{ns_prefix}/{ns_parts[1]}",)
+            elif isinstance(ns_parts, str) and ns_parts:
+                primary_namespaces = (ns_parts,)
 
         # Keywords
         keywords = meta.get("keywords", [])
