@@ -8,6 +8,7 @@ from __future__ import annotations
 import uuid as uuid_mod
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -519,6 +520,52 @@ async def loop_start(
         namespace=ns,
         batch_size=max(10, min(bs, 2000)),
         max_iterations=max(1, min(mi, 10)),
+    )
+
+
+@nexus_router.post("/loop/start-stream")
+async def loop_start_stream(
+    request: LoopStartRequest | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Start an auto-improvement loop with SSE progress streaming.
+
+    Sends events of the form:
+      data: {"type":"progress","step":"...","detail":"...","iteration":1,"total_iterations":3,...}
+      data: {"type":"done","run_id":"...","status":"completed",...}
+      data: {"type":"error","message":"..."}
+    """
+    import json
+
+    cat = request.category if request else None
+    tids = request.tool_ids if request else None
+    ns = request.namespace if request else None
+    bs = request.batch_size if request else 200
+    mi = request.max_iterations if request else 1
+
+    async def _event_stream():
+        try:
+            async for event in service.run_auto_loop_stream(
+                session,
+                category=cat,
+                tool_ids=tids,
+                namespace=ns,
+                batch_size=max(10, min(bs, 2000)),
+                max_iterations=max(1, min(mi, 10)),
+            ):
+                yield f"data: {json.dumps(event, default=str)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

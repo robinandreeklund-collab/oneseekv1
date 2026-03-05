@@ -23,9 +23,13 @@ import {
 	type AutoLoopRunResponse,
 	type LoopRunDetail,
 	type LoopProposal,
+	type LoopStreamEvent,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 
 const CATEGORY_LABELS: Record<string, string> = {
 	"": "Alla kategorier",
@@ -257,6 +261,12 @@ export function LoopTab() {
 	const [detailLoading, setDetailLoading] = useState<string | null>(null);
 	const [approving, setApproving] = useState<string | null>(null);
 
+	// New: configurable parameters + live progress
+	const [maxIterations, setMaxIterations] = useState(1);
+	const [batchSize, setBatchSize] = useState(200);
+	const [streamEvents, setStreamEvents] = useState<LoopStreamEvent[]>([]);
+	const [liveProgress, setLiveProgress] = useState<LoopStreamEvent | null>(null);
+
 	// Derive unique namespace prefixes from tools (first 2 segments)
 	const namespaces = Array.from(
 		new Set(
@@ -297,6 +307,10 @@ export function LoopTab() {
 
 	const handleStart = () => {
 		setStarting(true);
+		setStreamEvents([]);
+		setLiveProgress(null);
+		setError(null);
+
 		let request: {
 			category?: string;
 			tool_ids?: string[];
@@ -311,15 +325,24 @@ export function LoopTab() {
 		} else if (filterMode === "tool" && selectedToolId) {
 			request = { tool_ids: [selectedToolId] };
 		}
-		// Always send batch_size to ensure all cases are processed
-		request.batch_size = 200;
+		request.batch_size = batchSize;
+		request.max_iterations = maxIterations;
+
 		nexusApiService
-			.startLoop(request)
+			.startLoopStream(request, (event) => {
+				setStreamEvents((prev) => [...prev, event]);
+				setLiveProgress(event);
+				if (event.type === "error") {
+					setError(event.message || "Okant fel under loop-korning");
+				}
+			})
 			.then(() => {
 				loadRuns();
 			})
 			.catch((err) => setError(err.message))
-			.finally(() => setStarting(false));
+			.finally(() => {
+				setStarting(false);
+			});
 	};
 
 	const filterLabel = (() => {
@@ -492,6 +515,113 @@ export function LoopTab() {
 					</Button>
 				</div>
 			</div>
+
+			{/* Loop parameters */}
+			<Card>
+				<CardContent className="pt-4 pb-4 space-y-4">
+					<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+						<div className="space-y-2">
+							<div className="flex items-center justify-between">
+								<Label className="text-sm">Max iterationer</Label>
+								<span className="text-sm font-mono font-medium tabular-nums">
+									{maxIterations}
+								</span>
+							</div>
+							<Slider
+								min={1}
+								max={10}
+								step={1}
+								value={[maxIterations]}
+								onValueChange={([v]) => setMaxIterations(v)}
+								disabled={starting}
+							/>
+							<p className="text-xs text-muted-foreground">
+								Stoppar tidigare om alla testfall klaras. Max 10 iterationer.
+							</p>
+						</div>
+						<div className="space-y-2">
+							<div className="flex items-center justify-between">
+								<Label className="text-sm">Batch-storlek</Label>
+								<span className="text-sm font-mono font-medium tabular-nums">
+									{batchSize}
+								</span>
+							</div>
+							<Slider
+								min={10}
+								max={2000}
+								step={10}
+								value={[batchSize]}
+								onValueChange={([v]) => setBatchSize(v)}
+								disabled={starting}
+							/>
+							<p className="text-xs text-muted-foreground">
+								Antal testfall per batch. Hogre = snabbare men mer minne.
+							</p>
+						</div>
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* Live progress panel */}
+			{starting && liveProgress && (
+				<Card className="border-blue-200 dark:border-blue-800">
+					<CardContent className="pt-4 pb-4 space-y-3">
+						<div className="flex items-center gap-2">
+							<Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+							<span className="text-sm font-medium">
+								{liveProgress.detail || "Kor loop..."}
+							</span>
+						</div>
+						{liveProgress.total_cases != null && liveProgress.cases_processed != null && (
+							<div className="space-y-1">
+								<div className="flex justify-between text-xs text-muted-foreground">
+									<span>
+										{liveProgress.cases_processed}/{liveProgress.total_cases} fall
+									</span>
+									<span>
+										Batch {liveProgress.batch || 0}/{liveProgress.total_batches || 0}
+									</span>
+								</div>
+								<Progress
+									value={
+										liveProgress.total_cases > 0
+											? (liveProgress.cases_processed / liveProgress.total_cases) * 100
+											: 0
+									}
+								/>
+							</div>
+						)}
+						{liveProgress.iteration != null && liveProgress.total_iterations != null && (
+							<div className="flex items-center gap-3 text-xs text-muted-foreground">
+								<span>
+									Iteration {liveProgress.iteration}/{liveProgress.total_iterations}
+								</span>
+								{liveProgress.failures != null && liveProgress.total_tests != null && (
+									<span>
+										{liveProgress.failures}/{liveProgress.total_tests} fel
+									</span>
+								)}
+								{liveProgress.precision_at_1 != null && (
+									<span>
+										P@1: {(liveProgress.precision_at_1 * 100).toFixed(1)}%
+									</span>
+								)}
+							</div>
+						)}
+						{/* Event log */}
+						{streamEvents.length > 1 && (
+							<div className="max-h-32 overflow-y-auto rounded border bg-muted/50 p-2 text-xs font-mono space-y-0.5">
+								{streamEvents.map((evt, idx) => (
+									<div key={`evt-${idx}`} className="text-muted-foreground">
+										<span className="text-blue-600">[{evt.step || evt.type}]</span>{" "}
+										{evt.detail || evt.message || ""}
+									</div>
+								))}
+							</div>
+						)}
+					</CardContent>
+				</Card>
+			)}
 
 			{/* Concurrency control */}
 			<ConcurrencyControl />

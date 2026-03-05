@@ -2486,6 +2486,485 @@ class NexusService:
             "iteration_details": all_iteration_results,
         }
 
+    async def run_auto_loop_stream(
+        self,
+        session: AsyncSession,
+        *,
+        category: str | None = None,
+        tool_ids: list[str] | None = None,
+        namespace: str | None = None,
+        batch_size: int = 200,
+        max_iterations: int = 1,
+    ):
+        """Run auto-loop with SSE progress events.
+
+        Yields dicts with ``type`` in {progress, batch, iteration, done, error}.
+        """
+        import uuid
+
+        now = datetime.now(tz=UTC)
+
+        run_count = (
+            await session.scalar(select(func.count()).select_from(NexusAutoLoopRun))
+            or 0
+        )
+        loop_number = run_count + 1
+        run_id = uuid.uuid4()
+
+        db_run = NexusAutoLoopRun(
+            id=run_id,
+            loop_number=loop_number,
+            started_at=now,
+            status="running",
+        )
+        session.add(db_run)
+        await session.flush()
+
+        yield {
+            "type": "progress",
+            "step": "init",
+            "detail": f"Loop #{loop_number} startad",
+            "run_id": str(run_id),
+            "loop_number": loop_number,
+        }
+
+        # Build filtered query (same as run_auto_loop)
+        stmt = select(NexusSyntheticCase)
+        if tool_ids:
+            stmt = stmt.where(NexusSyntheticCase.tool_id.in_(tool_ids))
+        elif namespace:
+            stmt = stmt.where(NexusSyntheticCase.namespace.startswith(namespace))
+        elif category:
+            from app.nexus.platform_bridge import get_platform_tools
+
+            cat_tool_ids = list(
+                {t.tool_id for t in get_platform_tools() if t.category == category}
+            )
+            if cat_tool_ids:
+                stmt = stmt.where(NexusSyntheticCase.tool_id.in_(cat_tool_ids))
+            else:
+                stmt = stmt.where(False)
+
+        stmt = stmt.order_by(NexusSyntheticCase.created_at)
+        result = await session.execute(stmt)
+        cases = result.scalars().all()
+
+        if not cases:
+            db_run.status = "failed"
+            db_run.completed_at = datetime.now(tz=UTC)
+            await session.commit()
+            yield {
+                "type": "error",
+                "message": "Inga testfall hittade. Kör forge/generate först.",
+            }
+            return
+
+        total_case_count = len(cases)
+        yield {
+            "type": "progress",
+            "step": "loaded",
+            "detail": f"{total_case_count} testfall laddade",
+            "total_cases": total_case_count,
+            "max_iterations": max_iterations,
+            "batch_size": batch_size,
+        }
+
+        from app.agents.new_chat.forge_pool import forge_pool
+        from app.db import async_session_maker
+
+        all_iteration_results: list[dict] = []
+        cumulative_failed_queries: list[dict] = []
+        cumulative_proposals = []
+        cumulative_root_causes: list[str] = []
+
+        async def _eval_one_case(case_obj):
+            async with async_session_maker() as case_session:
+                decision = await self.route_query(case_obj.question, case_session)
+                nexus_tool = decision.selected_tool
+                candidate_ids = [c.tool_id for c in decision.candidates]
+                platform_result = await self.shadow_observer.run_platform_retrieval(
+                    case_obj.question, session=case_session
+                )
+                platform_tool = platform_result.get("top1")
+                await case_session.commit()
+            return {
+                "case": case_obj,
+                "nexus_tool": nexus_tool,
+                "band": decision.band,
+                "candidate_ids": candidate_ids,
+                "platform_tool": platform_tool,
+                "resolved_zone": decision.resolved_zone or "",
+                "selected_agent": decision.selected_agent or "",
+                "confidence": round(decision.calibrated_confidence, 3),
+            }
+
+        for iteration in range(1, max_iterations + 1):
+            yield {
+                "type": "progress",
+                "step": "eval_start",
+                "detail": f"Iteration {iteration}/{max_iterations} — evaluerar",
+                "iteration": iteration,
+                "total_iterations": max_iterations,
+            }
+
+            total_tests = 0
+            failures = 0
+            failed_queries: list[dict] = []
+            platform_comparisons = 0
+            platform_agreements = 0
+            band_counts = [0, 0, 0, 0, 0]
+            correct_at_1 = 0
+            correct_at_5 = 0
+            reciprocal_ranks: list[float] = []
+
+            num_batches = (len(cases) + batch_size - 1) // batch_size
+            for batch_idx, batch_start in enumerate(
+                range(0, len(cases), batch_size)
+            ):
+                batch = cases[batch_start : batch_start + batch_size]
+
+                yield {
+                    "type": "batch",
+                    "step": "eval_batch",
+                    "detail": f"Batch {batch_idx + 1}/{num_batches} ({len(batch)} fall)",
+                    "iteration": iteration,
+                    "batch": batch_idx + 1,
+                    "total_batches": num_batches,
+                    "cases_processed": batch_start,
+                    "total_cases": total_case_count,
+                }
+
+                batch_results = await forge_pool.gather(
+                    [_eval_one_case(c) for c in batch],
+                    label=f"auto_loop_stream_iter{iteration}",
+                )
+
+                for br in batch_results:
+                    total_tests += 1
+                    if isinstance(br, BaseException):
+                        failures += 1
+                        continue
+                    case_obj = br["case"]
+                    nexus_tool = br["nexus_tool"]
+                    band_counts[min(br["band"], 4)] += 1
+                    candidate_ids = br["candidate_ids"]
+                    if case_obj.expected_tool:
+                        if nexus_tool == case_obj.expected_tool:
+                            correct_at_1 += 1
+                        if case_obj.expected_tool in candidate_ids[:5]:
+                            correct_at_5 += 1
+                        if case_obj.expected_tool in candidate_ids:
+                            rank = candidate_ids.index(case_obj.expected_tool) + 1
+                            reciprocal_ranks.append(1.0 / rank)
+                        else:
+                            reciprocal_ranks.append(0.0)
+                    platform_tool = br["platform_tool"]
+                    if platform_tool:
+                        platform_comparisons += 1
+                        if nexus_tool == platform_tool:
+                            platform_agreements += 1
+                    if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
+                        failures += 1
+                        failed_queries.append(
+                            {
+                                "query": case_obj.question,
+                                "expected_tool": case_obj.expected_tool,
+                                "got_tool": nexus_tool or "(none)",
+                                "platform_tool": platform_tool or "(none)",
+                                "case_id": str(case_obj.id),
+                                "resolved_zone": br["resolved_zone"],
+                                "selected_agent": br["selected_agent"],
+                                "band": br["band"],
+                                "confidence": br["confidence"],
+                                "difficulty": getattr(case_obj, "difficulty", ""),
+                            }
+                        )
+
+            p_at_1 = correct_at_1 / total_tests if total_tests > 0 else 0.0
+            p_at_5 = correct_at_5 / total_tests if total_tests > 0 else 0.0
+            mrr = (
+                sum(reciprocal_ranks) / len(reciprocal_ranks)
+                if reciprocal_ranks
+                else 0.0
+            )
+
+            iter_result = {
+                "iteration": iteration,
+                "total_tests": total_tests,
+                "failures": failures,
+                "precision_at_1": round(p_at_1, 3),
+                "precision_at_5": round(p_at_5, 3),
+                "mrr": round(mrr, 3),
+                "band_distribution": band_counts,
+                "platform_comparisons": platform_comparisons,
+                "platform_agreements": platform_agreements,
+            }
+            all_iteration_results.append(iter_result)
+
+            yield {
+                "type": "iteration",
+                "step": "eval_done",
+                "detail": f"Iteration {iteration} klar — {failures}/{total_tests} fel, P@1={p_at_1:.1%}",
+                "iteration": iteration,
+                "total_iterations": max_iterations,
+                "failures": failures,
+                "total_tests": total_tests,
+                "precision_at_1": round(p_at_1, 3),
+                "mrr": round(mrr, 3),
+            }
+
+            # Cluster + root cause
+            yield {
+                "type": "progress",
+                "step": "clustering",
+                "detail": f"Klustrar {failures} fel och kör root cause-analys",
+                "iteration": iteration,
+            }
+
+            clusters = self.auto_loop.cluster_failures(failed_queries)
+
+            root_causes: list[str] = []
+            try:
+                from app.nexus.llm import nexus_llm_call
+
+                async def _root_cause_for_cluster(cluster_obj):
+                    if not cluster_obj.sample_queries:
+                        return ""
+                    rc_prompt = (
+                        f"Analysera varför dessa frågor routades fel.\n"
+                        f"Förväntade verktyg: {', '.join(cluster_obj.tool_ids)}\n"
+                        f"Exempelfrågor:\n"
+                        + "\n".join(
+                            f"- {q}" for q in cluster_obj.sample_queries[:3]
+                        )
+                        + "\n\nSvara med EN mening som förklarar rotorsaken."
+                    )
+                    try:
+                        result_text = await nexus_llm_call(rc_prompt)
+                        return result_text.strip()
+                    except Exception:
+                        return ""
+
+                rc_results = await forge_pool.gather(
+                    [_root_cause_for_cluster(c) for c in clusters],
+                    label="root_cause_stream",
+                )
+                root_causes = [r if isinstance(r, str) else "" for r in rc_results]
+            except ImportError:
+                pass
+
+            proposals = self.auto_loop.create_proposals(
+                clusters, root_causes=root_causes or None
+            )
+
+            cumulative_failed_queries.extend(failed_queries)
+            cumulative_proposals.extend(proposals)
+            cumulative_root_causes.extend(root_causes)
+
+            yield {
+                "type": "progress",
+                "step": "proposals",
+                "detail": f"{len(proposals)} förslag genererade i iteration {iteration}",
+                "iteration": iteration,
+                "proposals_count": len(proposals),
+            }
+
+            if failures == 0 or iteration == max_iterations:
+                break
+
+        # Compute embedding delta
+        yield {
+            "type": "progress",
+            "step": "embedding",
+            "detail": "Beräknar embedding-delta",
+        }
+
+        try:
+            from app.nexus.embeddings import nexus_embed_score
+
+            for proposal in cumulative_proposals:
+                if proposal.current_value and proposal.proposed_value:
+                    current_score = nexus_embed_score(
+                        proposal.tool_id, proposal.current_value
+                    )
+                    proposed_score = nexus_embed_score(
+                        proposal.tool_id, proposal.proposed_value
+                    )
+                    if current_score is not None and proposed_score is not None:
+                        proposal.embedding_delta = proposed_score - current_score
+        except Exception:
+            pass
+
+        # Mine hard negatives
+        if cumulative_failed_queries:
+            confusion_data = [
+                {
+                    "tool_a": fq.get("expected_tool", ""),
+                    "tool_b": fq.get("got_tool", ""),
+                    "similarity": 0.85,
+                }
+                for fq in cumulative_failed_queries
+                if fq.get("expected_tool") and fq.get("got_tool")
+            ]
+            self.hard_negative_miner.mine_from_confusion(confusion_data)
+
+            for pair in self.hard_negative_miner.pairs:
+                try:
+                    existing = await session.execute(
+                        select(NexusHardNegative).where(
+                            NexusHardNegative.anchor_tool == pair.anchor_tool,
+                            NexusHardNegative.negative_tool == pair.negative_tool,
+                        )
+                    )
+                    if not existing.scalars().first():
+                        session.add(
+                            NexusHardNegative(
+                                anchor_tool=pair.anchor_tool,
+                                negative_tool=pair.negative_tool,
+                                mining_method=pair.mining_method,
+                                similarity_score=pair.similarity_score,
+                                confusion_frequency=pair.confusion_frequency,
+                            )
+                        )
+                except Exception:
+                    pass
+
+        total_embedding_delta = (
+            sum(p.embedding_delta for p in cumulative_proposals)
+            / len(cumulative_proposals)
+            if cumulative_proposals
+            else 0.0
+        )
+
+        # Persist pipeline metrics
+        last_iter = all_iteration_results[-1]
+        final_p_at_1 = last_iter["precision_at_1"]
+        final_p_at_5 = last_iter["precision_at_5"]
+        final_mrr = last_iter["mrr"]
+        final_band_counts = last_iter["band_distribution"]
+        final_total_tests = last_iter["total_tests"]
+        final_failures = last_iter["failures"]
+        final_platform_comparisons = last_iter["platform_comparisons"]
+        final_platform_agreements = last_iter["platform_agreements"]
+
+        if final_total_tests >= 3:
+            reranker_delta = (
+                (
+                    final_platform_agreements / final_platform_comparisons
+                    - final_p_at_1
+                )
+                if final_platform_comparisons > 0
+                else None
+            )
+            hn_precision = (
+                final_platform_agreements / final_platform_comparisons
+                if final_platform_comparisons > 0
+                else None
+            )
+            metric_stages = [
+                (1, "intent", final_p_at_1, final_p_at_5, final_mrr, None, None),
+                (2, "route", final_p_at_1, final_p_at_5, final_mrr, None, None),
+                (
+                    3,
+                    "bigtool",
+                    final_p_at_5,
+                    final_p_at_5,
+                    final_mrr,
+                    hn_precision,
+                    None,
+                ),
+                (
+                    4,
+                    "rerank",
+                    final_p_at_1,
+                    final_p_at_5,
+                    final_mrr,
+                    hn_precision,
+                    reranker_delta,
+                ),
+                (5, "e2e", final_p_at_1, final_p_at_5, final_mrr, None, None),
+            ]
+            for stage, name, p1, p5, mrr_val, hn_p, delta in metric_stages:
+                metric = NexusPipelineMetric(
+                    run_id=run_id,
+                    stage=stage,
+                    stage_name=name,
+                    precision_at_1=p1,
+                    precision_at_5=p5,
+                    mrr_at_10=mrr_val,
+                    ndcg_at_5=mrr_val,
+                    hard_negative_precision=hn_p,
+                    reranker_delta=delta,
+                    recorded_at=datetime.now(tz=UTC),
+                )
+                session.add(metric)
+
+        # Update run record
+        enriched_proposals = []
+        for p in cumulative_proposals:
+            related_queries = [
+                fq
+                for fq in cumulative_failed_queries
+                if fq.get("expected_tool") == p.tool_id
+                or fq.get("got_tool") == p.tool_id
+            ]
+            enriched_proposals.append(
+                {
+                    "tool_id": p.tool_id,
+                    "field": p.field_name,
+                    "reason": p.reason,
+                    "current_value": p.current_value or "",
+                    "proposed_value": p.proposed_value or "",
+                    "embedding_delta": round(p.embedding_delta, 4)
+                    if p.embedding_delta
+                    else 0.0,
+                    "failed_queries": [
+                        {
+                            "query": fq.get("query", ""),
+                            "expected_tool": fq.get("expected_tool", ""),
+                            "got_tool": fq.get("got_tool", ""),
+                            "resolved_zone": fq.get("resolved_zone", ""),
+                            "selected_agent": fq.get("selected_agent", ""),
+                            "band": fq.get("band", -1),
+                            "confidence": fq.get("confidence", 0.0),
+                            "difficulty": fq.get("difficulty", ""),
+                        }
+                        for fq in related_queries[:10]
+                    ],
+                }
+            )
+
+        db_run.total_tests = final_total_tests
+        db_run.failures = final_failures
+        db_run.metadata_proposals = {
+            "proposals": enriched_proposals,
+            "platform_comparisons": final_platform_comparisons,
+            "platform_agreements": final_platform_agreements,
+            "band_distribution": final_band_counts,
+            "iterations": all_iteration_results,
+            "total_cases_available": total_case_count,
+        }
+        db_run.approved_proposals = 0
+        db_run.embedding_delta = total_embedding_delta
+        db_run.status = "review" if cumulative_proposals else "approved"
+        db_run.completed_at = datetime.now(tz=UTC)
+        await session.commit()
+
+        yield {
+            "type": "done",
+            "run_id": str(run_id),
+            "loop_number": loop_number,
+            "status": "completed",
+            "total_tests": final_total_tests,
+            "total_cases_available": total_case_count,
+            "iterations_completed": len(all_iteration_results),
+            "failures": final_failures,
+            "proposals": len(cumulative_proposals),
+            "embedding_delta": round(total_embedding_delta, 4),
+            "precision_at_1": final_p_at_1,
+            "mrr": final_mrr,
+        }
+
     # ------------------------------------------------------------------
     # Shadow Observer (Platform Integration)
     # ------------------------------------------------------------------

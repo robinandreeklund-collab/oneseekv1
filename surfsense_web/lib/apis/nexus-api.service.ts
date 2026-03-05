@@ -423,6 +423,36 @@ export interface LoopRunDetail {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Loop Stream Event Types
+// ---------------------------------------------------------------------------
+
+export interface LoopStreamEvent {
+	type: "progress" | "batch" | "iteration" | "done" | "error";
+	step?: string;
+	detail?: string;
+	message?: string;
+	run_id?: string;
+	loop_number?: number;
+	iteration?: number;
+	total_iterations?: number;
+	batch?: number;
+	total_batches?: number;
+	cases_processed?: number;
+	total_cases?: number;
+	max_iterations?: number;
+	batch_size?: number;
+	failures?: number;
+	total_tests?: number;
+	precision_at_1?: number;
+	mrr?: number;
+	proposals_count?: number;
+	proposals?: number;
+	iterations_completed?: number;
+	embedding_delta?: number;
+	status?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Concurrency Settings Types
 // ---------------------------------------------------------------------------
 
@@ -568,6 +598,65 @@ class NexusApiService {
 			method: "POST",
 			body: JSON.stringify(request || {}),
 		});
+
+	/**
+	 * Start a loop run with SSE progress streaming.
+	 * Returns a ReadableStream of parsed event objects.
+	 */
+	startLoopStream = async (
+		request?: {
+			category?: string;
+			tool_ids?: string[];
+			namespace?: string;
+			batch_size?: number;
+			max_iterations?: number;
+		},
+		onEvent?: (event: LoopStreamEvent) => void,
+	): Promise<void> => {
+		const url = `${getBackendUrl()}/api/v1/nexus/loop/start-stream`;
+		const token = getBearerToken();
+
+		const res = await fetch(url, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				...(token ? { Authorization: `Bearer ${token}` } : {}),
+			},
+			body: JSON.stringify(request || {}),
+		});
+
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Loop stream failed: ${res.status} ${text}`);
+		}
+
+		const reader = res.body?.getReader();
+		if (!reader) throw new Error("No response body");
+
+		const decoder = new TextDecoder();
+		let buffer = "";
+
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+
+			buffer += decoder.decode(value, { stream: true });
+			const lines = buffer.split("\n");
+			buffer = lines.pop() || "";
+
+			for (const line of lines) {
+				const trimmed = line.trim();
+				if (trimmed.startsWith("data: ")) {
+					try {
+						const parsed = JSON.parse(trimmed.slice(6)) as LoopStreamEvent;
+						onEvent?.(parsed);
+					} catch {
+						// skip malformed lines
+					}
+				}
+			}
+		}
+	};
 
 	getLoopRuns = () => fetchNexus<AutoLoopRunResponse[]>("/loop/runs");
 
