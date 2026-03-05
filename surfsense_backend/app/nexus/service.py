@@ -1151,9 +1151,12 @@ class NexusService:
         2. Zone match, keywords, and domain hints are small BONUSES
         3. NO min-max normalization — scores must reflect real similarity
            so that band thresholds (0.95/0.80/0.60/0.40) work correctly.
+
+        Uses nexus_batch_score to embed the query once and score all tools
+        via vectorized cosine similarity in a single operation.
         """
         from app.nexus.config import ZONE_PREFIXES
-        from app.nexus.embeddings import nexus_embed_score
+        from app.nexus.embeddings import nexus_batch_score
         from app.nexus.platform_bridge import get_platform_tools
 
         tools = get_platform_tools()
@@ -1171,17 +1174,21 @@ class NexusService:
         if zone_hint and zone_hint in ZONE_PREFIXES:
             prefixed_query = f"{ZONE_PREFIXES[zone_hint]}{query_lower}"
 
-        raw_entries: list[tuple[dict, float]] = []
-        for pt in tools:
-            # Skip external model tools — compare mode only
-            if pt.category == "external_model":
-                continue
-
-            # PRIMARY SIGNAL: Embedding cosine similarity (0.0-1.0)
-            # Use zone-prefixed query against zone-prefixed tool description
+        # Filter tools and build tool texts for batch scoring
+        filtered_tools = [pt for pt in tools if pt.category != "external_model"]
+        tool_texts = []
+        for pt in filtered_tools:
             zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-            tool_text = f"{zone_prefix}{pt.tool_id} {pt.description}"
-            emb_score = nexus_embed_score(prefixed_query, tool_text)
+            tool_texts.append(f"{zone_prefix}{pt.tool_id} {pt.description}")
+
+        # Batch score: embed query once, all tool texts in one pass,
+        # vectorized cosine similarity
+        emb_scores = nexus_batch_score(prefixed_query, tool_texts)
+
+        raw_entries: list[tuple[dict, float]] = []
+        for i, pt in enumerate(filtered_tools):
+            # PRIMARY SIGNAL: Embedding cosine similarity (0.0-1.0)
+            emb_score = emb_scores[i] if emb_scores is not None else None
 
             # Fallback to 0.20 when embedding model is unavailable
             score = emb_score if emb_score is not None and emb_score > 0 else 0.20
@@ -2052,6 +2059,37 @@ class NexusService:
             max_iterations,
         )
 
+        # Pre-warm embedding cache: batch-embed all query texts + tool texts
+        # in efficient GPU passes BEFORE the eval loop starts.
+        from app.nexus.embeddings import nexus_precompute
+        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.platform_bridge import get_platform_tools
+
+        all_query_texts = [c.question.lower() for c in cases]
+        # Also precompute zone-prefixed variants
+        platform_tools = get_platform_tools()
+        zone_prefixed_queries = set()
+        for q in all_query_texts:
+            zone_prefixed_queries.add(q)
+            for prefix in ZONE_PREFIXES.values():
+                zone_prefixed_queries.add(f"{prefix}{q}")
+        tool_texts = set()
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+            tool_texts.add(f"{zone_prefix}{pt.tool_id} {pt.description}")
+            tool_texts.add(f"{pt.tool_id} {pt.description}")
+
+        precompute_texts = list(zone_prefixed_queries | tool_texts)
+        n_precomputed = nexus_precompute(precompute_texts)
+        logger.info(
+            "Auto-loop #%d: pre-computed %d embeddings (%d texts submitted)",
+            loop_number,
+            n_precomputed,
+            len(precompute_texts),
+        )
+
         # Cumulative metrics across all iterations
         all_iteration_results: list[dict] = []
         cumulative_failed_queries: list[dict] = []
@@ -2567,6 +2605,41 @@ class NexusService:
             "total_cases": total_case_count,
             "max_iterations": max_iterations,
             "batch_size": batch_size,
+        }
+
+        # Pre-warm embedding cache: batch-embed all texts in efficient GPU passes
+        yield {
+            "type": "progress",
+            "step": "precompute",
+            "detail": "Forbereder embeddings (batch GPU)...",
+        }
+
+        from app.nexus.embeddings import nexus_precompute
+        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.platform_bridge import get_platform_tools as _get_pt
+
+        _pt_tools = _get_pt()
+        all_query_texts = [c.question.lower() for c in cases]
+        zone_prefixed_queries = set()
+        for q in all_query_texts:
+            zone_prefixed_queries.add(q)
+            for prefix in ZONE_PREFIXES.values():
+                zone_prefixed_queries.add(f"{prefix}{q}")
+        tool_texts = set()
+        for pt in _pt_tools:
+            if pt.category == "external_model":
+                continue
+            zp = ZONE_PREFIXES.get(pt.zone, "")
+            tool_texts.add(f"{zp}{pt.tool_id} {pt.description}")
+            tool_texts.add(f"{pt.tool_id} {pt.description}")
+
+        precompute_texts = list(zone_prefixed_queries | tool_texts)
+        n_precomputed = nexus_precompute(precompute_texts)
+
+        yield {
+            "type": "progress",
+            "step": "precompute_done",
+            "detail": f"{n_precomputed} embeddings forberaknade (av {len(precompute_texts)})",
         }
 
         from app.agents.new_chat.forge_pool import forge_pool

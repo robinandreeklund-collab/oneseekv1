@@ -148,7 +148,7 @@ class ShadowObserver:
             Dict with ranked_ids, scores, and margin.
         """
         try:
-            from app.nexus.embeddings import nexus_embed_score
+            from app.nexus.embeddings import nexus_batch_score
             from app.nexus.platform_bridge import get_platform_tools
 
             tools = get_platform_tools()
@@ -159,15 +159,19 @@ class ShadowObserver:
             primary_ns, _ = self._get_agent_namespaces(agent_name)
             primary_prefixes = ["/".join(ns) for ns in primary_ns]
 
-            # Score each tool
-            scored: list[tuple[str, float, dict]] = []
             query_lower = query.lower()
             query_tokens = set(query_lower.split())
 
-            for pt in tools:
-                if pt.category == "external_model":
-                    continue
+            # Filter tools and batch-compute embedding scores
+            filtered_tools = [pt for pt in tools if pt.category != "external_model"]
+            tool_texts = [
+                f"{pt.tool_id} {pt.description}" for pt in filtered_tools
+            ]
+            emb_scores = nexus_batch_score(query_lower, tool_texts)
 
+            # Score each tool
+            scored: list[tuple[str, float, dict]] = []
+            for i, pt in enumerate(filtered_tools):
                 score = 0.0
                 ns_str = "/".join(pt.namespace)
 
@@ -188,11 +192,8 @@ class ShadowObserver:
                 if any(tok in query_lower for tok in name_parts if len(tok) > 3):
                     score += 0.15
 
-                # Embedding similarity
-                emb_score = nexus_embed_score(
-                    query_lower,
-                    f"{pt.tool_id} {pt.description}",
-                )
+                # Embedding similarity (from batch computation)
+                emb_score = emb_scores[i] if emb_scores is not None else None
                 if emb_score is not None:
                     score += emb_score * 0.50
 
