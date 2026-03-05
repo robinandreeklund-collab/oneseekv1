@@ -662,6 +662,65 @@ async def approve_loop_run(
     proposal_list = proposals.get("proposals", [])
     approved_count = len(proposal_list)
 
+    # ---- Apply approved metadata changes so next loop picks them up ----
+    applied = 0
+    if proposal_list:
+        from collections import defaultdict
+
+        from app.nexus.platform_bridge import (
+            get_platform_tools,
+            invalidate_cache,
+        )
+        from app.services.tool_metadata_service import (
+            normalize_tool_metadata_payload,
+            upsert_global_tool_metadata_overrides,
+        )
+
+        # Group proposals by tool_id, merging field→proposed_value
+        tool_overrides = defaultdict(dict)
+        for p in proposal_list:
+            tid = p.get("tool_id", "")
+            field_name = p.get("field", "")
+            proposed = p.get("proposed_value", "")
+            if tid and field_name and proposed:
+                tool_overrides[tid][field_name] = proposed
+
+        # Build update tuples with defaults from current tool metadata
+        tools_by_id = {t.id: t for t in get_platform_tools()}
+        updates = []
+        for tid, fields in tool_overrides.items():
+            payload = dict(fields)
+            tool = tools_by_id.get(tid)
+            if tool:
+                defaults = {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "keywords": tool.keywords,
+                    "example_queries": tool.example_queries,
+                    "category": tool.category,
+                    "geographic_scope": tool.geographic_scope,
+                    "excludes": list(tool.excludes),
+                }
+                for k, v in defaults.items():
+                    if k not in payload:
+                        payload[k] = v
+            updates.append((tid, normalize_tool_metadata_payload(payload)))
+
+        if updates:
+            await upsert_global_tool_metadata_overrides(
+                session, updates, updated_by_id=user.id
+            )
+            applied = len(updates)
+
+        # Invalidate caches so NEXUS routing picks up the new metadata
+        invalidate_cache()
+        try:
+            from app.agents.new_chat.bigtool_store import clear_tool_caches
+
+            clear_tool_caches()
+        except (ImportError, AttributeError):
+            pass
+
     run.status = "approved"
     run.approved_proposals = approved_count
     await session.commit()
@@ -670,6 +729,7 @@ async def approve_loop_run(
         "status": "approved",
         "run_id": run_id,
         "approved_proposals": approved_count,
+        "applied_overrides": applied,
     }
 
 
