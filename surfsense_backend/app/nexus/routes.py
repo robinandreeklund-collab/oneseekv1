@@ -662,75 +662,73 @@ async def approve_loop_run(
     proposal_list = proposals.get("proposals", [])
     approved_count = len(proposal_list)
 
-    # ---- Apply approved metadata changes so next loop picks them up ----
+    # ---- Generate & apply actual metadata improvements via optimizer ----
     applied = 0
+    optimizer_error = None
     if proposal_list:
-        from collections import defaultdict
+        # Derive the namespace from proposal tool_ids via platform_bridge
+        from app.nexus.platform_bridge import get_platform_tools
 
-        from app.nexus.platform_bridge import (
-            get_platform_tools,
-            invalidate_cache,
-        )
-        from app.services.tool_metadata_service import (
-            normalize_tool_metadata_payload,
-            upsert_global_tool_metadata_overrides,
-        )
+        tools_by_id = {t.tool_id: t for t in get_platform_tools()}
+        affected_tool_ids = {
+            p.get("tool_id", "") for p in proposal_list if p.get("tool_id")
+        }
 
-        # Group proposals by tool_id, merging field→proposed_value
-        tool_overrides = defaultdict(dict)
-        for p in proposal_list:
-            tid = p.get("tool_id", "")
-            field_name = p.get("field", "")
-            proposed = p.get("proposed_value", "")
-            if tid and field_name and proposed:
-                tool_overrides[tid][field_name] = proposed
-
-        # Build update tuples with defaults from current tool metadata
-        tools_by_id = {t.id: t for t in get_platform_tools()}
-        updates = []
-        for tid, fields in tool_overrides.items():
-            payload = dict(fields)
+        # Find unique namespaces for the affected tools
+        namespaces = set()
+        for tid in affected_tool_ids:
             tool = tools_by_id.get(tid)
-            if tool:
-                defaults = {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "keywords": tool.keywords,
-                    "example_queries": tool.example_queries,
-                    "category": tool.category,
-                    "geographic_scope": tool.geographic_scope,
-                    "excludes": list(tool.excludes),
-                }
-                for k, v in defaults.items():
-                    if k not in payload:
-                        payload[k] = v
-            updates.append((tid, normalize_tool_metadata_payload(payload)))
+            if tool and tool.namespace:
+                # namespace is a tuple like ("tools", "weather", "smhi")
+                # Use top-level namespace prefix: "tools/weather"
+                ns = "/".join(tool.namespace[:2]) if len(tool.namespace) >= 2 else ""
+                if ns:
+                    namespaces.add(ns)
 
-        if updates:
-            await upsert_global_tool_metadata_overrides(
-                session, updates, updated_by_id=user.id
-            )
-            applied = len(updates)
+        # Run optimizer for each affected namespace to get real metadata
+        optimizer = _get_optimizer()
+        for ns in namespaces:
+            try:
+                result = await optimizer.generate_suggestions(
+                    session, namespace=ns
+                )
+                if result.suggestions and not result.error:
+                    suggestions_dicts = [
+                        {
+                            "tool_id": s.tool_id,
+                            **s.suggested,
+                        }
+                        for s in result.suggestions
+                        if s.tool_id in affected_tool_ids
+                    ]
+                    if suggestions_dicts:
+                        apply_result = await optimizer.apply_suggestions(
+                            session,
+                            suggestions_dicts,
+                            user_id=user.id if user else None,
+                        )
+                        applied += apply_result.get("applied", 0)
+            except Exception as exc:
+                import logging
 
-        # Invalidate caches so NEXUS routing picks up the new metadata
-        invalidate_cache()
-        try:
-            from app.agents.new_chat.bigtool_store import clear_tool_caches
-
-            clear_tool_caches()
-        except (ImportError, AttributeError):
-            pass
+                logging.getLogger(__name__).warning(
+                    "Optimizer failed for namespace %s: %s", ns, exc
+                )
+                optimizer_error = str(exc)
 
     run.status = "approved"
     run.approved_proposals = approved_count
     await session.commit()
 
-    return {
+    resp = {
         "status": "approved",
         "run_id": run_id,
         "approved_proposals": approved_count,
         "applied_overrides": applied,
     }
+    if optimizer_error:
+        resp["optimizer_warning"] = optimizer_error
+    return resp
 
 
 # ------------------------------------------------------------------
