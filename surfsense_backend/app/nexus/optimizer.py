@@ -380,9 +380,9 @@ class MetadataOptimizer:
         if api_base:
             kwargs["api_base"] = api_base
 
-        # Add litellm_params
+        # Add litellm_params (but never let global config override our max_tokens)
         for key, value in config.get("litellm_params", {}).items():
-            if key not in ("api_base",):
+            if key not in ("api_base", "max_tokens"):
                 kwargs[key] = value
 
         # Override temperature for more creative suggestions
