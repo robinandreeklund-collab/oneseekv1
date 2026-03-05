@@ -9,6 +9,7 @@ from sqlalchemy import (
     ARRAY,
     JSON,
     TIMESTAMP,
+    BigInteger,
     Boolean,
     Column,
     Enum as SQLAlchemyEnum,
@@ -163,6 +164,7 @@ class ToolLifecycleStatus(str, Enum):
     - REVIEW: New tools, only available for eval testing
     - LIVE: Validated tools, available for production use
     """
+
     REVIEW = "review"
     LIVE = "live"
 
@@ -1202,9 +1204,7 @@ class AgentPromptOverride(BaseModel, TimestampMixin):
     search_space_id = Column(
         Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
     )
-    search_space = relationship(
-        "SearchSpace", back_populates="agent_prompt_overrides"
-    )
+    search_space = relationship("SearchSpace", back_populates="agent_prompt_overrides")
 
     updated_by_id = Column(
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
@@ -1235,9 +1235,7 @@ class AgentPromptOverrideHistory(BaseModel, TimestampMixin):
 class GlobalAgentPromptOverride(BaseModel, TimestampMixin):
     __tablename__ = "agent_prompt_overrides_global"
     __table_args__ = (
-        UniqueConstraint(
-            "key", name="uq_agent_prompt_override_global_key"
-        ),
+        UniqueConstraint("key", name="uq_agent_prompt_override_global_key"),
     )
 
     key = Column(String(120), nullable=False, index=True)
@@ -1265,9 +1263,7 @@ class GlobalAgentPromptOverrideHistory(BaseModel, TimestampMixin):
 class GlobalToolMetadataOverride(BaseModel, TimestampMixin):
     __tablename__ = "tool_metadata_overrides_global"
     __table_args__ = (
-        UniqueConstraint(
-            "tool_id", name="uq_tool_metadata_override_global_tool_id"
-        ),
+        UniqueConstraint("tool_id", name="uq_tool_metadata_override_global_tool_id"),
     )
 
     tool_id = Column(String(160), nullable=False, index=True)
@@ -1302,9 +1298,7 @@ class GlobalToolMetadataOverrideHistory(BaseModel, TimestampMixin):
 class GlobalToolRetrievalTuning(BaseModel, TimestampMixin):
     __tablename__ = "tool_retrieval_tuning_global"
     __table_args__ = (
-        UniqueConstraint(
-            "config_key", name="uq_tool_retrieval_tuning_global_key"
-        ),
+        UniqueConstraint("config_key", name="uq_tool_retrieval_tuning_global_key"),
     )
 
     config_key = Column(String(40), nullable=False, index=True, default="default")
@@ -1362,9 +1356,7 @@ class GlobalRetrievalFeedbackSignal(BaseModel, TimestampMixin):
 class GlobalIntentDefinition(BaseModel, TimestampMixin):
     __tablename__ = "intent_definitions_global"
     __table_args__ = (
-        UniqueConstraint(
-            "intent_id", name="uq_intent_definitions_global_intent_id"
-        ),
+        UniqueConstraint("intent_id", name="uq_intent_definitions_global_intent_id"),
     )
 
     intent_id = Column(String(80), nullable=False, index=True)
@@ -1396,11 +1388,158 @@ class GlobalIntentDefinitionHistory(BaseModel, TimestampMixin):
     updated_by = relationship("User")
 
 
+# ── Intent Layer v2: Domain → Agent → Tool hierarchy ──────────────────
+
+
+class IntentDomain(BaseModel, TimestampMixin):
+    """Domain-level intent definition (e.g. 'väder-och-klimat', 'trafik-och-transport')."""
+
+    __tablename__ = "intent_domains"
+    __table_args__ = (
+        UniqueConstraint("domain_id", name="uq_intent_domains_domain_id"),
+    )
+
+    domain_id = Column(String(80), nullable=False, index=True)
+    definition_payload = Column(JSONB, nullable=False, default=dict)
+    sort_order = Column(Integer, nullable=False, default=500)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class IntentDomainHistory(BaseModel, TimestampMixin):
+    __tablename__ = "intent_domain_history"
+
+    domain_id = Column(String(80), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class DomainAgentDefinition(BaseModel, TimestampMixin):
+    """Agent definition scoped to a domain (e.g. 'smhi' under 'väder-och-klimat')."""
+
+    __tablename__ = "agent_definitions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", name="uq_agent_definitions_agent_id"),
+    )
+
+    agent_id = Column(String(80), nullable=False, index=True)
+    domain_id = Column(
+        String(80),
+        ForeignKey("intent_domains.domain_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    definition_payload = Column(JSONB, nullable=False, default=dict)
+    sort_order = Column(Integer, nullable=False, default=500)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class DomainAgentDefinitionHistory(BaseModel, TimestampMixin):
+    __tablename__ = "agent_definition_history"
+
+    agent_id = Column(String(80), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class AgentToolDefinition(BaseModel, TimestampMixin):
+    """Tool definition scoped to an agent (e.g. 'smhi_forecast_hourly' under 'smhi')."""
+
+    __tablename__ = "tool_definitions"
+    __table_args__ = (UniqueConstraint("tool_id", name="uq_tool_definitions_tool_id"),)
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    agent_id = Column(
+        String(80),
+        ForeignKey("agent_definitions.agent_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    definition_payload = Column(JSONB, nullable=False, default=dict)
+    sort_order = Column(Integer, nullable=False, default=500)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class AgentToolDefinitionHistory(BaseModel, TimestampMixin):
+    __tablename__ = "tool_definition_history"
+
+    tool_id = Column(String(160), nullable=False, index=True)
+    previous_payload = Column(JSONB, nullable=True)
+    new_payload = Column(JSONB, nullable=True)
+
+    updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class RegistryVersion(BaseModel, TimestampMixin):
+    """Monotonically increasing version counter for graph registry invalidation."""
+
+    __tablename__ = "registry_version"
+    __table_args__ = (UniqueConstraint("key", name="uq_registry_version_key"),)
+
+    key = Column(String(40), nullable=False, index=True, default="global")
+    version = Column(BigInteger, nullable=False, default=0)
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
 class GlobalToolEvaluationRun(BaseModel, TimestampMixin):
     __tablename__ = "tool_evaluation_runs_global"
 
     search_space_id = Column(
-        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("searchspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     eval_name = Column(String(160), nullable=True)
     total_tests = Column(Integer, nullable=False, default=0)
@@ -1417,7 +1556,10 @@ class GlobalToolEvaluationStageRun(BaseModel, TimestampMixin):
     __tablename__ = "tool_evaluation_stage_runs_global"
 
     search_space_id = Column(
-        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("searchspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     stage = Column(String(40), nullable=False, index=True)
     eval_name = Column(String(160), nullable=True)
@@ -1440,11 +1582,10 @@ class GlobalToolLifecycleStatus(BaseModel, TimestampMixin):
     Manages lifecycle status for tools across the system.
     Tools start in 'review' status and are promoted to 'live' after validation.
     """
+
     __tablename__ = "global_tool_lifecycle_status"
     __table_args__ = (
-        UniqueConstraint(
-            "tool_id", name="uq_global_tool_lifecycle_status_tool_id"
-        ),
+        UniqueConstraint("tool_id", name="uq_global_tool_lifecycle_status_tool_id"),
     )
 
     tool_id = Column(String(160), nullable=False, index=True, unique=True)
@@ -1454,15 +1595,15 @@ class GlobalToolLifecycleStatus(BaseModel, TimestampMixin):
         default=ToolLifecycleStatus.REVIEW,
         index=True,
     )
-    
+
     # Eval metrics
     success_rate = Column(Float, nullable=True)
     total_tests = Column(Integer, nullable=True)
     last_eval_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    
+
     # Threshold configuration
     required_success_rate = Column(Float, nullable=False, default=0.80)
-    
+
     # Audit trail
     changed_by_id = Column(
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
@@ -1479,13 +1620,16 @@ class GlobalToolLifecycleStatus(BaseModel, TimestampMixin):
 
 class GlobalToolLifecycleAudit(BaseModel, TimestampMixin):
     """v2: Immutable audit trail for lifecycle status changes."""
+
     __tablename__ = "global_tool_lifecycle_audit"
 
     tool_id = Column(String(160), nullable=False, index=True)
     old_status = Column(String(10), nullable=True)  # NULL for first entry
     new_status = Column(String(10), nullable=False)
     success_rate = Column(Float, nullable=True)
-    trigger = Column(String(20), nullable=False)  # manual | eval_sync | rollback | bulk_promote
+    trigger = Column(
+        String(20), nullable=False
+    )  # manual | eval_sync | rollback | bulk_promote
     reason = Column(Text, nullable=True)
     changed_by_id = Column(
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
@@ -1495,9 +1639,7 @@ class GlobalToolLifecycleAudit(BaseModel, TimestampMixin):
 
 class AgentComboCache(BaseModel, TimestampMixin):
     __tablename__ = "agent_combo_cache"
-    __table_args__ = (
-        UniqueConstraint("cache_key", name="uq_agent_combo_cache_key"),
-    )
+    __table_args__ = (UniqueConstraint("cache_key", name="uq_agent_combo_cache_key"),)
 
     cache_key = Column(String(128), nullable=False, index=True)
     route_hint = Column(String(32), nullable=True, index=True)
