@@ -385,8 +385,8 @@ class MetadataOptimizer:
             if key not in ("api_base", "max_tokens"):
                 kwargs[key] = value
 
-        # Override temperature for more creative suggestions
-        kwargs["temperature"] = kwargs.get("temperature", 0.7)
+        # Lower temperature for consistent, well-structured JSON output
+        kwargs["temperature"] = 0.3
 
         logger.info(
             "Optimizer LLM call: model=%s, prompt_len=%d",
