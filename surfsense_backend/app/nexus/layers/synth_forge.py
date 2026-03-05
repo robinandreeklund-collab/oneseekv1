@@ -219,6 +219,9 @@ class SynthForge:
     ) -> ForgeRunResult:
         """Run the full Synth Forge pipeline.
 
+        Uses the shared forge pool to generate test cases for all tools
+        concurrently (bounded by MAX_FORGE_CONCURRENCY, default 12).
+
         Args:
             tools: List of tool metadata dicts.
             llm_call: Async callable(prompt) → str.
@@ -228,17 +231,32 @@ class SynthForge:
         Returns:
             ForgeRunResult with all generated cases.
         """
+        from app.agents.new_chat.forge_pool import forge_pool
+
         run_id = uuid.uuid4()
         result = ForgeRunResult(run_id=run_id)
 
-        for tool in tools:
-            tid = tool.get("tool_id", "")
-            if tool_ids and tid not in tool_ids:
+        # Filter tools
+        filtered = [
+            t for t in tools if not tool_ids or t.get("tool_id", "") in tool_ids
+        ]
+
+        if not filtered:
+            return result
+
+        # Generate cases for all tools concurrently via forge pool
+        all_cases: list[list[GeneratedCase] | BaseException] = await forge_pool.gather(
+            [self.generate_for_tool(tool, llm_call=llm_call) for tool in filtered],
+            label="synth_forge",
+        )
+
+        # Collect and verify
+        for tool_cases in all_cases:
+            if isinstance(tool_cases, BaseException):
+                result.errors.append(str(tool_cases))
                 continue
 
-            cases = await self.generate_for_tool(tool, llm_call=llm_call)
-
-            for case in cases:
+            for case in tool_cases:
                 case.roundtrip_verified = self.verify_roundtrip(case, retrieve_fn)
                 if case.roundtrip_verified:
                     result.total_verified += 1
@@ -250,9 +268,10 @@ class SynthForge:
                 )
 
         logger.info(
-            "Forge run %s: %d generated, %d verified",
+            "Forge run %s: %d generated, %d verified (pool: %s)",
             run_id,
             result.total_generated,
             result.total_verified,
+            forge_pool.stats(),
         )
         return result

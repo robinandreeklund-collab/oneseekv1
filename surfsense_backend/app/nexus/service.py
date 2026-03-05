@@ -338,9 +338,12 @@ class NexusService:
         start_time = time.monotonic()
 
         # Load dynamic agents and hints from DB (admin flow) if available
-        db_agent_by_name, db_agents_by_zone, db_domain_hints, db_category_hints = (
-            await self._load_db_agents(session)
-        )
+        (
+            db_agent_by_name,
+            db_agents_by_zone,
+            db_domain_hints,
+            db_category_hints,
+        ) = await self._load_db_agents(session)
 
         # Step 1: QUL — Intent/Zone resolution (with dynamic hints)
         analysis = self._analyze_query_with_hints(
@@ -603,7 +606,9 @@ class NexusService:
                 for h in report.hubness_alerts[:5]
             ],
             total_tools=report.total_tools,
-            cluster_purity=report.cluster_purity if hasattr(report, "cluster_purity") else None,
+            cluster_purity=report.cluster_purity
+            if hasattr(report, "cluster_purity")
+            else None,
             confusion_risk=(
                 round(len(report.confusion_pairs) / max(report.total_tools, 1), 3)
                 if report.confusion_pairs
@@ -1858,13 +1863,17 @@ class NexusService:
         reranker_delta = None
         try:
             reranker_row = (
-                await session.execute(
-                    select(NexusPipelineMetric)
-                    .where(NexusPipelineMetric.stage_name == "rerank")
-                    .order_by(NexusPipelineMetric.recorded_at.desc())
-                    .limit(1)
+                (
+                    await session.execute(
+                        select(NexusPipelineMetric)
+                        .where(NexusPipelineMetric.stage_name == "rerank")
+                        .order_by(NexusPipelineMetric.recorded_at.desc())
+                        .limit(1)
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if reranker_row and reranker_row.reranker_delta is not None:
                 reranker_delta = round(reranker_row.reranker_delta, 4)
         except Exception:
@@ -1905,7 +1914,9 @@ class NexusService:
             "total_hard_negatives": hn_count,
             "band_distribution": band_dist["distribution"],
             "band_percentages": band_dist["percentages"],
-            "multi_intent_rate": round(multi_intent_rate, 4) if multi_intent_rate is not None else None,
+            "multi_intent_rate": round(multi_intent_rate, 4)
+            if multi_intent_rate is not None
+            else None,
             "schema_match_rate": round(namespace_purity, 4),
             "reranker_delta": reranker_delta,
             "silhouette_global": silhouette_global,
@@ -2059,76 +2070,104 @@ class NexusService:
             correct_at_5 = 0
             reciprocal_ranks: list[float] = []
 
-            # Process in batches
+            # --- Parallel evaluation helper --------------------------------
+            # Each case gets its own DB session to avoid SQLAlchemy
+            # AsyncSession concurrency issues.  The forge pool bounds
+            # overall concurrency (default 12).
+
+            from app.agents.new_chat.forge_pool import forge_pool
+            from app.db import async_session_maker
+
+            async def _eval_one_case(case_obj):
+                """Evaluate a single test case (runs inside forge pool slot)."""
+                async with async_session_maker() as case_session:
+                    decision = await self.route_query(case_obj.question, case_session)
+                    nexus_tool = decision.selected_tool
+                    candidate_ids = [c.tool_id for c in decision.candidates]
+
+                    platform_result = await self.shadow_observer.run_platform_retrieval(
+                        case_obj.question, session=case_session
+                    )
+                    platform_tool = platform_result.get("top1")
+
+                    await case_session.commit()
+
+                return {
+                    "case": case_obj,
+                    "nexus_tool": nexus_tool,
+                    "band": decision.band,
+                    "candidate_ids": candidate_ids,
+                    "platform_tool": platform_tool,
+                    "resolved_zone": decision.resolved_zone or "",
+                    "selected_agent": decision.selected_agent or "",
+                    "confidence": round(decision.calibrated_confidence, 3),
+                }
+
+            # Process in batches — each batch runs concurrently via forge pool
             for batch_start in range(0, len(cases), batch_size):
                 batch = cases[batch_start : batch_start + batch_size]
                 logger.info(
-                    "Auto-loop #%d iter %d: batch %d-%d / %d",
+                    "Auto-loop #%d iter %d: batch %d-%d / %d (concurrency=%d)",
                     loop_number,
                     iteration,
                     batch_start + 1,
                     min(batch_start + len(batch), len(cases)),
                     len(cases),
+                    forge_pool.max_concurrency,
                 )
 
-                for case in batch:
+                # Run all cases in this batch concurrently
+                batch_results = await forge_pool.gather(
+                    [_eval_one_case(c) for c in batch],
+                    label=f"auto_loop_iter{iteration}",
+                )
+
+                for br in batch_results:
                     total_tests += 1
-                    try:
-                        # NEXUS routing
-                        decision = await self.route_query(case.question, session)
-                        nexus_tool = decision.selected_tool
-                        band_counts[min(decision.band, 4)] += 1
 
-                        # Track ranking metrics
-                        candidate_ids = [c.tool_id for c in decision.candidates]
-                        if case.expected_tool:
-                            if nexus_tool == case.expected_tool:
-                                correct_at_1 += 1
-                            if case.expected_tool in candidate_ids[:5]:
-                                correct_at_5 += 1
-                            if case.expected_tool in candidate_ids:
-                                rank = candidate_ids.index(case.expected_tool) + 1
-                                reciprocal_ranks.append(1.0 / rank)
-                            else:
-                                reciprocal_ranks.append(0.0)
-
-                        # Also run through real platform retrieval for comparison
-                        platform_result = (
-                            await self.shadow_observer.run_platform_retrieval(
-                                case.question, session=session
-                            )
-                        )
-                        platform_tool = platform_result.get("top1")
-
-                        if platform_tool:
-                            platform_comparisons += 1
-                            if nexus_tool == platform_tool:
-                                platform_agreements += 1
-
-                        # Check against expected tool
-                        if case.expected_tool and nexus_tool != case.expected_tool:
-                            failures += 1
-                            failed_queries.append(
-                                {
-                                    "query": case.question,
-                                    "expected_tool": case.expected_tool,
-                                    "got_tool": nexus_tool or "(none)",
-                                    "platform_tool": platform_tool or "(none)",
-                                    "case_id": str(case.id),
-                                    # Routing context for UI
-                                    "resolved_zone": decision.resolved_zone or "",
-                                    "selected_agent": decision.selected_agent or "",
-                                    "band": decision.band,
-                                    "confidence": round(decision.calibrated_confidence, 3),
-                                    "difficulty": getattr(case, "difficulty", ""),
-                                }
-                            )
-                    except Exception as e:
+                    if isinstance(br, BaseException):
                         failures += 1
-                        logger.warning("Loop eval error: %s", e)
+                        logger.warning("Loop eval error: %s", br)
+                        continue
 
-                # Commit after each batch so routing events are persisted
-                await session.commit()
+                    case_obj = br["case"]
+                    nexus_tool = br["nexus_tool"]
+                    band_counts[min(br["band"], 4)] += 1
+
+                    candidate_ids = br["candidate_ids"]
+                    if case_obj.expected_tool:
+                        if nexus_tool == case_obj.expected_tool:
+                            correct_at_1 += 1
+                        if case_obj.expected_tool in candidate_ids[:5]:
+                            correct_at_5 += 1
+                        if case_obj.expected_tool in candidate_ids:
+                            rank = candidate_ids.index(case_obj.expected_tool) + 1
+                            reciprocal_ranks.append(1.0 / rank)
+                        else:
+                            reciprocal_ranks.append(0.0)
+
+                    platform_tool = br["platform_tool"]
+                    if platform_tool:
+                        platform_comparisons += 1
+                        if nexus_tool == platform_tool:
+                            platform_agreements += 1
+
+                    if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
+                        failures += 1
+                        failed_queries.append(
+                            {
+                                "query": case_obj.question,
+                                "expected_tool": case_obj.expected_tool,
+                                "got_tool": nexus_tool or "(none)",
+                                "platform_tool": platform_tool or "(none)",
+                                "case_id": str(case_obj.id),
+                                "resolved_zone": br["resolved_zone"],
+                                "selected_agent": br["selected_agent"],
+                                "band": br["band"],
+                                "confidence": br["confidence"],
+                                "difficulty": getattr(case_obj, "difficulty", ""),
+                            }
+                        )
 
             # Per-iteration metrics
             p_at_1 = correct_at_1 / total_tests if total_tests > 0 else 0.0
@@ -2164,32 +2203,37 @@ class NexusService:
             # Cluster failures and create proposals
             clusters = self.auto_loop.cluster_failures(failed_queries)
 
-            # LLM root cause analysis per cluster
+            # LLM root cause analysis per cluster — parallel via forge pool
             root_causes: list[str] = []
             try:
                 from app.nexus.llm import nexus_llm_call
 
-                for cluster in clusters:
-                    if not cluster.sample_queries:
-                        root_causes.append("")
-                        continue
+                async def _root_cause_for_cluster(cluster_obj):
+                    if not cluster_obj.sample_queries:
+                        return ""
                     rc_prompt = (
                         f"Analysera varför dessa frågor routades fel.\n"
-                        f"Förväntade verktyg: {', '.join(cluster.tool_ids)}\n"
+                        f"Förväntade verktyg: {', '.join(cluster_obj.tool_ids)}\n"
                         f"Exempelfrågor:\n"
-                        + "\n".join(f"- {q}" for q in cluster.sample_queries[:3])
+                        + "\n".join(f"- {q}" for q in cluster_obj.sample_queries[:3])
                         + "\n\nSvara med EN mening som förklarar rotorsaken."
                     )
                     try:
-                        root_cause = await nexus_llm_call(rc_prompt)
-                        root_causes.append(root_cause.strip())
+                        result_text = await nexus_llm_call(rc_prompt)
+                        return result_text.strip()
                     except Exception as e:
                         logger.warning(
                             "LLM root cause failed for cluster %d: %s",
-                            cluster.cluster_id,
+                            cluster_obj.cluster_id,
                             e,
                         )
-                        root_causes.append("")
+                        return ""
+
+                rc_results = await forge_pool.gather(
+                    [_root_cause_for_cluster(c) for c in clusters],
+                    label="root_cause",
+                )
+                root_causes = [r if isinstance(r, str) else "" for r in rc_results]
             except ImportError:
                 logger.warning("LLM not available for root cause analysis")
 
@@ -2295,11 +2339,56 @@ class NexusService:
                 else None
             )
             metric_stages = [
-                (1, "intent", final_p_at_1, final_p_at_5, final_mrr, final_mrr, None, None),
-                (2, "route", final_p_at_1, final_p_at_5, final_mrr, final_mrr, None, None),
-                (3, "bigtool", final_p_at_5, final_p_at_5, final_mrr, final_mrr, hn_precision, None),
-                (4, "rerank", final_p_at_1, final_p_at_5, final_mrr, final_mrr, hn_precision, reranker_delta),
-                (5, "e2e", final_p_at_1, final_p_at_5, final_mrr, final_mrr, None, None),
+                (
+                    1,
+                    "intent",
+                    final_p_at_1,
+                    final_p_at_5,
+                    final_mrr,
+                    final_mrr,
+                    None,
+                    None,
+                ),
+                (
+                    2,
+                    "route",
+                    final_p_at_1,
+                    final_p_at_5,
+                    final_mrr,
+                    final_mrr,
+                    None,
+                    None,
+                ),
+                (
+                    3,
+                    "bigtool",
+                    final_p_at_5,
+                    final_p_at_5,
+                    final_mrr,
+                    final_mrr,
+                    hn_precision,
+                    None,
+                ),
+                (
+                    4,
+                    "rerank",
+                    final_p_at_1,
+                    final_p_at_5,
+                    final_mrr,
+                    final_mrr,
+                    hn_precision,
+                    reranker_delta,
+                ),
+                (
+                    5,
+                    "e2e",
+                    final_p_at_1,
+                    final_p_at_5,
+                    final_mrr,
+                    final_mrr,
+                    None,
+                    None,
+                ),
             ]
             for stage, name, p1, p5, mrr_val, ndcg, hn_p, delta in metric_stages:
                 metric = NexusPipelineMetric(
@@ -2324,30 +2413,36 @@ class NexusService:
         for p in cumulative_proposals:
             # Find failed queries related to this proposal's tool
             related_queries = [
-                fq for fq in cumulative_failed_queries
-                if fq.get("expected_tool") == p.tool_id or fq.get("got_tool") == p.tool_id
+                fq
+                for fq in cumulative_failed_queries
+                if fq.get("expected_tool") == p.tool_id
+                or fq.get("got_tool") == p.tool_id
             ]
-            enriched_proposals.append({
-                "tool_id": p.tool_id,
-                "field": p.field_name,
-                "reason": p.reason,
-                "current_value": p.current_value or "",
-                "proposed_value": p.proposed_value or "",
-                "embedding_delta": round(p.embedding_delta, 4) if p.embedding_delta else 0.0,
-                "failed_queries": [
-                    {
-                        "query": fq.get("query", ""),
-                        "expected_tool": fq.get("expected_tool", ""),
-                        "got_tool": fq.get("got_tool", ""),
-                        "resolved_zone": fq.get("resolved_zone", ""),
-                        "selected_agent": fq.get("selected_agent", ""),
-                        "band": fq.get("band", -1),
-                        "confidence": fq.get("confidence", 0.0),
-                        "difficulty": fq.get("difficulty", ""),
-                    }
-                    for fq in related_queries[:10]  # Cap at 10 queries per proposal
-                ],
-            })
+            enriched_proposals.append(
+                {
+                    "tool_id": p.tool_id,
+                    "field": p.field_name,
+                    "reason": p.reason,
+                    "current_value": p.current_value or "",
+                    "proposed_value": p.proposed_value or "",
+                    "embedding_delta": round(p.embedding_delta, 4)
+                    if p.embedding_delta
+                    else 0.0,
+                    "failed_queries": [
+                        {
+                            "query": fq.get("query", ""),
+                            "expected_tool": fq.get("expected_tool", ""),
+                            "got_tool": fq.get("got_tool", ""),
+                            "resolved_zone": fq.get("resolved_zone", ""),
+                            "selected_agent": fq.get("selected_agent", ""),
+                            "band": fq.get("band", -1),
+                            "confidence": fq.get("confidence", 0.0),
+                            "difficulty": fq.get("difficulty", ""),
+                        }
+                        for fq in related_queries[:10]  # Cap at 10 queries per proposal
+                    ],
+                }
+            )
 
         db_run.metadata_proposals = {
             "proposals": enriched_proposals,
