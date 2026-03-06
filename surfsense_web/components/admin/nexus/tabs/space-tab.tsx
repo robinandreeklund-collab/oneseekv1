@@ -114,12 +114,34 @@ function UMAPCanvas({
 }: {
 	points: Array<{ tool_id: string; x: number; y: number; zone: string; cluster: number }>;
 }) {
+	// Dynamic zone colors — 17 domains + legacy zones
 	const ZONE_COLORS: Record<string, string> = {
+		// Legacy zones
 		kunskap: "#3b82f6",
 		skapande: "#f59e0b",
 		konversation: "#10b981",
 		"jämförelse": "#8b5cf6",
+		// Domain zones
+		"väder-och-klimat": "#0ea5e9",
+		"trafik-och-transport": "#f97316",
+		"ekonomi-och-skatter": "#eab308",
+		arbetsmarknad: "#14b8a6",
+		"befolkning-och-demografi": "#6366f1",
+		utbildning: "#a855f7",
+		"näringsliv-och-bolag": "#ec4899",
+		"fastighet-och-mark": "#84cc16",
+		"energi-och-miljö": "#22c55e",
+		"handel-och-marknad": "#ef4444",
+		"politik-och-beslut": "#d946ef",
+		"hälsa-och-vård": "#f43f5e",
+		"rättsväsende": "#64748b",
 	};
+
+	// Only show zones that actually appear in data
+	const usedZones = new Set(points.map((p) => p.zone));
+	const activeZoneColors = Object.fromEntries(
+		Object.entries(ZONE_COLORS).filter(([zone]) => usedZones.has(zone)),
+	);
 
 	// Normalize coordinates to 0-1
 	const xs = points.map((p) => p.x);
@@ -152,11 +174,11 @@ function UMAPCanvas({
 				);
 			})}
 			{/* Legend */}
-			<div className="absolute bottom-2 right-2 flex gap-3 text-xs bg-background/80 rounded px-2 py-1">
-				{Object.entries(ZONE_COLORS).map(([zone, color]) => (
+			<div className="absolute bottom-2 right-2 flex flex-wrap gap-2 text-xs bg-background/80 rounded px-2 py-1 max-w-[60%]">
+				{Object.entries(activeZoneColors).map(([zone, color]) => (
 					<span key={zone} className="flex items-center gap-1">
 						<span
-							className="w-2 h-2 rounded-full inline-block"
+							className="w-2 h-2 rounded-full inline-block flex-shrink-0"
 							style={{ backgroundColor: color }}
 						/>
 						{zone}

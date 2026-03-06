@@ -246,6 +246,47 @@ def normalize_intent_definition_payload(
 
 
 def get_default_intent_definitions() -> dict[str, dict[str, Any]]:
+    """Return default intent definitions — uses the 17-domain seed data.
+
+    Falls back to the old 4-intent _DEFAULT_INTENT_DEFINITIONS only if
+    seed data is unavailable.
+    """
+    try:
+        from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS
+
+        if DEFAULT_INTENT_DOMAINS:
+            result: dict[str, dict[str, Any]] = {}
+            for domain in DEFAULT_INTENT_DOMAINS:
+                domain_id = domain.get("domain_id", "")
+                if not domain_id:
+                    continue
+                fallback_route = domain.get("fallback_route", Route.KUNSKAP.value)
+                # Validate fallback_route against known Route values
+                if fallback_route not in _ROUTE_VALUES:
+                    fallback_route = _COMPAT_ROUTE_MAP.get(fallback_route) or Route.KUNSKAP.value
+                payload = {
+                    "intent_id": domain_id,
+                    "route": fallback_route,
+                    "label": domain.get("label", domain_id),
+                    "description": domain.get("description", ""),
+                    "keywords": domain.get("keywords", []),
+                    "priority": domain.get("priority", 500),
+                    "enabled": domain.get("enabled", True),
+                    "main_identifier": domain.get("main_identifier", ""),
+                    "core_activity": domain.get("core_activity", ""),
+                    "unique_scope": domain.get("unique_scope", ""),
+                    "geographic_scope": domain.get("geographic_scope", ""),
+                    "excludes": domain.get("excludes", []),
+                }
+                result[domain_id] = normalize_intent_definition_payload(
+                    payload, intent_id=domain_id
+                )
+            if result:
+                return result
+    except Exception:
+        pass
+
+    # Final fallback: old 4-intent system
     return {
         intent_id: normalize_intent_definition_payload(payload, intent_id=intent_id)
         for intent_id, payload in _DEFAULT_INTENT_DEFINITIONS.items()

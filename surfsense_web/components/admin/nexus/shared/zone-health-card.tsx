@@ -16,17 +16,45 @@ import {
 } from "@/lib/apis/nexus-api.service";
 
 const ZONE_LABELS: Record<string, string> = {
-	kunskap: "Kunskap",
-	skapande: "Skapande",
+	// Legacy zones
+	kunskap: "Allmän kunskap",
+	skapande: "Skapande & Produktion",
 	konversation: "Konversation",
-	"jämförelse": "Jämförelse",
+	"jämförelse": "Jämförelse & Analys",
+	// Domain zones
+	"väder-och-klimat": "Väder & Klimat",
+	"trafik-och-transport": "Trafik & Transport",
+	"ekonomi-och-skatter": "Ekonomi & Skatter",
+	arbetsmarknad: "Arbetsmarknad",
+	"befolkning-och-demografi": "Befolkning & Demografi",
+	utbildning: "Utbildning",
+	"näringsliv-och-bolag": "Näringsliv & Bolag",
+	"fastighet-och-mark": "Fastighet & Mark",
+	"energi-och-miljö": "Energi & Miljö",
+	"handel-och-marknad": "Handel & Marknad",
+	"politik-och-beslut": "Politik & Beslut",
+	"hälsa-och-vård": "Hälsa & Vård",
+	"rättsväsende": "Rättsväsende",
 };
 
 const ZONE_DESCRIPTIONS: Record<string, string> = {
-	kunskap: "SMHI, SCB, Trafikverket, Riksdagen, sök, webb, dokument, marketplace",
+	kunskap: "Dokumentsökning, kunskapsbas, webbsökning",
 	skapande: "Sandbox, podcast, bildgenerering, kartor, kod",
-	konversation: "Småprat, hälsningar, konversation",
+	konversation: "Småprat, hälsningar",
 	"jämförelse": "Multi-modell jämförelser",
+	"väder-och-klimat": "SMHI prognoser, temperatur, nederbörd, vind",
+	"trafik-och-transport": "Trafikverket realtid, störningar, resplanering",
+	"ekonomi-och-skatter": "SCB statistik, Kolada kommundata",
+	arbetsmarknad: "Arbetsförmedlingen, jobb, lönestatistik",
+	"befolkning-och-demografi": "SCB befolkningsdata, kommuner",
+	utbildning: "Skolverket, läroplaner, betyg",
+	"näringsliv-och-bolag": "Bolagsverket, företagsregister",
+	"fastighet-och-mark": "Lantmäteriet, bostadsmarknad",
+	"energi-och-miljö": "Elpriser, miljödata, klimatmål",
+	"handel-och-marknad": "Blocket, Tradera, marknadsplatser",
+	"politik-och-beslut": "Riksdagen, propositioner, voteringar",
+	"hälsa-och-vård": "Socialstyrelsen, sjukvård",
+	"rättsväsende": "Domstolar, BRÅ, brottsstatistik",
 };
 
 function MetricBar({
@@ -102,11 +130,11 @@ export function ZoneHealthCard() {
 			<CardHeader>
 				<CardTitle>Zonhälsa</CardTitle>
 				<CardDescription>
-					Embedding-zoner med hälsometriker — 4 zoner styr precision routing
+					Embedding-zoner med hälsometriker — {zones.length} domänzoner styr precision routing
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
-				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 					{zones.map((zone) => (
 						<div
 							key={zone.zone}

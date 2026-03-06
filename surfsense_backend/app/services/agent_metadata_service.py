@@ -39,7 +39,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "action"],
         "prompt_key": "action",
-        "routes": ["kunskap"],
+        "routes": ["skapande"],
         "flow_tools": [
             {"tool_id": "search_knowledge_base", "label": "Kunskapsbas"},
             {"tool_id": "link_preview", "label": "Länk Förhandsgranskning"},
@@ -74,7 +74,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "weather"],
         "prompt_key": "action",
-        "routes": ["kunskap"],
+        "routes": ["väder-och-klimat"],
         "flow_tools": [
             {"tool_id": "smhi_weather", "label": "SMHI Prognos"},
             {"tool_id": "smhi_vaderprognoser_metfcst", "label": "SMHI MetFcst"},
@@ -163,7 +163,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "statistics"],
         "prompt_key": "statistics",
-        "routes": ["kunskap", "jämförelse"],
+        "routes": ["ekonomi-och-skatter"],
         "flow_tools": [
             {"tool_id": "scb_befolkning", "label": "SCB Befolkning"},
             {"tool_id": "scb_arbetsmarknad", "label": "SCB Arbetsmarknad"},
@@ -218,7 +218,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "knowledge"],
         "prompt_key": "knowledge",
-        "routes": ["kunskap", "jämförelse"],
+        "routes": ["kunskap"],
         "flow_tools": [
             {"tool_id": "search_surfsense_docs", "label": "SurfSense Docs"},
             {"tool_id": "save_memory", "label": "Spara Minne"},
@@ -314,7 +314,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "bolag"],
         "prompt_key": "bolag",
-        "routes": ["kunskap"],
+        "routes": ["näringsliv-och-bolag"],
         "flow_tools": [
             {"tool_id": "bolagsverket_info_basic", "label": "Företagsinfo"},
             {"tool_id": "bolagsverket_info_status", "label": "Företagsstatus"},
@@ -348,7 +348,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "trafik"],
         "prompt_key": "trafik",
-        "routes": ["kunskap"],
+        "routes": ["trafik-och-transport"],
         "flow_tools": [
             {"tool_id": "trafikverket_situation", "label": "Trafikläge"},
             {"tool_id": "trafikverket_road_condition", "label": "Väglag"},
@@ -396,7 +396,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "riksdagen"],
         "prompt_key": "riksdagen",
-        "routes": ["kunskap"],
+        "routes": ["politik-och-beslut"],
         "flow_tools": [
             {"tool_id": "riksdagen_dokument_sok", "label": "Dokument Sök"},
             {"tool_id": "riksdagen_votering", "label": "Voteringar"},
@@ -446,7 +446,7 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         ],
         "namespace": ["agents", "marketplace"],
         "prompt_key": "agent.marketplace.system",
-        "routes": ["kunskap"],
+        "routes": ["handel-och-marknad"],
         "flow_tools": [
             {"tool_id": "marketplace_unified_search", "label": "Unified Search"},
             {"tool_id": "marketplace_blocket_search", "label": "Blocket Sök"},
