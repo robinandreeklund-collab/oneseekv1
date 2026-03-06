@@ -4456,7 +4456,7 @@ async def update_tool_settings_metadata_catalog(
         clear_tool_caches()
         if agent_update_rows:
             try:
-                from app.agents.new_chat.supervisor_agent import clear_agent_combo_cache
+                from app.agents.new_chat.supervisor_cache import clear_agent_combo_cache
 
                 clear_agent_combo_cache()
             except Exception:
@@ -4552,7 +4552,7 @@ async def reset_metadata_catalog(
         await session.commit()
         clear_tool_caches()
         try:
-            from app.agents.new_chat.supervisor_agent import clear_agent_combo_cache
+            from app.agents.new_chat.supervisor_cache import clear_agent_combo_cache
 
             clear_agent_combo_cache()
         except Exception:
