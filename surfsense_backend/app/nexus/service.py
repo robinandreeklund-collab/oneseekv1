@@ -698,6 +698,7 @@ class NexusService:
                         "x": snap.umap_x,
                         "y": snap.umap_y,
                         "zone": _zone_from_namespace_str(snap.namespace),
+                        "namespace": snap.namespace,
                         "cluster": snap.cluster_label,
                     }
                 )
@@ -733,6 +734,7 @@ class NexusService:
                     "x": cx + random.uniform(-0.8, 0.8),
                     "y": cy + random.uniform(-0.8, 0.8),
                     "zone": pt.zone,
+                    "namespace": "/".join(pt.namespace) if isinstance(pt.namespace, (list, tuple)) else pt.namespace,
                     "cluster": cluster,
                 }
             )
@@ -809,6 +811,24 @@ class NexusService:
 
         # Build tool metadata from REAL platform tool registry
         platform_tools = get_platform_tools()
+
+        # Build namespace → agent lookup for expected_agent on test cases
+        from app.nexus.config import NEXUS_AGENTS
+
+        _ns_to_agent: dict[str, str] = {}
+        for ag in NEXUS_AGENTS:
+            for ns_prefix in ag.primary_namespaces:
+                _ns_to_agent[ns_prefix] = ag.name
+
+        def _find_agent_for_tool(pt_obj) -> str | None:
+            ns_str = "/".join(pt_obj.namespace[:2])
+            if ns_str in _ns_to_agent:
+                return _ns_to_agent[ns_str]
+            # Try single segment
+            if pt_obj.namespace and pt_obj.namespace[0] in _ns_to_agent:
+                return _ns_to_agent[pt_obj.namespace[0]]
+            return None
+
         tools: list[dict] = []
         for pt in platform_tools:
             # Always exclude external model tools — they are for compare mode
@@ -833,6 +853,8 @@ class NexusService:
                     "keywords": pt.keywords,
                     "excludes": pt.excludes,
                     "geographic_scope": pt.geographic_scope,
+                    "zone": pt.zone,
+                    "agent": _find_agent_for_tool(pt),
                 }
             )
 
@@ -882,6 +904,8 @@ class NexusService:
                 question=case.question,
                 difficulty=case.difficulty,
                 expected_tool=case.expected_tool,
+                expected_intent=case.expected_intent,
+                expected_agent=case.expected_agent,
                 roundtrip_verified=case.roundtrip_verified,
                 quality_score=case.quality_score,
                 generation_run_id=result.run_id,
@@ -2285,6 +2309,11 @@ class NexusService:
             nexus_only_correct = 0
             llm_only_correct = 0
             both_wrong = 0
+            # 3-level accuracy: intent, agent, tool
+            intent_correct = 0
+            intent_total = 0
+            agent_correct = 0
+            agent_total = 0
 
             # --- Parallel evaluation helper --------------------------------
             # Each case gets its own DB session to avoid SQLAlchemy
@@ -2373,6 +2402,18 @@ class NexusService:
                     case_obj = br["case"]
                     nexus_tool = br["nexus_tool"]
                     band_counts[min(br["band"], 4)] += 1
+
+                    # 3-level accuracy: intent and agent
+                    exp_intent = getattr(case_obj, "expected_intent", None)
+                    exp_agent = getattr(case_obj, "expected_agent", None)
+                    if exp_intent:
+                        intent_total += 1
+                        if br["resolved_zone"] == exp_intent:
+                            intent_correct += 1
+                    if exp_agent:
+                        agent_total += 1
+                        if br["selected_agent"] == exp_agent:
+                            agent_correct += 1
 
                     candidate_ids = br["candidate_ids"]
                     if case_obj.expected_tool:
@@ -2510,6 +2551,16 @@ class NexusService:
                 "nexus_only_correct": nexus_only_correct,
                 "llm_only_correct": llm_only_correct,
                 "both_wrong": both_wrong,
+                "intent_correct": intent_correct,
+                "intent_total": intent_total,
+                "intent_accuracy": (
+                    round(intent_correct / intent_total, 3) if intent_total > 0 else None
+                ),
+                "agent_correct": agent_correct,
+                "agent_total": agent_total,
+                "agent_accuracy": (
+                    round(agent_correct / agent_total, 3) if agent_total > 0 else None
+                ),
             }
             all_iteration_results.append(iter_result)
 
@@ -3143,6 +3194,11 @@ class NexusService:
             nexus_only_correct = 0
             llm_only_correct = 0
             both_wrong = 0
+            # 3-level accuracy: intent, agent, tool
+            intent_correct = 0
+            intent_total = 0
+            agent_correct = 0
+            agent_total = 0
 
             num_batches = (len(cases) + batch_size - 1) // batch_size
             for batch_idx, batch_start in enumerate(
@@ -3307,6 +3363,16 @@ class NexusService:
                 "nexus_only_correct": nexus_only_correct,
                 "llm_only_correct": llm_only_correct,
                 "both_wrong": both_wrong,
+                "intent_correct": intent_correct,
+                "intent_total": intent_total,
+                "intent_accuracy": (
+                    round(intent_correct / intent_total, 3) if intent_total > 0 else None
+                ),
+                "agent_correct": agent_correct,
+                "agent_total": agent_total,
+                "agent_accuracy": (
+                    round(agent_correct / agent_total, 3) if agent_total > 0 else None
+                ),
             }
             all_iteration_results.append(iter_result)
 
@@ -3315,7 +3381,9 @@ class NexusService:
                 "step": "eval_done",
                 "detail": (
                     f"Iteration {iteration} klar — {failures}/{total_tests} fel, "
-                    f"P@1={p_at_1:.1%}, LLM-agree={((llm_judge_agreement_rate or 0) * 100):.0f}%"
+                    f"P@1={p_at_1:.1%}"
+                    + (f", Intent={intent_correct}/{intent_total}" if intent_total > 0 else "")
+                    + (f", Agent={agent_correct}/{agent_total}" if agent_total > 0 else "")
                 ),
                 "iteration": iteration,
                 "total_iterations": max_iterations,
@@ -3323,6 +3391,12 @@ class NexusService:
                 "total_tests": total_tests,
                 "precision_at_1": round(p_at_1, 3),
                 "mrr": round(mrr, 3),
+                "intent_accuracy": (
+                    round(intent_correct / intent_total, 3) if intent_total > 0 else None
+                ),
+                "agent_accuracy": (
+                    round(agent_correct / agent_total, 3) if agent_total > 0 else None
+                ),
             }
 
             # Emit LLM judge summary event per iteration

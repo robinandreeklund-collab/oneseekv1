@@ -613,6 +613,16 @@ export function LoopTab() {
 										P@1: {(liveProgress.precision_at_1 * 100).toFixed(1)}%
 									</span>
 								)}
+								{liveProgress.intent_accuracy != null && (
+									<span>
+										Intent: {(liveProgress.intent_accuracy * 100).toFixed(1)}%
+									</span>
+								)}
+								{liveProgress.agent_accuracy != null && (
+									<span>
+										Agent: {(liveProgress.agent_accuracy * 100).toFixed(1)}%
+									</span>
+								)}
 								{liveProgress.llm_judge_agreement_rate != null && (
 									<span>
 										LLM-agree: {Math.round(liveProgress.llm_judge_agreement_rate * 100)}%
@@ -1072,6 +1082,16 @@ export function LoopTab() {
 																							<span>
 																								MRR: {(iter.mrr * 100).toFixed(1)}%
 																							</span>
+																							{iter.intent_accuracy != null && (
+																								<span className="text-indigo-600">
+																									Intent: {(iter.intent_accuracy * 100).toFixed(1)}%
+																								</span>
+																							)}
+																							{iter.agent_accuracy != null && (
+																								<span className="text-violet-600">
+																									Agent: {(iter.agent_accuracy * 100).toFixed(1)}%
+																								</span>
+																							)}
 																							{iter.llm_judge_agreement_rate != null && (
 																								<span>
 																									LLM-agree: {Math.round(iter.llm_judge_agreement_rate * 100)}%

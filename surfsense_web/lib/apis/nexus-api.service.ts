@@ -153,6 +153,7 @@ export interface SpaceSnapshotPoint {
 	x: number;
 	y: number;
 	zone: string;
+	namespace?: string;
 	cluster: number;
 }
 
@@ -383,6 +384,8 @@ export interface LoopIterationDetail {
 	llm_judge_agreement_rate?: number | null;
 	llm_judge_accuracy?: number | null;
 	llm_judge_disagreements?: LlmJudgeDisagreement[];
+	intent_accuracy?: number | null;
+	agent_accuracy?: number | null;
 }
 
 export interface LlmJudgeDisagreement {
@@ -490,6 +493,8 @@ export interface LoopStreamEvent {
 	llm_judge_agreement_rate?: number | null;
 	llm_judge_accuracy?: number | null;
 	llm_judge_disagreements?: LlmJudgeDisagreement[];
+	intent_accuracy?: number | null;
+	agent_accuracy?: number | null;
 }
 
 // ---------------------------------------------------------------------------

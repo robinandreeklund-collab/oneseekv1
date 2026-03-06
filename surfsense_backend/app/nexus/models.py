@@ -47,6 +47,8 @@ class NexusSyntheticCase(Base):
     question = Column(Text, nullable=False)
     difficulty = Column(String(20), nullable=False, index=True)
     expected_tool = Column(Text, nullable=True)
+    expected_intent = Column(Text, nullable=True)
+    expected_agent = Column(Text, nullable=True)
     expected_not_tools = Column(ARRAY(Text), nullable=True)
     generation_model = Column(Text, nullable=True)
     generation_run_id = Column(UUID(as_uuid=True), nullable=True)

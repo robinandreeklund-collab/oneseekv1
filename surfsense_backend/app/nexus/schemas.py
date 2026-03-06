@@ -175,7 +175,7 @@ class SpaceHealthReport(BaseModel):
 
 class SpaceSnapshot(BaseModel):
     snapshot_at: datetime
-    points: list[dict] = Field(default_factory=list)  # {tool_id, x, y, zone, cluster}
+    points: list[dict] = Field(default_factory=list)  # {tool_id, x, y, zone, namespace, cluster}
 
 
 # ---------------------------------------------------------------------------
