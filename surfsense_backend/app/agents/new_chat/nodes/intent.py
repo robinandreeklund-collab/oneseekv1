@@ -63,7 +63,9 @@ def _embed_text_cached(text: str) -> list[float] | None:
     try:
         from app.config import config
 
-        embedded = _normalize_vector(config.embedding_model_instance.embed(normalized_text))
+        embedded = _normalize_vector(
+            config.embedding_model_instance.embed(normalized_text)
+        )
     except Exception:
         embedded = None
     if embedded is not None:
@@ -134,7 +136,9 @@ def build_intent_resolver_node(
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     coerce_confidence_fn: Callable[[Any, float], float],
     classify_graph_complexity_fn: Callable[[dict[str, Any], str], str],
-    build_speculative_candidates_fn: Callable[[dict[str, Any], str], list[dict[str, Any]]],
+    build_speculative_candidates_fn: Callable[
+        [dict[str, Any], str], list[dict[str, Any]]
+    ],
     build_trivial_response_fn: Callable[[str], str | None],
     route_default_agent_fn: Callable[..., str],
     coerce_resolved_intent_fn: Callable[
@@ -142,6 +146,7 @@ def build_intent_resolver_node(
     ]
     | None = None,
     live_routing_config: dict[str, Any] | None = None,
+    registry_candidates: list[dict[str, Any]] | None = None,
 ):
     def _latest_human_turn_id(messages: list[Any] | None) -> str:
         human_count = 0
@@ -150,7 +155,9 @@ def build_intent_resolver_node(
             if isinstance(message, HumanMessage):
                 human_count += 1
                 latest_human = message
-            elif isinstance(message, dict) and str(message.get("type") or "").strip().lower() in {
+            elif isinstance(message, dict) and str(
+                message.get("type") or ""
+            ).strip().lower() in {
                 "human",
                 "user",
             }:
@@ -246,10 +253,25 @@ def build_intent_resolver_node(
 
         route_hint = normalize_route_hint_fn(state.get("route_hint"))
         candidates: list[dict[str, Any]] = []
-        for route_name, intent_id in route_to_intent_id.items():
-            candidates.append({"intent_id": intent_id, "route": route_name})
+        if registry_candidates:
+            # Domain-based candidates from GraphRegistry (richer metadata)
+            for rc in registry_candidates:
+                candidates.append(
+                    {
+                        "intent_id": str(rc.get("intent_id") or "").strip(),
+                        "route": str(rc.get("route") or "").strip(),
+                        "description": str(rc.get("description") or "").strip(),
+                        "keywords": list(rc.get("keywords") or []),
+                        "label": str(rc.get("label") or "").strip(),
+                    }
+                )
+        else:
+            for route_name, intent_id in route_to_intent_id.items():
+                candidates.append({"intent_id": intent_id, "route": route_name})
         if route_hint:
-            candidates.sort(key=lambda item: 0 if item.get("route") == route_hint else 1)
+            candidates.sort(
+                key=lambda item: 0 if item.get("route") == route_hint else 1
+            )
         live_cfg = dict(live_routing_config or {})
         live_enabled = bool(live_cfg.get("enabled", False))
         phase_index = int(live_cfg.get("phase_index") or 0)
@@ -359,9 +381,11 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
-        graph_complexity = str(
-            classify_graph_complexity_fn(resolved, latest_user_query)
-        ).strip().lower()
+        graph_complexity = (
+            str(classify_graph_complexity_fn(resolved, latest_user_query))
+            .strip()
+            .lower()
+        )
         if graph_complexity not in {"trivial", "simple", "complex"}:
             graph_complexity = "complex"
         speculative_candidates = build_speculative_candidates_fn(
@@ -398,12 +422,12 @@ def build_intent_resolver_node(
         )
 
         sub_intents: list[str] = []
-        raw_sub_intents = resolved.get("sub_intents") if isinstance(resolved, dict) else None
+        raw_sub_intents = (
+            resolved.get("sub_intents") if isinstance(resolved, dict) else None
+        )
         if isinstance(raw_sub_intents, list):
             sub_intents = [
-                str(item).strip()
-                for item in raw_sub_intents
-                if str(item).strip()
+                str(item).strip() for item in raw_sub_intents if str(item).strip()
             ]
 
         updates: dict[str, Any] = {
