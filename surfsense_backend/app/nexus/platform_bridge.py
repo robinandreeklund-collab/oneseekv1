@@ -56,7 +56,13 @@ def _build_platform_intents() -> tuple[str, ...]:
 
         return tuple(d["domain_id"] for d in DEFAULT_INTENT_DOMAINS if d.get("domain_id"))
     except Exception:
-        return ("kunskap", "skapande", "jämförelse", "konversation")
+        # Fallback: load all domain IDs from get_all_zone_prefixes
+        try:
+            from app.nexus.config import get_all_zone_prefixes
+
+            return tuple(get_all_zone_prefixes().keys())
+        except Exception:
+            return ("kunskap", "skapande", "jämförelse", "konversation")
 
 
 PLATFORM_INTENTS = _build_platform_intents()
@@ -95,7 +101,8 @@ def _zone_from_namespace(ns: tuple[str, ...]) -> str:
         prefix = f"{ns[0]}/{ns[1]}"
         if prefix in _NAMESPACE_TO_ZONE:
             return _NAMESPACE_TO_ZONE[prefix]
-    return "kunskap"
+    # Fallback: first available domain zone
+    return PLATFORM_INTENTS[0] if PLATFORM_INTENTS else "kunskap"
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +217,7 @@ def _load_from_registry() -> list[PlatformTool]:
                 description=f"Anropa extern AI-modell: {tid.replace('call_', '')}",
                 category="external_model",
                 namespace=ns,
-                zone="jämförelse",
+                zone=_zone_from_namespace(ns),
                 keywords=TOOL_KEYWORDS.get(tid, []),
             )
         )

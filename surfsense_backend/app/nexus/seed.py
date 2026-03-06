@@ -349,12 +349,9 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
     counts["routing_events"] = n_events
 
     # 4. Space snapshots — ALL real tools (not just a sample)
-    zone_centers = {
-        "kunskap": (-1.0, 1.5),
-        "skapande": (2.0, -1.0),
-        "jämförelse": (3.0, 2.0),
-        "konversation": (-3.0, -2.0),
-    }
+    from app.nexus.service import _all_zone_centers
+
+    zone_centers = _all_zone_centers()
     # Exclude external_model tools from space snapshots
     snapshot_tools = [t for t in tool_catalog if t.get("category") != "external_model"]
     for tool in snapshot_tools:
