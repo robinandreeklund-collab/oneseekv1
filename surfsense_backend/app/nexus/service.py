@@ -370,7 +370,7 @@ class NexusService:
             candidates=[
                 AgentCandidateResponse(
                     name=c.agent.name,
-                    zone=c.agent.zone.value,
+                    zone=c.agent.zone,
                     score=round(c.score, 3),
                     matched_keywords=c.matched_keywords,
                 )
