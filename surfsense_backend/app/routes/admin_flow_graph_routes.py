@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.routing import domain_to_route
 from app.db import SearchSpaceMembership, User, get_async_session
 from app.services.agent_definition_service import (
     delete_agent as delete_agent_def,
@@ -943,7 +942,8 @@ async def get_flow_graph(
         if not domain_id:
             continue
         intent_ids.add(domain_id)
-        route = domain_to_route(domain_id)
+        # Each domain IS its own route in the new system.
+        # fallback_route is kept for backward compat with the 4-route enum.
         intent_nodes.append(
             {
                 "id": f"intent:{domain_id}",
@@ -951,7 +951,7 @@ async def get_flow_graph(
                 "intent_id": domain_id,
                 "label": domain.get("label", domain_id),
                 "description": domain.get("description", ""),
-                "route": route.value,
+                "route": domain_id,
                 "keywords": domain.get("keywords", []),
                 "priority": domain.get("priority", 500),
                 "enabled": domain.get("enabled", True),
@@ -1177,14 +1177,29 @@ async def delete_agent(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Delete an agent definition from the registry."""
+    """Delete an agent definition from the registry.
+
+    If the agent is a seed default, insert a disabled override.
+    """
     await _require_admin(session, user)
     deleted = await delete_agent_def(
         session, request.agent_id, updated_by_id=str(user.id)
     )
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail=f"Agent '{request.agent_id}' not found"
+        # Seed default — disable it via an override row
+        from app.seeds.agent_definitions import get_default_agent_definitions
+
+        defaults = get_default_agent_definitions()
+        if request.agent_id not in defaults:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent '{request.agent_id}' not found",
+            )
+        await upsert_agent_def(
+            session,
+            request.agent_id,
+            {"enabled": False},
+            updated_by_id=str(user.id),
         )
     await _bump_and_invalidate(session)
     return {"status": "ok"}
@@ -1275,14 +1290,30 @@ async def delete_intent(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Delete an intent (domain) from the registry."""
+    """Delete an intent (domain) from the registry.
+
+    If the domain is a seed default (not in DB yet), we insert a
+    disabled override so it won't appear in the effective list.
+    """
     await _require_admin(session, user)
     deleted = await delete_intent_domain(
         session, request.intent_id, updated_by_id=str(user.id)
     )
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail=f"Intent '{request.intent_id}' not found"
+        # Seed default — not in DB table. Insert a disabled override.
+        from app.seeds.intent_domains import get_default_intent_domains
+
+        defaults = get_default_intent_domains()
+        if request.intent_id not in defaults:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Intent '{request.intent_id}' not found",
+            )
+        await upsert_intent_domain(
+            session,
+            request.intent_id,
+            {"enabled": False},
+            updated_by_id=str(user.id),
         )
     await _bump_and_invalidate(session)
     return {"status": "ok"}
