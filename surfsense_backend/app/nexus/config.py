@@ -250,6 +250,10 @@ def build_hints_from_metadata(
     Each agent's domain_id (from ``routes``) is used directly as the zone
     key, preserving fine-grained domain separation.
 
+    IMPORTANT: Starts with seed domain keywords as the base, then merges
+    agent-level keywords on top. This ensures domains without dedicated
+    agents still have their seed keywords for QUL matching.
+
     Args:
         agent_metadata_list: List of agent metadata dicts from
             agent_metadata_service.get_effective_agent_metadata().
@@ -259,7 +263,8 @@ def build_hints_from_metadata(
         - domain_hints: domain_id → list of keywords
         - category_hints: agent_name → list of keywords
     """
-    domain_hints: dict[str, list[str]] = {}
+    # Start with seed domain keywords as the base
+    domain_hints: dict[str, list[str]] = dict(DOMAIN_HINTS)
     category_hints: dict[str, list[str]] = {}
 
     for meta in agent_metadata_list:
@@ -281,7 +286,7 @@ def build_hints_from_metadata(
         routes = meta.get("routes", [])
         zone_name = routes[0] if routes else Zone.KUNSKAP.value
 
-        # Add keywords to the domain's hints
+        # Add keywords to the domain's hints (merge with seed base)
         if zone_name not in domain_hints:
             domain_hints[zone_name] = []
         for kw in kw_list:

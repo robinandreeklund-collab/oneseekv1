@@ -363,13 +363,14 @@ class QueryUnderstandingLayer:
 
         zones: list[str] = [h for h in domain_hints if h in valid_zones]
 
-        # Location entities boost kunskap zone (government/statistics data)
-        if entities.locations and Zone.KUNSKAP.value not in zones:
-            zones.append(Zone.KUNSKAP.value)
-
-        # If no hints at all, return broad search
+        # If no hints at all, return the first few available domain zones
+        # (NOT hardcoded to old legacy zones)
         if not zones:
-            zones = [Zone.KUNSKAP.value, Zone.SKAPANDE.value]
+            all_domain_keys = list(
+                (domain_hints_map or DOMAIN_HINTS).keys()
+            )
+            # Use first domain as general fallback
+            zones = all_domain_keys[:1] if all_domain_keys else [Zone.KUNSKAP.value]
 
         return zones
 

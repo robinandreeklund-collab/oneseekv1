@@ -152,6 +152,8 @@ class NexusService:
         if not self.deploy_control.is_loaded:
             await self._ensure_deploy_state_loaded(session)
 
+        # Ensure zones are auto-seeded before counting
+        await self.get_zones(session)
         zones_count = (
             await session.scalar(select(func.count()).select_from(NexusZoneConfig)) or 0
         )
