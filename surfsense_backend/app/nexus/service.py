@@ -1158,7 +1158,7 @@ class NexusService:
         Uses nexus_batch_score to embed the query once and score all tools
         via vectorized cosine similarity in a single operation.
         """
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
         from app.nexus.embeddings import nexus_batch_score
         from app.nexus.platform_bridge import get_platform_tools
 
@@ -1166,23 +1166,31 @@ class NexusService:
         if not tools:
             return []
 
+        all_prefixes = get_all_zone_prefixes()
         query_lower = analysis.normalized_query.lower()
         query_tokens = set(query_lower.split())
         zone_candidates = set(analysis.zone_candidates)
         domain_hints = set(analysis.domain_hints)
 
         # Build zone-prefixed query for embedding (vision: prefix trick)
+        # Use all_prefixes so new domains (e.g. trafik-och-transport) get prefixed too
         zone_hint = analysis.zone_candidates[0] if analysis.zone_candidates else None
         prefixed_query = query_lower
-        if zone_hint and zone_hint in ZONE_PREFIXES:
-            prefixed_query = f"{ZONE_PREFIXES[zone_hint]}{query_lower}"
+        if zone_hint and zone_hint in all_prefixes:
+            prefixed_query = f"{all_prefixes[zone_hint]}{query_lower}"
 
         # Filter tools and build tool texts for batch scoring
+        # Include keywords and example queries for better intra-category
+        # discrimination (e.g. störningar vs olyckor vs köer)
         filtered_tools = [pt for pt in tools if pt.category != "external_model"]
         tool_texts = []
         for pt in filtered_tools:
-            zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-            tool_texts.append(f"{zone_prefix}{pt.tool_id} {pt.description}")
+            zone_prefix = all_prefixes.get(pt.zone, "")
+            kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+            ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
+            tool_texts.append(
+                f"{zone_prefix}{pt.tool_id} {pt.description} {kw_text} {ex_text}"
+            )
 
         # Batch score: embed query once, all tool texts in one pass,
         # vectorized cosine similarity
@@ -1200,11 +1208,23 @@ class NexusService:
             if pt.zone in zone_candidates:
                 score += 0.05
 
-            # BONUS: Keyword overlap (+0.03 per hit, max +0.09)
+            # BONUS: Keyword overlap (+0.05 per exact hit, max +0.15)
+            # Strong enough to discriminate between similar tools in same category
+            # (e.g. störningar vs olyckor vs köer within trafikverket_trafikinfo)
             tool_keywords = {k.lower() for k in pt.keywords}
             keyword_hits = query_tokens & tool_keywords
             if keyword_hits:
-                score += min(0.09, len(keyword_hits) * 0.03)
+                score += min(0.15, len(keyword_hits) * 0.05)
+
+            # BONUS: Substring keyword match for Swedish compound words (+0.04 per hit, max +0.12)
+            # Handles cases like "signalproblem" matching keyword "signal",
+            # "trafikstockning" matching "stockning", "vägavstängningar" matching "avstängning"
+            substring_hits = 0
+            for kw in tool_keywords - keyword_hits:  # skip already-matched
+                if len(kw) >= 4 and kw in query_lower:
+                    substring_hits += 1
+            if substring_hits:
+                score += min(0.12, substring_hits * 0.04)
 
             # BONUS: Domain hint match (+0.10)
             if pt.category in domain_hints:
@@ -2064,8 +2084,8 @@ class NexusService:
 
         # Pre-warm embedding cache: batch-embed all query texts + tool texts
         # in efficient GPU passes BEFORE the eval loop starts.
-        from app.nexus.embeddings import nexus_precompute
         from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.embeddings import nexus_precompute
         from app.nexus.platform_bridge import get_platform_tools
 
         all_query_texts = [c.question.lower() for c in cases]
@@ -2617,8 +2637,8 @@ class NexusService:
             "detail": "Forbereder embeddings (batch GPU)...",
         }
 
-        from app.nexus.embeddings import nexus_precompute
         from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.embeddings import nexus_precompute
         from app.nexus.platform_bridge import get_platform_tools as _get_pt
 
         _pt_tools = _get_pt()
