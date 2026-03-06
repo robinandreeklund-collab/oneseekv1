@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -13,12 +16,28 @@ from app.config import config, initialize_llm_router
 from app.db import User, create_db_and_tables, get_async_session
 from app.routes import router as crud_router
 from app.schemas import UserCreate, UserRead, UserUpdate
+from app.services.graph_holder import GraphHolder
+from app.services.graph_registry_service import RegistryCache
+from app.services.registry_events import listen_registry_changes
 from app.tasks.surfsense_docs_indexer import seed_surfsense_docs
 from app.users import SECRET, auth_backend, current_active_user, fastapi_users
+
+_logger = logging.getLogger(__name__)
+
+# Background task handle for PG LISTEN
+_registry_listener_task: asyncio.Task | None = None
+
+
+async def _on_registry_changed(version: int) -> None:
+    """Callback invoked by PG LISTEN when registry version bumps."""
+    _logger.info("Registry change detected (version=%d) — invalidating caches", version)
+    await RegistryCache.invalidate()
+    await GraphHolder.invalidate()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _registry_listener_task
     # Not needed if you setup a migration system like Alembic
     await create_db_and_tables()
     # Setup LangGraph checkpointer tables for conversation persistence
@@ -27,9 +46,32 @@ async def lifespan(app: FastAPI):
     initialize_llm_router()
     # Seed Surfsense documentation
     await seed_surfsense_docs()
+    # Start PG LISTEN for registry invalidation (best-effort)
+    _registry_listener_task = _start_registry_listener()
     yield
+    # Cleanup: cancel registry listener
+    if _registry_listener_task is not None:
+        _registry_listener_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _registry_listener_task
     # Cleanup: close checkpointer connection on shutdown
     await close_checkpointer()
+
+
+def _start_registry_listener() -> asyncio.Task | None:
+    """Start the PG LISTEN background task if DATABASE_URL is configured."""
+    dsn = getattr(config, "DATABASE_URL", None)
+    if not dsn:
+        _logger.info("DATABASE_URL not set — skipping registry listener")
+        return None
+    # Convert SQLAlchemy async DSN to raw asyncpg format
+    raw_dsn = str(dsn)
+    if raw_dsn.startswith("postgresql+asyncpg://"):
+        raw_dsn = raw_dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return asyncio.create_task(
+        listen_registry_changes(raw_dsn, _on_registry_changed),
+        name="registry-listener",
+    )
 
 
 def registration_allowed():

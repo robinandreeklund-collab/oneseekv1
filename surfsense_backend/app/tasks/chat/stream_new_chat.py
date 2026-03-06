@@ -152,9 +152,9 @@ def _extract_debate_query(user_query: str) -> str:
     trimmed = user_query.strip()
     q_lower = trimmed.lower()
     if q_lower.startswith(DVOICE_PREFIX):
-        remainder = trimmed[len(DVOICE_PREFIX):].strip()
+        remainder = trimmed[len(DVOICE_PREFIX) :].strip()
     elif q_lower.startswith(DEBATE_PREFIX):
-        remainder = trimmed[len(DEBATE_PREFIX):].strip()
+        remainder = trimmed[len(DEBATE_PREFIX) :].strip()
     else:
         return ""
     if remainder.startswith(":"):
@@ -513,10 +513,20 @@ def _format_tool_input_items(
                 return [_summarize_text(text, max_value_len)]
         return []
 
-    skip_keys = frozenset({
-        "source_content", "content", "text", "body", "markdown",
-        "html", "raw", "data", "payload", "context",
-    })
+    skip_keys = frozenset(
+        {
+            "source_content",
+            "content",
+            "text",
+            "body",
+            "markdown",
+            "html",
+            "raw",
+            "data",
+            "payload",
+            "context",
+        }
+    )
     items: list[str] = []
     for key, value in tool_input.items():
         if len(items) >= max_items:
@@ -525,8 +535,8 @@ def _format_tool_input_items(
                 items.append(f"(+{remaining} fler parametrar)")
             break
         if key.lower() in skip_keys and isinstance(value, str) and len(value) > 200:
-                items.append(f"{key}: ({len(value):,} tecken)")
-                continue
+            items.append(f"{key}: ({len(value):,} tecken)")
+            continue
         if value is None or value == "":
             continue
         if isinstance(value, (dict, list)):
@@ -926,38 +936,40 @@ def _is_compare_silent_chain(chain_name: str) -> bool:
 # the actual graph node and the model call.  When walking parent_ids to find
 # the graph node that owns a model, these must be skipped so the real node
 # name (e.g. "planner") is found instead of a meaningless wrapper.
-_GENERIC_CHAIN_NAMES: frozenset[str] = frozenset({
-    "runnablesequence",
-    "runnablelambda",
-    "runnableparallel",
-    "runnablebranch",
-    "runnablewithfallbacks",
-    "runnablepassthrough",
-    "chatmodel",
-    "chatlitellm",
-    "basechatmodel",
-    "llm",
-    "chatprompttemplate",
-    "prompttemplate",
-    "chain",
-    # Infrastructure/gate nodes that don't own model calls and should be
-    # skipped when walking the parent chain to find the real pipeline node.
-    "memory_context",
-    "planner_hitl_gate",
-    "execution_hitl_gate",
-    "synthesis_hitl",
-    "post_tools",
-    "artifact_indexer",
-    "context_compactor",
-    "orchestration_guard",
-    "tools",
-    # LangGraph model wrapper names (the acall_model / call_model functions
-    # used by executor show up as chain names — skip them).
-    "call_model",
-    "acall_model",
-    "callmodel",
-    "acallmodel",
-})
+_GENERIC_CHAIN_NAMES: frozenset[str] = frozenset(
+    {
+        "runnablesequence",
+        "runnablelambda",
+        "runnableparallel",
+        "runnablebranch",
+        "runnablewithfallbacks",
+        "runnablepassthrough",
+        "chatmodel",
+        "chatlitellm",
+        "basechatmodel",
+        "llm",
+        "chatprompttemplate",
+        "prompttemplate",
+        "chain",
+        # Infrastructure/gate nodes that don't own model calls and should be
+        # skipped when walking the parent chain to find the real pipeline node.
+        "memory_context",
+        "planner_hitl_gate",
+        "execution_hitl_gate",
+        "synthesis_hitl",
+        "post_tools",
+        "artifact_indexer",
+        "context_compactor",
+        "orchestration_guard",
+        "tools",
+        # LangGraph model wrapper names (the acall_model / call_model functions
+        # used by executor show up as chain names — skip them).
+        "call_model",
+        "acall_model",
+        "callmodel",
+        "acallmodel",
+    }
+)
 
 # Regex to strip <think>…</think> blocks and bare tags from pipeline text
 # so that reasoning content doesn't leak into visible step items.
@@ -2144,6 +2156,7 @@ async def stream_new_chat(
         # P1: THINK_ON_TOOL_CALLS — when False, executor nodes skip <think>
         # instructions in their system prompt. Env var or runtime flag.
         import os as _os
+
         think_on_tool_calls = _coerce_runtime_flag(
             runtime_flags.get("think_on_tool_calls")
             or _os.environ.get("THINK_ON_TOOL_CALLS"),
@@ -2321,6 +2334,15 @@ async def stream_new_chat(
                 f"sandbox_state_store={sandbox_state_store}, "
                 f"sandbox_idle_timeout_seconds={sandbox_idle_timeout_seconds}"
             )
+            # Load GraphRegistry for domain-based routing (best-effort)
+            _graph_registry = None
+            try:
+                from app.services.graph_registry_service import RegistryCache
+
+                _graph_registry = await RegistryCache.get(session)
+            except Exception:
+                pass
+
             agent = await build_complete_graph(
                 llm=llm,
                 dependencies={
@@ -2336,6 +2358,7 @@ async def stream_new_chat(
                     "trace_parent_span_id": (
                         trace_recorder.root_span_id if trace_recorder else None
                     ),
+                    "graph_registry": _graph_registry,
                 },
                 checkpointer=checkpointer,
                 knowledge_prompt=knowledge_worker_prompt,
@@ -2403,7 +2426,9 @@ async def stream_new_chat(
                 if isinstance(response, AIMessage):
                     raw_content = str(response.content or "")
                 else:
-                    raw_content = str(getattr(response, "content", "") or response or "")
+                    raw_content = str(
+                        getattr(response, "content", "") or response or ""
+                    )
                 # Smalltalk must never expose <think> reasoning to the user.
                 cleaned = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
                 cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned).strip()
@@ -2551,6 +2576,7 @@ async def stream_new_chat(
         if voice_debate_mode:
             try:
                 from app.routes.admin_debate_routes import load_debate_voice_settings
+
                 _voice_settings = load_debate_voice_settings()
                 if _voice_settings:
                     input_state["debate_voice_settings"] = _voice_settings
@@ -2744,9 +2770,7 @@ async def stream_new_chat(
                     if reason:
                         items.append(f"Planmotiv: {reason[:180]}")
                 elif kind == "critic":
-                    title = format_step_title(
-                        "Granskar resultat och nästa steg"
-                    )
+                    title = format_step_title("Granskar resultat och nästa steg")
                     decision = str(payload.get("decision") or "").strip()
                     if not decision:
                         decision = str(payload.get("status") or "").strip()
@@ -2787,9 +2811,7 @@ async def stream_new_chat(
                     title = format_step_title("Väljer presentationsläge")
                     chosen = str(payload.get("chosen_layer") or "").strip()
                     reason = str(payload.get("reason") or "").strip()
-                    data_chars = str(
-                        payload.get("data_characteristics") or ""
-                    ).strip()
+                    data_chars = str(payload.get("data_characteristics") or "").strip()
                     layer_labels = {
                         "kunskap": "Kunskap",
                         "analys": "Analys",
@@ -2797,9 +2819,7 @@ async def stream_new_chat(
                         "visualisering": "Visualisering",
                     }
                     if chosen:
-                        items.append(
-                            f"Valt läge: {layer_labels.get(chosen, chosen)}"
-                        )
+                        items.append(f"Valt läge: {layer_labels.get(chosen, chosen)}")
                     if data_chars:
                         items.append(f"Data: {data_chars[:180]}")
                     if reason:
@@ -3062,7 +3082,9 @@ async def stream_new_chat(
                 # model_response_ready: card appears immediately (before
                 # criterion evaluation), so the frontend can show the
                 # model card with a spinner while scores stream in.
-                if custom_name == "model_response_ready" and isinstance(custom_data, dict):
+                if custom_name == "model_response_ready" and isinstance(
+                    custom_data, dict
+                ):
                     yield streaming_service.format_data(
                         "model-response-ready", custom_data
                     )
@@ -3072,7 +3094,9 @@ async def stream_new_chat(
                         streamed_tool_call_ids.add(_tc_id)
                     continue
                 # criterion_evaluation_started: frontend shows "Utvärderar..."
-                if custom_name == "criterion_evaluation_started" and isinstance(custom_data, dict):
+                if custom_name == "criterion_evaluation_started" and isinstance(
+                    custom_data, dict
+                ):
                     yield streaming_service.format_data(
                         "criterion-evaluation-started", custom_data
                     )
@@ -3094,7 +3118,9 @@ async def stream_new_chat(
                         if _tc_id:
                             streamed_tool_call_ids.add(_tc_id)
                     continue
-                if custom_name == "criterion_complete" and isinstance(custom_data, dict):
+                if custom_name == "criterion_complete" and isinstance(
+                    custom_data, dict
+                ):
                     _crit_key = f"{custom_data.get('domain', '')}:{custom_data.get('criterion', '')}"
                     if _crit_key not in streamed_criterion_keys:
                         streamed_criterion_keys.add(_crit_key)
@@ -3107,52 +3133,98 @@ async def stream_new_chat(
                 if custom_name == "debate_init" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-init", custom_data)
                     continue
-                if custom_name == "debate_round_start" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-round-start", custom_data)
+                if custom_name == "debate_round_start" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-round-start", custom_data
+                    )
                     continue
-                if custom_name == "debate_participant_start" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-participant-start", custom_data)
+                if custom_name == "debate_participant_start" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-participant-start", custom_data
+                    )
                     continue
-                if custom_name == "debate_participant_chunk" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-participant-chunk", custom_data)
+                if custom_name == "debate_participant_chunk" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-participant-chunk", custom_data
+                    )
                     continue
-                if custom_name == "debate_participant_text" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-participant-text", custom_data)
+                if custom_name == "debate_participant_text" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-participant-text", custom_data
+                    )
                     continue
-                if custom_name == "debate_participant_end" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-participant-end", custom_data)
+                if custom_name == "debate_participant_end" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-participant-end", custom_data
+                    )
                     continue
                 if custom_name == "debate_round_end" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-round-end", custom_data)
                     continue
-                if custom_name == "debate_vote_result" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-vote-result", custom_data)
+                if custom_name == "debate_vote_result" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-vote-result", custom_data
+                    )
                     continue
                 if custom_name == "debate_results" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-results", custom_data)
                     continue
-                if custom_name == "debate_synthesis_complete" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-synthesis-complete", custom_data)
+                if custom_name == "debate_synthesis_complete" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-synthesis-complete", custom_data
+                    )
                     continue
                 if custom_name == "debate_summary" and isinstance(custom_data, dict):
                     yield streaming_service.format_data("debate-summary", custom_data)
                     continue
 
                 # ─── Voice debate SSE events ──────────────────────
-                if custom_name == "debate_voice_speaker" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-voice-speaker", custom_data)
+                if custom_name == "debate_voice_speaker" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-voice-speaker", custom_data
+                    )
                     continue
-                if custom_name == "debate_voice_sentence" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-voice-sentence", custom_data)
+                if custom_name == "debate_voice_sentence" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-voice-sentence", custom_data
+                    )
                     continue
-                if custom_name == "debate_voice_chunk" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-voice-chunk", custom_data)
+                if custom_name == "debate_voice_chunk" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-voice-chunk", custom_data
+                    )
                     continue
                 if custom_name == "debate_voice_done" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-voice-done", custom_data)
+                    yield streaming_service.format_data(
+                        "debate-voice-done", custom_data
+                    )
                     continue
-                if custom_name == "debate_voice_error" and isinstance(custom_data, dict):
-                    yield streaming_service.format_data("debate-voice-error", custom_data)
+                if custom_name == "debate_voice_error" and isinstance(
+                    custom_data, dict
+                ):
+                    yield streaming_service.format_data(
+                        "debate-voice-error", custom_data
+                    )
                     continue
 
             if event_type == "on_chain_start" and run_id:
@@ -3186,7 +3258,9 @@ async def stream_new_chat(
                     if not immediate_parent:
                         immediate_parent = cname
                     # If this ancestor is a known pipeline node, use it
-                    if _is_internal_pipeline_chain_name(cname) or _is_any_pipeline_chain_name(cname):
+                    if _is_internal_pipeline_chain_name(
+                        cname
+                    ) or _is_any_pipeline_chain_name(cname):
                         pipeline_parent = cname
                         break
 
@@ -3292,12 +3366,9 @@ async def stream_new_chat(
                         # Force text mode for output nodes that produce final
                         # user-facing text (response_layer, compare_synthesizer).
                         _force_text = (
-                            (
-                                "response_layer" in pcn_lower
-                                and "response_layer_router" not in pcn_lower
-                            )
-                            or "compare_synthesizer" in pcn_lower
-                        )
+                            "response_layer" in pcn_lower
+                            and "response_layer_router" not in pcn_lower
+                        ) or "compare_synthesizer" in pcn_lower
                         if _force_text:
                             _think_filter._in_think = False
                 else:
@@ -3306,7 +3377,9 @@ async def stream_new_chat(
                     # visible response.  Only output pipeline nodes
                     # (synthesizer, response_layer) should emit text-delta.
                     _is_silent = _is_compare_silent_chain(parent_chain_name)
-                    model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                    model_parent_chain_by_run_id[run_id] = (
+                        parent_chain_name or "__unclassified__"
+                    )
                     internal_model_buffers.setdefault(run_id, "")
                     # Compare-silent nodes: absorb content but don't create
                     # think filters / parsers so nothing reaches the think-box.
@@ -3317,7 +3390,11 @@ async def stream_new_chat(
                             internal_node_think_filters[run_id] = _ThinkStreamFilter(
                                 assume_think=_think_filter._assume_think,
                             )
-                    if not _is_silent and not _structured_mode and _think_filter._assume_think:
+                    if (
+                        not _is_silent
+                        and not _structured_mode
+                        and _think_filter._assume_think
+                    ):
                         flush_r, flush_t = _think_filter.reset_think_mode()
                         if flush_r or flush_t:
                             if active_reasoning_id is None:
@@ -3386,10 +3463,13 @@ async def stream_new_chat(
                         # (only if not already emitted via on_custom_event)
                         _criterion_events = (
                             chain_output.get("criterion_events")
-                            if isinstance(chain_output, dict) else None
+                            if isinstance(chain_output, dict)
+                            else None
                         ) or []
                         for ce in _criterion_events:
-                            _crit_key = f"{ce.get('domain', '')}:{ce.get('criterion', '')}"
+                            _crit_key = (
+                                f"{ce.get('domain', '')}:{ce.get('criterion', '')}"
+                            )
                             if _crit_key not in streamed_criterion_keys:
                                 streamed_criterion_keys.add(_crit_key)
                                 yield streaming_service.format_data(
@@ -3400,11 +3480,15 @@ async def stream_new_chat(
                         # (only if not already emitted via on_custom_event)
                         _model_events = (
                             chain_output.get("model_complete_events")
-                            if isinstance(chain_output, dict) else None
+                            if isinstance(chain_output, dict)
+                            else None
                         ) or []
                         for me in _model_events:
                             _mc_domain = str(me.get("domain", ""))
-                            if _mc_domain and _mc_domain not in streamed_model_complete_domains:
+                            if (
+                                _mc_domain
+                                and _mc_domain not in streamed_model_complete_domains
+                            ):
                                 streamed_model_complete_domains.add(_mc_domain)
                                 yield streaming_service.format_data(
                                     "model-complete", me
@@ -3433,12 +3517,13 @@ async def stream_new_chat(
                         # to overwrite fallback_assistant_text — which leaked
                         # their text as the visible response when response_layer
                         # didn't produce streaming text-delta.
-                        _is_output_for_fallback = (
-                            _is_any_pipeline_chain_name(chain_name)
-                            and not _is_internal_pipeline_chain_name(chain_name)
-                        )
+                        _is_output_for_fallback = _is_any_pipeline_chain_name(
+                            chain_name
+                        ) and not _is_internal_pipeline_chain_name(chain_name)
                         if _is_output_for_fallback:
-                            cleaned_candidate = _clean_assistant_output_text(candidate_text)
+                            cleaned_candidate = _clean_assistant_output_text(
+                                candidate_text
+                            )
                             if cleaned_candidate:
                                 fallback_assistant_text = cleaned_candidate
                 elif event_type == "on_chain_error":
@@ -3479,22 +3564,27 @@ async def stream_new_chat(
                         # If the primary handler already classified this model,
                         # don't overwrite.  Otherwise, treat as internal unless
                         # it's an explicit output pipeline node.
-                        is_output = (
-                            _is_any_pipeline_chain_name(parent_chain_name)
-                            and not _is_internal_pipeline_chain_name(parent_chain_name)
-                        )
+                        is_output = _is_any_pipeline_chain_name(
+                            parent_chain_name
+                        ) and not _is_internal_pipeline_chain_name(parent_chain_name)
                         if not is_output:
-                            model_parent_chain_by_run_id[run_id] = parent_chain_name or "__unclassified__"
+                            model_parent_chain_by_run_id[run_id] = (
+                                parent_chain_name or "__unclassified__"
+                            )
                             internal_model_buffers.setdefault(run_id, "")
                             # Compare-silent chains: absorb content but don't
                             # create parsers/filters (same as primary handler).
                             _silent_trace = _is_compare_silent_chain(parent_chain_name)
                             if not _silent_trace:
                                 if _structured_mode:
-                                    _structured_parsers.setdefault(run_id, IncrementalSchemaParser())
+                                    _structured_parsers.setdefault(
+                                        run_id, IncrementalSchemaParser()
+                                    )
                                 else:
-                                    internal_node_think_filters[run_id] = _ThinkStreamFilter(
-                                        assume_think=_think_filter._assume_think,
+                                    internal_node_think_filters[run_id] = (
+                                        _ThinkStreamFilter(
+                                            assume_think=_think_filter._assume_think,
+                                        )
                                     )
                     model_input = (
                         model_data.get("input")
@@ -3557,25 +3647,44 @@ async def stream_new_chat(
                         # If no thinking was ever extracted (model didn't
                         # output structured JSON), fall back to the raw
                         # buffer so reasoning isn't silently lost.
-                        if not flush_reasoning and already_streamed == 0 and internal_buffer:
+                        if (
+                            not flush_reasoning
+                            and already_streamed == 0
+                            and internal_buffer
+                        ):
                             clean = internal_buffer.strip()
                             clean = clean.replace("<think>", "").replace("</think>", "")
                             clean, _ = _strip_inline_critic_payloads(clean)
                             flush_reasoning = clean.strip()
                     if flush_reasoning:
                         # Inject node header if this is a new pipeline node
-                        if internal_chain_name and internal_chain_name != last_reasoning_pipeline_node:
+                        if (
+                            internal_chain_name
+                            and internal_chain_name != last_reasoning_pipeline_node
+                        ):
                             last_reasoning_pipeline_node = internal_chain_name
                             node_title = _pipeline_node_title(internal_chain_name)
                             header = f"\n--- {node_title} ---\n"
                             if active_reasoning_id is None:
-                                active_reasoning_id = streaming_service.generate_reasoning_id()
-                                yield streaming_service.format_reasoning_start(active_reasoning_id)
-                            yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
+                            yield streaming_service.format_reasoning_delta(
+                                active_reasoning_id, header
+                            )
                         if active_reasoning_id is None:
-                            active_reasoning_id = streaming_service.generate_reasoning_id()
-                            yield streaming_service.format_reasoning_start(active_reasoning_id)
-                        yield streaming_service.format_reasoning_delta(active_reasoning_id, flush_reasoning)
+                            active_reasoning_id = (
+                                streaming_service.generate_reasoning_id()
+                            )
+                            yield streaming_service.format_reasoning_start(
+                                active_reasoning_id
+                            )
+                        yield streaming_service.format_reasoning_delta(
+                            active_reasoning_id, flush_reasoning
+                        )
 
                     # P1-Extra.4: Emit structured-field + data-thinking-persist
                     # events when a structured parser finalized successfully.
@@ -3594,8 +3703,12 @@ async def stream_new_chat(
                                     )
                                 # Emit structured-field for key decision fields
                                 _STRUCTURED_FIELD_KEYS = {
-                                    "route", "intent_id", "confidence",
-                                    "decision", "reason", "chosen_layer",
+                                    "route",
+                                    "intent_id",
+                                    "confidence",
+                                    "decision",
+                                    "reason",
+                                    "chosen_layer",
                                     "selected_agents",
                                 }
                                 for _sf_key, _sf_val in _final_obj.items():
@@ -3606,14 +3719,18 @@ async def stream_new_chat(
                         except (json.JSONDecodeError, ValueError):
                             pass
 
-                    if internal_chain_name and not _is_compare_silent_chain(internal_chain_name):
+                    if internal_chain_name and not _is_compare_silent_chain(
+                        internal_chain_name
+                    ):
                         internal_text = internal_buffer or candidate_text
                         for step_event in emit_pipeline_steps_from_text(
                             internal_text,
                             source_chain=internal_chain_name,
                         ):
                             yield step_event
-                    elif candidate_text and not _is_compare_silent_chain(internal_chain_name):
+                    elif candidate_text and not _is_compare_silent_chain(
+                        internal_chain_name
+                    ):
                         for step_event in emit_pipeline_steps_from_text(candidate_text):
                             yield step_event
                         # Do NOT store as fallback text — this came from an
@@ -3639,12 +3756,22 @@ async def stream_new_chat(
                                 node_title = _pipeline_node_title(parent_chain)
                                 header = f"\n--- {node_title} ---\n"
                                 if active_reasoning_id is None:
-                                    active_reasoning_id = streaming_service.generate_reasoning_id()
-                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
-                                yield streaming_service.format_reasoning_delta(active_reasoning_id, header)
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
+                                    )
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
+                                    )
+                                yield streaming_service.format_reasoning_delta(
+                                    active_reasoning_id, header
+                                )
                             if active_reasoning_id is None:
-                                active_reasoning_id = streaming_service.generate_reasoning_id()
-                                yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                active_reasoning_id = (
+                                    streaming_service.generate_reasoning_id()
+                                )
+                                yield streaming_service.format_reasoning_start(
+                                    active_reasoning_id
+                                )
                             yield streaming_service.format_reasoning_delta(
                                 active_reasoning_id, native_reasoning
                             )
@@ -3689,7 +3816,9 @@ async def stream_new_chat(
                             if run_id not in _structured_parsers:
                                 node_filter = internal_node_think_filters.get(run_id)
                                 if node_filter:
-                                    node_reasoning, _node_text = node_filter.feed(content)
+                                    node_reasoning, _node_text = node_filter.feed(
+                                        content
+                                    )
                             if node_reasoning:
                                 parent_chain = model_parent_chain_by_run_id.get(
                                     run_id, ""
@@ -3700,14 +3829,22 @@ async def stream_new_chat(
                                     node_title = _pipeline_node_title(parent_chain)
                                     header = f"\n--- {node_title} ---\n"
                                     if active_reasoning_id is None:
-                                        active_reasoning_id = streaming_service.generate_reasoning_id()
-                                        yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                        active_reasoning_id = (
+                                            streaming_service.generate_reasoning_id()
+                                        )
+                                        yield streaming_service.format_reasoning_start(
+                                            active_reasoning_id
+                                        )
                                     yield streaming_service.format_reasoning_delta(
                                         active_reasoning_id, header
                                     )
                                 if active_reasoning_id is None:
-                                    active_reasoning_id = streaming_service.generate_reasoning_id()
-                                    yield streaming_service.format_reasoning_start(active_reasoning_id)
+                                    active_reasoning_id = (
+                                        streaming_service.generate_reasoning_id()
+                                    )
+                                    yield streaming_service.format_reasoning_start(
+                                        active_reasoning_id
+                                    )
                                 yield streaming_service.format_reasoning_delta(
                                     active_reasoning_id, node_reasoning
                                 )
@@ -3889,9 +4026,7 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title(
-                        "Söker i kunskapsbasen"
-                    )
+                    last_active_step_title = format_step_title("Söker i kunskapsbasen")
                     last_active_step_items = [
                         "API: search_knowledge_base",
                         f"Fråga: {query[:100]}{'...' if len(query) > 100 else ''}",
@@ -3915,7 +4050,9 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else str(tool_input)
                     )
-                    last_active_step_title = format_step_title("Hämtar länkförhandsgranskning")
+                    last_active_step_title = format_step_title(
+                        "Hämtar länkförhandsgranskning"
+                    )
                     last_active_step_items = [
                         f"URL: {url[:80]}{'...' if len(url) > 80 else ''}"
                     ]
@@ -3980,7 +4117,11 @@ async def stream_new_chat(
                     # Show additional parameters the model passed
                     if isinstance(tool_input, dict):
                         for k, v in tool_input.items():
-                            if k not in ("location", "lat", "lon") and v is not None and v != "":
+                            if (
+                                k not in ("location", "lat", "lon")
+                                and v is not None
+                                and v != ""
+                            ):
                                 last_active_step_items.append(
                                     f"{k}: {_summarize_text(v, 80)}"
                                 )
@@ -4023,7 +4164,18 @@ async def stream_new_chat(
                     # Show additional parameters
                     if isinstance(tool_input, dict):
                         for k, v in tool_input.items():
-                            if k not in ("origin", "origin_id", "destination", "destination_id", "time") and v is not None and v != "":
+                            if (
+                                k
+                                not in (
+                                    "origin",
+                                    "origin_id",
+                                    "destination",
+                                    "destination_id",
+                                    "time",
+                                )
+                                and v is not None
+                                and v != ""
+                            ):
                                 last_active_step_items.append(
                                     f"{k}: {_summarize_text(v, 80)}"
                                 )
@@ -4088,7 +4240,9 @@ async def stream_new_chat(
                     if write_todos_call_count == 1:
                         # First call - creating the plan
                         last_active_step_title = format_step_title("Skapar plan")
-                        last_active_step_items = [f"Definierar {todo_count} uppgifter..."]
+                        last_active_step_items = [
+                            f"Definierar {todo_count} uppgifter..."
+                        ]
                     else:
                         # Subsequent calls - updating the plan
                         in_progress_count = (
@@ -4169,7 +4323,9 @@ async def stream_new_chat(
                     if agent_name:
                         last_active_step_items.append(f"Agent: {agent_name}")
                     if task:
-                        last_active_step_items.append(f"Uppgift: {_summarize_text(task)}")
+                        last_active_step_items.append(
+                            f"Uppgift: {_summarize_text(task)}"
+                        )
                     yield streaming_service.format_thinking_step(
                         step_id=tool_step_id,
                         title=last_active_step_title,
@@ -4196,7 +4352,9 @@ async def stream_new_chat(
                         if isinstance(tool_input, dict)
                         else ""
                     )
-                    last_active_step_title = format_step_title("Reflekterar över framsteg")
+                    last_active_step_title = format_step_title(
+                        "Reflekterar över framsteg"
+                    )
                     last_active_step_items = [
                         _summarize_text(reflection)
                         if reflection
@@ -4250,7 +4408,9 @@ async def stream_new_chat(
                         step_id=tool_step_id,
                         title=last_active_step_title,
                         status="in_progress",
-                        items=last_active_step_items if last_active_step_items else None,
+                        items=last_active_step_items
+                        if last_active_step_items
+                        else None,
                     )
 
                 # Stream tool info
@@ -4565,10 +4725,15 @@ async def stream_new_chat(
                             completed_items = [
                                 *last_active_step_items,
                                 f"Titel: {title[:60]}{'...' if len(title) > 60 else ''}",
-                                f"Domän: {domain}" if domain else "Förhandsgranskning laddad",
+                                f"Domän: {domain}"
+                                if domain
+                                else "Förhandsgranskning laddad",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Förhandsgranskning laddad"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Förhandsgranskning laddad",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Hämtar länkförhandsgranskning"),
@@ -4611,7 +4776,10 @@ async def stream_new_chat(
                                 f"Extraherat: {word_count:,} ord",
                             ]
                     else:
-                        completed_items = [*last_active_step_items, "Innehåll extraherat"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Innehåll extraherat",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Hämtar webbsida"),
@@ -4716,7 +4884,10 @@ async def stream_new_chat(
                             f"Resultat: {len(results)}",
                         ]
                     else:
-                        completed_items = [*last_active_step_items, "Jobbannonser klara"]
+                        completed_items = [
+                            *last_active_step_items,
+                            "Jobbannonser klara",
+                        ]
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
                         title=format_step_title("Söker jobbannonser"),
@@ -4869,7 +5040,9 @@ async def stream_new_chat(
                     title = (
                         last_active_step_title
                         if last_active_step_title
-                        else format_step_title(f"Använder {tool_name.replace('_', ' ')}")
+                        else format_step_title(
+                            f"Använder {tool_name.replace('_', ' ')}"
+                        )
                     )
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
@@ -4880,7 +5053,9 @@ async def stream_new_chat(
                 else:
                     yield streaming_service.format_thinking_step(
                         step_id=original_step_id,
-                        title=format_step_title(f"Använder {tool_name.replace('_', ' ')}"),
+                        title=format_step_title(
+                            f"Använder {tool_name.replace('_', ' ')}"
+                        ),
                         status="completed",
                         items=last_active_step_items,
                     )
@@ -5252,13 +5427,12 @@ async def stream_new_chat(
                 # duplicates via _pipeline_payload_kind-based signature
                 # tracking (emitted_pipeline_payload_signatures).
                 _cn_lower_ce = str(chain_name).strip().lower()
-                if (
-                    "response_layer_router" in _cn_lower_ce
-                    and isinstance(chain_output, dict)
+                if "response_layer_router" in _cn_lower_ce and isinstance(
+                    chain_output, dict
                 ):
-                    _chosen = str(
-                        chain_output.get("response_mode") or ""
-                    ).strip().lower()
+                    _chosen = (
+                        str(chain_output.get("response_mode") or "").strip().lower()
+                    )
                     if _chosen:
                         _rl_sig = f"response_layer_router::{_chosen}"
                         if _rl_sig not in emitted_pipeline_payload_signatures:
@@ -5270,9 +5444,7 @@ async def stream_new_chat(
                                 "visualisering": "Visualisering",
                             }
                             _rl_step_id = next_thinking_step_id()
-                            _rl_title = format_step_title(
-                                "Väljer presentationsläge"
-                            )
+                            _rl_title = format_step_title("Väljer presentationsläge")
                             _rl_items = [
                                 "Nod: response_layer_router",
                                 f"Valt läge: {layer_labels.get(_chosen, _chosen)}",
@@ -5296,9 +5468,7 @@ async def stream_new_chat(
                 candidate_text = _extract_assistant_text_from_event_output(chain_output)
                 if candidate_text:
                     source_chain = (
-                        chain_name
-                        if _is_any_pipeline_chain_name(chain_name)
-                        else None
+                        chain_name if _is_any_pipeline_chain_name(chain_name) else None
                     )
                     for step_event in emit_pipeline_steps_from_text(
                         candidate_text,
@@ -5308,10 +5478,9 @@ async def stream_new_chat(
                     # Only store fallback text from OUTPUT pipeline nodes
                     # (synthesizer, response_layer, etc.). Internal nodes
                     # must NEVER become the visible response.
-                    is_output_chain = (
-                        _is_any_pipeline_chain_name(chain_name)
-                        and not _is_internal_pipeline_chain_name(chain_name)
-                    )
+                    is_output_chain = _is_any_pipeline_chain_name(
+                        chain_name
+                    ) and not _is_internal_pipeline_chain_name(chain_name)
                     if is_output_chain:
                         cleaned_candidate = _clean_assistant_output_text(candidate_text)
                         if cleaned_candidate:

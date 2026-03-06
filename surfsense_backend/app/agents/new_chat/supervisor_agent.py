@@ -1121,6 +1121,9 @@ async def create_supervisor_agent(
         ),
     ]
 
+    # ── GraphRegistry (Sprint 5: domain-scoped agent/tool resolution) ──
+    graph_registry = dependencies.get("graph_registry")
+
     db_session = dependencies.get("db_session")
     if isinstance(db_session, AsyncSession):
         try:
@@ -4254,6 +4257,22 @@ async def create_supervisor_agent(
     )
     tool_node = ToolNode(tool_registry.values())
 
+    # Build domain-based candidates for the intent resolver when registry
+    # is available.  This gives the LLM richer metadata (description,
+    # keywords, label) for each candidate domain instead of just route→id.
+    _registry_intent_candidates: list[dict[str, Any]] | None = None
+    if graph_registry is not None:
+        try:
+            from app.services.intent_definition_service import (
+                domains_to_intent_definitions,
+            )
+
+            _registry_intent_candidates = domains_to_intent_definitions(
+                graph_registry.domains
+            )
+        except Exception:
+            logger.debug("Failed to build registry intent candidates", exc_info=True)
+
     resolve_intent_node = build_intent_resolver_node(
         llm=llm,
         route_to_intent_id=route_to_intent_id,
@@ -4271,6 +4290,7 @@ async def create_supervisor_agent(
         route_default_agent_fn=_route_default_agent_for_intent,
         coerce_resolved_intent_fn=_coerce_resolved_intent_for_query,
         live_routing_config=live_routing_config,
+        registry_candidates=_registry_intent_candidates,
     )
 
     decomposer_node = build_multi_query_decomposer_node(
