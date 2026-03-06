@@ -2280,6 +2280,11 @@ class NexusService:
             llm_judge_agreements = 0
             llm_judge_correct = 0
             llm_judge_disagreements: list[dict] = []
+            # Dual-sided accuracy quadrants
+            both_correct = 0
+            nexus_only_correct = 0
+            llm_only_correct = 0
+            both_wrong = 0
 
             # --- Parallel evaluation helper --------------------------------
             # Each case gets its own DB session to avoid SQLAlchemy
@@ -2396,7 +2401,30 @@ class NexusService:
                             llm_judge_agreements += 1
                         if case_obj.expected_tool and llm_chosen == case_obj.expected_tool:
                             llm_judge_correct += 1
+
+                        # Dual-sided accuracy: who was right?
+                        if case_obj.expected_tool:
+                            n_right = nexus_tool == case_obj.expected_tool
+                            l_right = llm_chosen == case_obj.expected_tool
+                            if n_right and l_right:
+                                both_correct += 1
+                            elif n_right and not l_right:
+                                nexus_only_correct += 1
+                            elif not n_right and l_right:
+                                llm_only_correct += 1
+                            else:
+                                both_wrong += 1
+
                         if llm_chosen != nexus_tool:
+                            # Determine winner for this disagreement
+                            winner = "tie"
+                            if case_obj.expected_tool:
+                                if nexus_tool == case_obj.expected_tool:
+                                    winner = "nexus"
+                                elif llm_chosen == case_obj.expected_tool:
+                                    winner = "llm"
+                                else:
+                                    winner = "neither"
                             llm_judge_disagreements.append({
                                 "query": case_obj.question,
                                 "nexus_tool": nexus_tool or "(none)",
@@ -2404,6 +2432,7 @@ class NexusService:
                                 "expected_tool": case_obj.expected_tool or "(unknown)",
                                 "reasoning": llm_judge.get("reasoning", ""),
                                 "nexus_rank_of_chosen": llm_judge.get("nexus_rank_of_chosen", -1),
+                                "winner": winner,
                             })
 
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
@@ -2477,6 +2506,10 @@ class NexusService:
                     else None
                 ),
                 "llm_judge_disagreements": llm_judge_disagreements[:20],
+                "both_correct": both_correct,
+                "nexus_only_correct": nexus_only_correct,
+                "llm_only_correct": llm_only_correct,
+                "both_wrong": both_wrong,
             }
             all_iteration_results.append(iter_result)
 
@@ -2841,12 +2874,29 @@ class NexusService:
             total_llm_correct += ir.get("llm_judge_correct", 0)
             all_disagreements.extend(ir.get("llm_judge_disagreements", []))
         if total_llm_total > 0:
+            # Aggregate quadrants from all iterations
+            total_both_correct = sum(ir.get("both_correct", 0) for ir in all_iteration_results)
+            total_nexus_only = sum(ir.get("nexus_only_correct", 0) for ir in all_iteration_results)
+            total_llm_only = sum(ir.get("llm_only_correct", 0) for ir in all_iteration_results)
+            total_both_wrong = sum(ir.get("both_wrong", 0) for ir in all_iteration_results)
+            nexus_accuracy = (
+                round((total_both_correct + total_nexus_only) / total_llm_total, 3)
+            )
+            llm_accuracy = (
+                round((total_both_correct + total_llm_only) / total_llm_total, 3)
+            )
             llm_judge_summary = {
                 "total": total_llm_total,
                 "agreements": total_llm_agree,
                 "correct": total_llm_correct,
                 "agreement_rate": round(total_llm_agree / total_llm_total, 3),
                 "accuracy": round(total_llm_correct / total_llm_total, 3),
+                "nexus_accuracy": nexus_accuracy,
+                "llm_accuracy": llm_accuracy,
+                "both_correct": total_both_correct,
+                "nexus_only_correct": total_nexus_only,
+                "llm_only_correct": total_llm_only,
+                "both_wrong": total_both_wrong,
                 "disagreements": all_disagreements[:30],
             }
 
@@ -3088,6 +3138,11 @@ class NexusService:
             llm_judge_agreements = 0
             llm_judge_correct = 0
             llm_judge_disagreements: list[dict] = []
+            # Dual-sided accuracy quadrants
+            both_correct = 0
+            nexus_only_correct = 0
+            llm_only_correct = 0
+            both_wrong = 0
 
             num_batches = (len(cases) + batch_size - 1) // batch_size
             for batch_idx, batch_start in enumerate(
@@ -3144,7 +3199,30 @@ class NexusService:
                             llm_judge_agreements += 1
                         if case_obj.expected_tool and llm_chosen == case_obj.expected_tool:
                             llm_judge_correct += 1
+
+                        # Dual-sided accuracy: who was right?
+                        if case_obj.expected_tool:
+                            n_right = nexus_tool == case_obj.expected_tool
+                            l_right = llm_chosen == case_obj.expected_tool
+                            if n_right and l_right:
+                                both_correct += 1
+                            elif n_right and not l_right:
+                                nexus_only_correct += 1
+                            elif not n_right and l_right:
+                                llm_only_correct += 1
+                            else:
+                                both_wrong += 1
+
                         if llm_chosen != nexus_tool:
+                            # Determine winner for this disagreement
+                            winner = "tie"
+                            if case_obj.expected_tool:
+                                if nexus_tool == case_obj.expected_tool:
+                                    winner = "nexus"
+                                elif llm_chosen == case_obj.expected_tool:
+                                    winner = "llm"
+                                else:
+                                    winner = "neither"
                             llm_judge_disagreements.append({
                                 "query": case_obj.question,
                                 "nexus_tool": nexus_tool or "(none)",
@@ -3152,6 +3230,7 @@ class NexusService:
                                 "expected_tool": case_obj.expected_tool or "(unknown)",
                                 "reasoning": llm_judge.get("reasoning", ""),
                                 "nexus_rank_of_chosen": llm_judge.get("nexus_rank_of_chosen", -1),
+                                "winner": winner,
                             })
 
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
@@ -3224,6 +3303,10 @@ class NexusService:
                     else None
                 ),
                 "llm_judge_disagreements": llm_judge_disagreements[:20],
+                "both_correct": both_correct,
+                "nexus_only_correct": nexus_only_correct,
+                "llm_only_correct": llm_only_correct,
+                "both_wrong": both_wrong,
             }
             all_iteration_results.append(iter_result)
 
@@ -3593,12 +3676,29 @@ class NexusService:
             total_llm_correct += ir.get("llm_judge_correct", 0)
             all_disagreements.extend(ir.get("llm_judge_disagreements", []))
         if total_llm_total > 0:
+            # Aggregate quadrants from all iterations
+            total_both_correct = sum(ir.get("both_correct", 0) for ir in all_iteration_results)
+            total_nexus_only = sum(ir.get("nexus_only_correct", 0) for ir in all_iteration_results)
+            total_llm_only = sum(ir.get("llm_only_correct", 0) for ir in all_iteration_results)
+            total_both_wrong = sum(ir.get("both_wrong", 0) for ir in all_iteration_results)
+            nexus_accuracy = (
+                round((total_both_correct + total_nexus_only) / total_llm_total, 3)
+            )
+            llm_accuracy = (
+                round((total_both_correct + total_llm_only) / total_llm_total, 3)
+            )
             llm_judge_summary = {
                 "total": total_llm_total,
                 "agreements": total_llm_agree,
                 "correct": total_llm_correct,
                 "agreement_rate": round(total_llm_agree / total_llm_total, 3),
                 "accuracy": round(total_llm_correct / total_llm_total, 3),
+                "nexus_accuracy": nexus_accuracy,
+                "llm_accuracy": llm_accuracy,
+                "both_correct": total_both_correct,
+                "nexus_only_correct": total_nexus_only,
+                "llm_only_correct": total_llm_only,
+                "both_wrong": total_both_wrong,
                 "disagreements": all_disagreements[:30],
             }
 

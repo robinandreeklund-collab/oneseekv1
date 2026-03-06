@@ -392,6 +392,7 @@ export interface LlmJudgeDisagreement {
 	expected_tool: string;
 	reasoning: string;
 	nexus_rank_of_chosen: number;
+	winner: "nexus" | "llm" | "neither" | "tie";
 }
 
 export interface LlmJudgeSummary {
@@ -400,6 +401,12 @@ export interface LlmJudgeSummary {
 	correct: number;
 	agreement_rate: number;
 	accuracy: number;
+	nexus_accuracy: number;
+	llm_accuracy: number;
+	both_correct: number;
+	nexus_only_correct: number;
+	llm_only_correct: number;
+	both_wrong: number;
 	disagreements: LlmJudgeDisagreement[];
 }
 
