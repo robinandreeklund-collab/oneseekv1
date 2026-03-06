@@ -1797,9 +1797,9 @@ class NexusService:
 
         Called when overview metrics are requested to keep zone rows fresh.
         """
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
 
-        for zone_name in ZONE_PREFIXES:
+        for zone_name in get_all_zone_prefixes():
             # Count band-0 events for this zone
             zone_total = (
                 await session.scalar(
@@ -1838,24 +1838,31 @@ class NexusService:
                 select(NexusZoneConfig).where(NexusZoneConfig.zone == zone_name)
             )
             zone_row = result.scalars().first()
-            if zone_row:
-                zone_row.band0_rate = round(band0_rate, 4)
-                if avg_conf is not None:
-                    # ECE approximation: |average_confidence - accuracy|
-                    # accuracy proxy: proportion of events in bands 0-1
-                    zone_b01 = (
-                        await session.scalar(
-                            select(func.count())
-                            .select_from(NexusRoutingEvent)
-                            .where(
-                                NexusRoutingEvent.resolved_zone == zone_name,
-                                NexusRoutingEvent.band <= 1,
-                            )
+            if not zone_row:
+                # Auto-create zone config row for new domain zones
+                all_prefixes = get_all_zone_prefixes()
+                zone_row = NexusZoneConfig(
+                    zone=zone_name,
+                    prefix_token=all_prefixes.get(zone_name, f"[{zone_name[:5].upper()}] "),
+                )
+                session.add(zone_row)
+            zone_row.band0_rate = round(band0_rate, 4)
+            if avg_conf is not None:
+                # ECE approximation: |average_confidence - accuracy|
+                # accuracy proxy: proportion of events in bands 0-1
+                zone_b01 = (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(NexusRoutingEvent)
+                        .where(
+                            NexusRoutingEvent.resolved_zone == zone_name,
+                            NexusRoutingEvent.band <= 1,
                         )
-                        or 0
                     )
-                    accuracy_proxy = zone_b01 / zone_total
-                    zone_row.ece_score = round(abs(avg_conf - accuracy_proxy), 4)
+                    or 0
+                )
+                accuracy_proxy = zone_b01 / zone_total
+                zone_row.ece_score = round(abs(avg_conf - accuracy_proxy), 4)
 
         await session.flush()
 
@@ -2352,6 +2359,99 @@ class NexusService:
             # If no failures or last iteration, stop iterating
             if failures == 0 or iteration == max_iterations:
                 break
+
+            # ── Apply optimizer suggestions between iterations ────────
+            # Run MetadataOptimizer on namespaces of confused tools, apply
+            # changes to DB, populate proposed_value, and clear caches so
+            # the next iteration evaluates against updated metadata.
+            try:
+                from app.nexus.embeddings import nexus_clear_embed_cache
+                from app.nexus.optimizer import MetadataOptimizer
+                from app.nexus.platform_bridge import get_platform_tools as _get_pt
+
+                # Map tool_id → namespace string for failed tools
+                tool_ns_map: dict[str, str] = {}
+                for pt in _get_pt():
+                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace[:2])
+
+                # Collect unique namespaces from proposals
+                ns_set: set[str] = set()
+                for p in proposals:
+                    ns = tool_ns_map.get(p.tool_id, "")
+                    if ns:
+                        ns_set.add(ns)
+
+                optimizer = MetadataOptimizer()
+                applied_tool_ids: set[str] = set()
+
+                for ns in ns_set:
+                    try:
+                        opt_result = await optimizer.generate_suggestions(
+                            session, namespace=ns
+                        )
+                        if opt_result.suggestions:
+                            # Apply to DB
+                            apply_list = [
+                                {
+                                    "tool_id": s.tool_id,
+                                    **s.suggested,
+                                }
+                                for s in opt_result.suggestions
+                                if s.suggested.get("description")
+                            ]
+                            if apply_list:
+                                await optimizer.apply_suggestions(
+                                    session, apply_list
+                                )
+                                await session.commit()
+
+                            # Update proposed_value on proposals
+                            desc_map = {
+                                s.tool_id: s.suggested.get("description", "")
+                                for s in opt_result.suggestions
+                                if s.suggested.get("description")
+                            }
+                            for p in proposals:
+                                if p.tool_id in desc_map:
+                                    p.proposed_value = desc_map[p.tool_id]
+                                    applied_tool_ids.add(p.tool_id)
+                    except Exception as e:
+                        logger.warning(
+                            "Auto-loop optimizer failed for ns=%s: %s", ns, e
+                        )
+
+                if applied_tool_ids:
+                    # Clear embedding cache so next iteration uses new metadata
+                    nexus_clear_embed_cache()
+                    # Re-precompute embeddings for updated tools
+                    updated_tools = [
+                        pt
+                        for pt in _get_pt()
+                        if pt.tool_id in applied_tool_ids
+                    ]
+                    recompute_texts = []
+                    for pt in updated_tools:
+                        zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+                        recompute_texts.append(
+                            f"{zone_prefix}{pt.tool_id} {pt.description}"
+                        )
+                        recompute_texts.append(
+                            f"{pt.tool_id} {pt.description}"
+                        )
+                    if recompute_texts:
+                        nexus_precompute(recompute_texts)
+
+                    logger.info(
+                        "Auto-loop #%d iter %d: applied optimizer suggestions "
+                        "for %d tools, cleared embedding cache",
+                        loop_number,
+                        iteration,
+                        len(applied_tool_ids),
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Auto-loop inter-iteration optimizer failed: %s", e
+                )
 
         # Use last iteration's values for final metrics
         last_iter = all_iteration_results[-1]
@@ -2910,6 +3010,95 @@ class NexusService:
 
             if failures == 0 or iteration == max_iterations:
                 break
+
+            # ── Apply optimizer suggestions between iterations ────────
+            yield {
+                "type": "progress",
+                "step": "optimizing",
+                "detail": f"Kör optimizer på felaktiga verktyg (iteration {iteration}→{iteration + 1})",
+                "iteration": iteration,
+            }
+
+            try:
+                from app.nexus.embeddings import nexus_clear_embed_cache
+                from app.nexus.optimizer import MetadataOptimizer
+
+                # Map tool_id → namespace string for failed tools
+                tool_ns_map: dict[str, str] = {}
+                for pt in _get_pt():
+                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace[:2])
+
+                # Collect unique namespaces from proposals
+                ns_set: set[str] = set()
+                for p in proposals:
+                    ns = tool_ns_map.get(p.tool_id, "")
+                    if ns:
+                        ns_set.add(ns)
+
+                optimizer = MetadataOptimizer()
+                applied_tool_ids: set[str] = set()
+
+                for ns in ns_set:
+                    try:
+                        opt_result = await optimizer.generate_suggestions(
+                            session, namespace=ns
+                        )
+                        if opt_result.suggestions:
+                            apply_list = [
+                                {
+                                    "tool_id": s.tool_id,
+                                    **s.suggested,
+                                }
+                                for s in opt_result.suggestions
+                                if s.suggested.get("description")
+                            ]
+                            if apply_list:
+                                await optimizer.apply_suggestions(
+                                    session, apply_list
+                                )
+                                await session.commit()
+
+                            desc_map = {
+                                s.tool_id: s.suggested.get("description", "")
+                                for s in opt_result.suggestions
+                                if s.suggested.get("description")
+                            }
+                            for p in proposals:
+                                if p.tool_id in desc_map:
+                                    p.proposed_value = desc_map[p.tool_id]
+                                    applied_tool_ids.add(p.tool_id)
+                    except Exception as e:
+                        logger.warning(
+                            "Auto-loop stream optimizer failed for ns=%s: %s",
+                            ns, e,
+                        )
+
+                if applied_tool_ids:
+                    nexus_clear_embed_cache()
+                    updated_tools = [
+                        pt for pt in _get_pt() if pt.tool_id in applied_tool_ids
+                    ]
+                    recompute_texts = []
+                    for pt in updated_tools:
+                        zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+                        recompute_texts.append(
+                            f"{zone_prefix}{pt.tool_id} {pt.description}"
+                        )
+                        recompute_texts.append(f"{pt.tool_id} {pt.description}")
+                    if recompute_texts:
+                        nexus_precompute(recompute_texts)
+
+                    yield {
+                        "type": "progress",
+                        "step": "optimized",
+                        "detail": f"Optimerade {len(applied_tool_ids)} verktyg, rensat cache",
+                        "iteration": iteration,
+                        "tools_optimized": len(applied_tool_ids),
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Auto-loop stream inter-iteration optimizer failed: %s", e
+                )
 
         # Compute embedding delta
         yield {
