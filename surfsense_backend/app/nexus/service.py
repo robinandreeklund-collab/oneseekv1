@@ -1720,11 +1720,12 @@ class NexusService:
         # Fit Platt scaler
         params = self.platt_scaler.fit(scores, labels)
 
-        # Persist calibration per zone
-        from app.nexus.config import ZONE_PREFIXES
+        # Persist calibration per zone (all 17 domain zones)
+        from app.nexus.config import get_all_zone_prefixes
 
+        all_zones = get_all_zone_prefixes()
         fitted_count = 0
-        for zone in ZONE_PREFIXES:
+        for zone in all_zones:
             # Deactivate old params
             old = await session.execute(
                 select(NexusCalibrationParam).where(
@@ -2134,10 +2135,11 @@ class NexusService:
 
         # Pre-warm embedding cache: batch-embed all query texts + tool texts
         # in efficient GPU passes BEFORE the eval loop starts.
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
         from app.nexus.embeddings import nexus_precompute
         from app.nexus.platform_bridge import get_platform_tools
 
+        ZONE_PREFIXES = get_all_zone_prefixes()
         all_query_texts = [c.question.lower() for c in cases]
         # Also precompute zone-prefixed variants
         platform_tools = get_platform_tools()
@@ -2780,10 +2782,11 @@ class NexusService:
             "detail": "Forbereder embeddings (batch GPU)...",
         }
 
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
         from app.nexus.embeddings import nexus_precompute
         from app.nexus.platform_bridge import get_platform_tools as _get_pt
 
+        ZONE_PREFIXES = get_all_zone_prefixes()
         _pt_tools = _get_pt()
         all_query_texts = [c.question.lower() for c in cases]
         zone_prefixed_queries = set()

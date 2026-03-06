@@ -15,7 +15,6 @@ from app.nexus.config import (
     DOMAIN_HINTS,
     MULTI_INTENT_MARGIN_THRESHOLD,
     SWEDISH_NORMALIZATION_BANK,
-    Zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -353,8 +352,10 @@ class QueryUnderstandingLayer:
         include fine-grained domain IDs like "väder-och-klimat") plus the
         legacy Zone enum values.
         """
-        # Build valid zone set from the hints map keys + legacy Zone enum
-        valid_zones = {z.value for z in Zone}
+        # Build valid zone set from all domain zones + hints map keys
+        from app.nexus.config import get_all_zone_prefixes
+
+        valid_zones = set(get_all_zone_prefixes().keys())
         if domain_hints_map:
             valid_zones.update(domain_hints_map.keys())
         else:
@@ -370,7 +371,7 @@ class QueryUnderstandingLayer:
                 (domain_hints_map or DOMAIN_HINTS).keys()
             )
             # Use first domain as general fallback
-            zones = all_domain_keys[:1] if all_domain_keys else [Zone.KUNSKAP.value]
+            zones = all_domain_keys[:1] if all_domain_keys else ["kunskap"]
 
         return zones
 

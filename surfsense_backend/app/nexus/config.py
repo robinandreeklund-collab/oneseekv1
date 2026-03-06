@@ -108,7 +108,7 @@ def _build_nexus_agents_from_seeds() -> tuple[NexusAgent, ...]:
         agent_id = agent_def.get("agent_id", "")
         if not agent_id:
             continue
-        domain_id = agent_def.get("domain_id", Zone.KUNSKAP)
+        domain_id = agent_def.get("domain_id", "kunskap")
         keywords = agent_def.get("keywords", [])
         ns_raw = agent_def.get("primary_namespaces", [])
         ns_tuple = tuple(
@@ -196,7 +196,7 @@ def build_agents_from_metadata(
 
         # Use domain_id (from routes) directly as zone — no enum restriction
         routes = meta.get("routes", [])
-        zone = routes[0] if routes else Zone.KUNSKAP.value
+        zone = routes[0] if routes else "kunskap"
 
         # Build namespace prefixes from the agent's actual flow_tools.
         flow_tools = meta.get("flow_tools", [])
@@ -284,7 +284,7 @@ def build_hints_from_metadata(
 
         # Use domain_id from routes directly — no Zone enum restriction
         routes = meta.get("routes", [])
-        zone_name = routes[0] if routes else Zone.KUNSKAP.value
+        zone_name = routes[0] if routes else "kunskap"
 
         # Add keywords to the domain's hints (merge with seed base)
         if zone_name not in domain_hints:

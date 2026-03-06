@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from app.nexus.config import Zone
 from app.nexus.routing.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)
@@ -72,8 +71,11 @@ class SelectThenRoute:
         # Accept any zone candidate (domain_ids or legacy zone names)
         valid_zones = list(zone_candidates) if zone_candidates else []
         if not valid_zones:
-            # Fallback: search the two broadest zones
-            return [Zone.KUNSKAP.value, Zone.SKAPANDE.value]
+            # Fallback: use first two domain zones from config
+            from app.nexus.config import get_all_zone_prefixes
+
+            fallback_zones = list(get_all_zone_prefixes().keys())[:2]
+            return fallback_zones if fallback_zones else ["kunskap", "skapande"]
         return valid_zones[:max_zones]
 
     def retrieve_per_zone(

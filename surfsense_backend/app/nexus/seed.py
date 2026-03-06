@@ -298,17 +298,17 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
     now = datetime.now(tz=UTC)
     counts: dict[str, int] = {}
 
-    # 1. Zone configs (aligned with real platform intents)
-    # Remove old/stale zone configs that don't match current ZONE_PREFIXES
+    # 1. Zone configs (all 17 domain zones)
+    from app.nexus.config import get_all_zone_prefixes
 
-    from app.nexus.config import ZONE_PREFIXES
+    ALL_ZONE_PREFIXES = get_all_zone_prefixes()
 
     old_zones = await session.execute(select(NexusZoneConfig))
     for old_zone in old_zones.scalars().all():
-        if old_zone.zone not in ZONE_PREFIXES:
+        if old_zone.zone not in ALL_ZONE_PREFIXES:
             await session.delete(old_zone)
 
-    for zone, prefix in ZONE_PREFIXES.items():
+    for zone, prefix in ALL_ZONE_PREFIXES.items():
         zc = NexusZoneConfig(
             zone=zone,
             prefix_token=prefix,
@@ -320,7 +320,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             last_reindexed=now - timedelta(hours=random.randint(1, 48)),
         )
         await session.merge(zc)
-    counts["zone_configs"] = len(ZONE_PREFIXES)
+    counts["zone_configs"] = len(ALL_ZONE_PREFIXES)
 
     # 2. Load real tool catalog
     tool_catalog = _get_tool_catalog()
@@ -431,8 +431,8 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         session.add(metric)
     counts["pipeline_metrics"] = len(stages)
 
-    # 7. Calibration params (per real zone/intent)
-    for zone in ZONE_PREFIXES:
+    # 7. Calibration params (per zone — all 17 domains)
+    for zone in ALL_ZONE_PREFIXES:
         cal = NexusCalibrationParam(
             zone=zone,
             calibration_method="platt",
@@ -445,7 +445,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             is_active=True,
         )
         session.add(cal)
-    counts["calibration_params"] = len(ZONE_PREFIXES)
+    counts["calibration_params"] = len(ALL_ZONE_PREFIXES)
 
     # 8. Dark matter queries
     for q_text, energy in OOD_QUERIES:
