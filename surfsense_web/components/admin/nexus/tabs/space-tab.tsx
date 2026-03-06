@@ -109,33 +109,27 @@ export function SpaceTab() {
 // UMAP Canvas — renders tool points as colored dots
 // ---------------------------------------------------------------------------
 
+/** Generate a deterministic HSL color from any string. */
+function zoneColor(zone: string): string {
+	let hash = 0;
+	for (let i = 0; i < zone.length; i++) {
+		hash = zone.charCodeAt(i) + ((hash << 5) - hash);
+	}
+	const hue = ((hash % 360) + 360) % 360;
+	return `hsl(${hue}, 65%, 55%)`;
+}
+
 function UMAPCanvas({
 	points,
 }: {
 	points: Array<{ tool_id: string; x: number; y: number; zone: string; cluster: number }>;
 }) {
-	// Dynamic zone colors — 17 domains + legacy zones
-	const ZONE_COLORS: Record<string, string> = {
-		// Legacy zones
-		kunskap: "#3b82f6",
-		skapande: "#f59e0b",
-		konversation: "#10b981",
-		"jämförelse": "#8b5cf6",
-		// Domain zones
-		"väder-och-klimat": "#0ea5e9",
-		"trafik-och-transport": "#f97316",
-		"ekonomi-och-skatter": "#eab308",
-		arbetsmarknad: "#14b8a6",
-		"befolkning-och-demografi": "#6366f1",
-		utbildning: "#a855f7",
-		"näringsliv-och-bolag": "#ec4899",
-		"fastighet-och-mark": "#84cc16",
-		"energi-och-miljö": "#22c55e",
-		"handel-och-marknad": "#ef4444",
-		"politik-och-beslut": "#d946ef",
-		"hälsa-och-vård": "#f43f5e",
-		"rättsväsende": "#64748b",
-	};
+	// Build zone colors dynamically — deterministic from zone name
+	const uniqueZones = Array.from(new Set(points.map((p) => p.zone)));
+	const ZONE_COLORS: Record<string, string> = {};
+	for (const z of uniqueZones) {
+		ZONE_COLORS[z] = zoneColor(z);
+	}
 
 	// Only show zones that actually appear in data
 	const usedZones = new Set(points.map((p) => p.zone));

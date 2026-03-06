@@ -529,6 +529,30 @@ export interface ShadowReportResponse {
 	live_routing: Record<string, unknown>;
 }
 
+export interface DomainMetadata {
+	domain_id: string;
+	label: string;
+	description: string;
+	keywords: string[];
+	fallback_route: string;
+	enabled: boolean;
+	priority: number;
+}
+
+export interface CategoryMetadata {
+	category_id: string;
+	label: string;
+	tool_count: number;
+}
+
+export interface AgentMetadataResponse {
+	agent_id: string;
+	label: string;
+	description: string;
+	domain_id: string;
+	keywords: string[];
+}
+
 // ---------------------------------------------------------------------------
 // API Methods
 // ---------------------------------------------------------------------------
@@ -782,6 +806,16 @@ class NexusApiService {
 			method: "POST",
 			body: JSON.stringify({ suggestions }),
 		});
+
+	// Dynamic domain/agent metadata
+	getDomainMetadata = () =>
+		fetchNexus<{ domains: DomainMetadata[] }>("/config/domains");
+
+	getAgentMetadata = () =>
+		fetchNexus<{ agents: AgentMetadataResponse[] }>("/config/agents");
+
+	getCategoryMetadata = () =>
+		fetchNexus<{ categories: CategoryMetadata[] }>("/config/categories");
 }
 
 export const nexusApiService = new NexusApiService();

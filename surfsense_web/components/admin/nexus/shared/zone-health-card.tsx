@@ -13,49 +13,8 @@ import { Loader2 } from "lucide-react";
 import {
 	nexusApiService,
 	type ZoneConfigResponse,
+	type DomainMetadata,
 } from "@/lib/apis/nexus-api.service";
-
-const ZONE_LABELS: Record<string, string> = {
-	// Legacy zones
-	kunskap: "Allmän kunskap",
-	skapande: "Skapande & Produktion",
-	konversation: "Konversation",
-	"jämförelse": "Jämförelse & Analys",
-	// Domain zones
-	"väder-och-klimat": "Väder & Klimat",
-	"trafik-och-transport": "Trafik & Transport",
-	"ekonomi-och-skatter": "Ekonomi & Skatter",
-	arbetsmarknad: "Arbetsmarknad",
-	"befolkning-och-demografi": "Befolkning & Demografi",
-	utbildning: "Utbildning",
-	"näringsliv-och-bolag": "Näringsliv & Bolag",
-	"fastighet-och-mark": "Fastighet & Mark",
-	"energi-och-miljö": "Energi & Miljö",
-	"handel-och-marknad": "Handel & Marknad",
-	"politik-och-beslut": "Politik & Beslut",
-	"hälsa-och-vård": "Hälsa & Vård",
-	"rättsväsende": "Rättsväsende",
-};
-
-const ZONE_DESCRIPTIONS: Record<string, string> = {
-	kunskap: "Dokumentsökning, kunskapsbas, webbsökning",
-	skapande: "Sandbox, podcast, bildgenerering, kartor, kod",
-	konversation: "Småprat, hälsningar",
-	"jämförelse": "Multi-modell jämförelser",
-	"väder-och-klimat": "SMHI prognoser, temperatur, nederbörd, vind",
-	"trafik-och-transport": "Trafikverket realtid, störningar, resplanering",
-	"ekonomi-och-skatter": "SCB statistik, Kolada kommundata",
-	arbetsmarknad: "Arbetsförmedlingen, jobb, lönestatistik",
-	"befolkning-och-demografi": "SCB befolkningsdata, kommuner",
-	utbildning: "Skolverket, läroplaner, betyg",
-	"näringsliv-och-bolag": "Bolagsverket, företagsregister",
-	"fastighet-och-mark": "Lantmäteriet, bostadsmarknad",
-	"energi-och-miljö": "Elpriser, miljödata, klimatmål",
-	"handel-och-marknad": "Blocket, Tradera, marknadsplatser",
-	"politik-och-beslut": "Riksdagen, propositioner, voteringar",
-	"hälsa-och-vård": "Socialstyrelsen, sjukvård",
-	"rättsväsende": "Domstolar, BRÅ, brottsstatistik",
-};
 
 function MetricBar({
 	label,
@@ -93,17 +52,31 @@ function MetricBar({
 
 export function ZoneHealthCard() {
 	const [zones, setZones] = useState<ZoneConfigResponse[]>([]);
+	const [domains, setDomains] = useState<DomainMetadata[]>([]);
 	const [loading, setLoading] = useState(true);
 
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
-		nexusApiService
-			.getZones()
-			.then(setZones)
+		Promise.all([
+			nexusApiService.getZones(),
+			nexusApiService.getDomainMetadata().catch(() => ({ domains: [] })),
+		])
+			.then(([z, d]) => {
+				setZones(z);
+				setDomains(d.domains);
+			})
 			.catch((err) => setError(err.message || "Kunde inte hämta zondata"))
 			.finally(() => setLoading(false));
 	}, []);
+
+	// Build dynamic label/description lookups from domain metadata
+	const domainLabels: Record<string, string> = {};
+	const domainDescriptions: Record<string, string> = {};
+	for (const d of domains) {
+		domainLabels[d.domain_id] = d.label;
+		domainDescriptions[d.domain_id] = d.description;
+	}
 
 	if (loading) {
 		return (
@@ -142,14 +115,14 @@ export function ZoneHealthCard() {
 						>
 							<div className="flex items-center justify-between">
 								<h4 className="font-medium">
-									{ZONE_LABELS[zone.zone] || zone.zone}
+									{domainLabels[zone.zone] || zone.zone}
 								</h4>
 								<Badge variant="outline" className="text-xs font-mono">
 									{zone.prefix_token.trim()}
 								</Badge>
 							</div>
 							<p className="text-xs text-muted-foreground">
-								{ZONE_DESCRIPTIONS[zone.zone] || ""}
+								{domainDescriptions[zone.zone] || ""}
 							</p>
 
 							<div className="space-y-2">

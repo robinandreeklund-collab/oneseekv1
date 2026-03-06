@@ -27,20 +27,7 @@ import {
 	type OptimizerResultResponse,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
-
-const CATEGORY_LABELS: Record<string, string> = {
-	smhi: "SMHI (Väder)",
-	scb: "SCB (Statistik)",
-	kolada: "Kolada (Nyckeltal)",
-	riksdagen: "Riksdagen",
-	trafikverket: "Trafikverket",
-	bolagsverket: "Bolagsverket",
-	marketplace: "Marknadsplats",
-	skolverket: "Skolverket",
-	builtin: "Inbyggda verktyg",
-	geoapify: "Kartor (Geoapify)",
-	external_model: "Externa modeller",
-};
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
 type FilterMode = "namespace" | "category";
 
@@ -201,6 +188,7 @@ function SuggestionCard({
 // ---------------------------------------------------------------------------
 
 export function OptimizerTab() {
+	const CATEGORY_LABELS = useCategoryLabels();
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
 	const [filterMode, setFilterMode] = useState<FilterMode>("namespace");

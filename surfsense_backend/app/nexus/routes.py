@@ -250,6 +250,94 @@ async def get_platform_intents_endpoint(
     return {"intents": intents}
 
 
+@nexus_router.get("/config/domains")
+async def get_domain_metadata(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Return all domain/intent metadata for dynamic frontend rendering.
+
+    Returns domain_id, label, description, keywords, and fallback_route
+    for all configured domains. The frontend uses this to populate labels,
+    descriptions, and zone colors dynamically.
+    """
+    from app.nexus.platform_bridge import get_effective_intents_from_db
+
+    intents = await get_effective_intents_from_db(session)
+    domains = []
+    for intent in intents:
+        domains.append({
+            "domain_id": intent.get("intent_id", ""),
+            "label": intent.get("label", ""),
+            "description": intent.get("description", ""),
+            "keywords": intent.get("keywords", []),
+            "fallback_route": intent.get("route", "kunskap"),
+            "enabled": intent.get("enabled", True),
+            "priority": intent.get("priority", 500),
+        })
+    return {"domains": domains}
+
+
+@nexus_router.get("/config/agents")
+async def get_agent_metadata_endpoint(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Return all agent metadata with domain_id zones.
+
+    The frontend uses this to render agent→domain mappings dynamically.
+    """
+    from app.services.agent_metadata_service import get_effective_agent_metadata
+
+    metadata = await get_effective_agent_metadata(session)
+    agents = []
+    for m in metadata:
+        agents.append({
+            "agent_id": m.get("agent_id", ""),
+            "label": m.get("label", ""),
+            "description": m.get("description", ""),
+            "domain_id": m.get("routes", ["kunskap"])[0] if m.get("routes") else "kunskap",
+            "keywords": m.get("keywords", []),
+        })
+    return {"agents": agents}
+
+
+@nexus_router.get("/config/categories")
+async def get_category_metadata(
+    user: User = Depends(current_active_user),
+):
+    """Return tool category metadata for dynamic frontend rendering.
+
+    Returns category_id and label for all tool provider categories.
+    The frontend uses this to populate filter dropdowns dynamically.
+    """
+    from app.nexus.platform_bridge import get_platform_tools_by_category
+
+    by_cat = get_platform_tools_by_category()
+    # Build labels: use category name, capitalized. Special cases for known providers.
+    _LABEL_OVERRIDES = {
+        "smhi": "SMHI (Väder)",
+        "scb": "SCB (Statistik)",
+        "kolada": "Kolada (Nyckeltal)",
+        "riksdagen": "Riksdagen",
+        "trafikverket": "Trafikverket",
+        "bolagsverket": "Bolagsverket",
+        "marketplace": "Marknadsplats",
+        "skolverket": "Skolverket",
+        "builtin": "Inbyggda verktyg",
+        "geoapify": "Kartor (Geoapify)",
+        "external_model": "Externa modeller",
+    }
+    categories = []
+    for cat_id in sorted(by_cat.keys()):
+        categories.append({
+            "category_id": cat_id,
+            "label": _LABEL_OVERRIDES.get(cat_id, cat_id.replace("_", " ").title()),
+            "tool_count": len(by_cat[cat_id]),
+        })
+    return {"categories": categories}
+
+
 @nexus_router.get("/tools/live-routing")
 async def get_live_routing_config(
     session: AsyncSession = Depends(get_async_session),

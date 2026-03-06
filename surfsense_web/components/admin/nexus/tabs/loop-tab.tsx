@@ -27,23 +27,10 @@ import {
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-
-const CATEGORY_LABELS: Record<string, string> = {
-	"": "Alla kategorier",
-	smhi: "SMHI (Vader)",
-	scb: "SCB (Statistik)",
-	kolada: "Kolada (Nyckeltal)",
-	riksdagen: "Riksdagen",
-	trafikverket: "Trafikverket",
-	bolagsverket: "Bolagsverket",
-	marketplace: "Marknadsplats",
-	skolverket: "Skolverket",
-	builtin: "Inbyggda verktyg",
-	geoapify: "Kartor (Geoapify)",
-};
 
 const BAND_LABELS = ["Band 0 (Exakt)", "Band 1 (Hog)", "Band 2 (Medel)", "Band 3 (Lag)"];
 
@@ -246,6 +233,7 @@ function ProposalCard({
 }
 
 export function LoopTab() {
+	const CATEGORY_LABELS = useCategoryLabels();
 	const [runs, setRuns] = useState<AutoLoopRunResponse[]>([]);
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
