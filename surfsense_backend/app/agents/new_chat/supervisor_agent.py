@@ -1,50 +1,60 @@
 from __future__ import annotations
 
 import asyncio
-import ast
-import json
 import hashlib
+import json
 import logging
 import os
 import re
 import time
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any, Annotated, TypedDict
+from datetime import UTC, datetime
+from typing import Annotated, Any
 from uuid import UUID
 
 from langchain_core.messages import (
     AIMessage,
-    AnyMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
-from langgraph.graph.message import add_messages
 from langgraph.types import Checkpointer
-from langgraph_bigtool.graph import END, StateGraph, ToolNode, RunnableCallable
+from langgraph_bigtool.graph import END, RunnableCallable, StateGraph, ToolNode
 from langgraph_bigtool.tools import InjectedState
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import (
-    _tokenize,
-    _normalize_text,
     build_global_tool_registry,
     build_tool_index,
+    get_namespace_tool_ids_with_retrieval_hints,
     smart_retrieve_tools_with_breakdown,
 )
 from app.agents.new_chat.bigtool_workers import WorkerConfig
+from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
+from app.agents.new_chat.domain_fan_out import (
+    execute_domain_fan_out,
+    format_fan_out_context,
+    is_fan_out_enabled,
+)
+from app.agents.new_chat.episodic_memory import (
+    get_or_create_episodic_store,
+    infer_ttl_seconds,
+)
+from app.agents.new_chat.hybrid_state import (
+    build_speculative_candidates,
+    build_trivial_response,
+    classify_graph_complexity,
+)
+from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.nodes import (
     build_agent_resolver_node,
     build_critic_node,
     build_domain_planner_node,
+    build_execution_hitl_gate_node,
     build_execution_router_node,
     build_executor_nodes,
-    build_execution_hitl_gate_node,
     build_intent_resolver_node,
     build_multi_query_decomposer_node,
     build_planner_hitl_gate_node,
@@ -60,46 +70,22 @@ from app.agents.new_chat.nodes import (
     build_tool_resolver_node,
 )
 from app.agents.new_chat.nodes.execution_router import get_execution_timeout_seconds
-from app.agents.new_chat.hybrid_state import (
-    build_speculative_candidates,
-    build_trivial_response,
-    classify_graph_complexity,
-)
-from app.agents.new_chat.episodic_memory import (
-    get_or_create_episodic_store,
-    infer_ttl_seconds,
-)
+from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.retrieval_feedback import (
     get_global_retrieval_feedback_store,
     hydrate_global_retrieval_feedback_store,
 )
-from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
-from app.agents.new_chat.prompt_registry import resolve_prompt
+from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.structured_schemas import structured_output_enabled
-from app.agents.new_chat.system_prompt import (
-    SURFSENSE_CORE_GLOBAL_PROMPT,
-    append_datetime_context,
-    inject_core_prompt,
-)
-from app.agents.new_chat.response_compressor import compress_response
 from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
-from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
-from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
-from app.agents.new_chat.marketplace_prompts import DEFAULT_MARKETPLACE_SYSTEM_PROMPT
-from app.agents.new_chat.compare_prompts import DEFAULT_COMPARE_ANALYSIS_PROMPT
-from app.agents.new_chat.supervisor_runtime_prompts import (
-    DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
-    DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
-    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
-    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
-    DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
-    DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
-    DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
-    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
-    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
-)
 from app.agents.new_chat.supervisor_pipeline_prompts import (
+    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
+    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
+    DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
+    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
+    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
     DEFAULT_SUPERVISOR_AGENT_RESOLVER_PROMPT,
     DEFAULT_SUPERVISOR_CRITIC_GATE_PROMPT,
     DEFAULT_SUPERVISOR_DECOMPOSER_PROMPT,
@@ -112,82 +98,80 @@ from app.agents.new_chat.supervisor_pipeline_prompts import (
     DEFAULT_SUPERVISOR_PLANNER_PROMPT,
     DEFAULT_SUPERVISOR_SYNTHESIZER_PROMPT,
     DEFAULT_SUPERVISOR_TOOL_RESOLVER_PROMPT,
-    DEFAULT_RESPONSE_LAYER_ANALYS_PROMPT,
-    DEFAULT_RESPONSE_LAYER_KUNSKAP_PROMPT,
-    DEFAULT_RESPONSE_LAYER_ROUTER_PROMPT,
-    DEFAULT_RESPONSE_LAYER_SYNTES_PROMPT,
-    DEFAULT_RESPONSE_LAYER_VISUALISERING_PROMPT,
 )
-from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
-from app.agents.new_chat.statistics_prompts import build_statistics_system_prompt
-from app.agents.new_chat.system_prompt import append_datetime_context
+from app.agents.new_chat.supervisor_runtime_prompts import (
+    DEFAULT_SUPERVISOR_CODE_READ_FILE_ENFORCEMENT_MESSAGE,
+    DEFAULT_SUPERVISOR_CODE_SANDBOX_ENFORCEMENT_MESSAGE,
+    DEFAULT_SUPERVISOR_CRITIC_PROMPT,
+    DEFAULT_SUPERVISOR_LOOP_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE,
+    DEFAULT_SUPERVISOR_SUBAGENT_CONTEXT_TEMPLATE,
+    DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE,
+    DEFAULT_SUPERVISOR_TOOL_LIMIT_GUARD_MESSAGE,
+    DEFAULT_SUPERVISOR_TRAFIK_ENFORCEMENT_MESSAGE,
+)
+from app.agents.new_chat.system_prompt import (
+    SURFSENSE_CORE_GLOBAL_PROMPT,
+    append_datetime_context,
+    inject_core_prompt,
+)
 from app.agents.new_chat.token_budget import TokenBudget
-from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
-from app.agents.new_chat.domain_fan_out import (
-    execute_domain_fan_out,
-    format_fan_out_context,
-    is_fan_out_enabled,
-)
 from app.agents.new_chat.tools.external_models import (
     DEFAULT_EXTERNAL_SYSTEM_PROMPT,
     EXTERNAL_MODEL_SPECS,
     call_external_model,
 )
-from app.agents.new_chat.tools.reflect_on_progress import create_reflect_on_progress_tool
+from app.agents.new_chat.tools.reflect_on_progress import (
+    create_reflect_on_progress_tool,
+)
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.write_todos import create_write_todos_tool
-from app.db import AgentComboCache, UserMemory
-from app.services.cache_control import is_cache_disabled
-from app.services.reranker_service import RerankerService
+from app.db import UserMemory
+from app.services.agent_metadata_service import get_effective_agent_metadata
 from app.services.retrieval_feedback_persistence_service import (
     load_retrieval_feedback_snapshot,
     persist_retrieval_feedback_signal,
 )
-from app.services.agent_metadata_service import get_effective_agent_metadata
+from app.services.tool_metadata_service import get_global_tool_metadata_overrides
 from app.services.tool_retrieval_tuning_service import (
     get_global_tool_retrieval_tuning,
     normalize_tool_retrieval_tuning,
 )
-from app.services.tool_metadata_service import get_global_tool_metadata_overrides
-
 
 logger = logging.getLogger(__name__)
 
 
 # Import from extracted modules
+from app.agents.new_chat.supervisor_agent_retrieval import (
+    _smart_retrieve_agents,
+    _smart_retrieve_agents_with_breakdown,
+)
+from app.agents.new_chat.supervisor_cache import (
+    _build_cache_key,
+    _fetch_cached_combo_db,
+    _get_cached_combo,
+    _set_cached_combo,
+    _store_cached_combo_db,
+)
 from app.agents.new_chat.supervisor_constants import (
-    _AGENT_CACHE_TTL,
-    _AGENT_COMBO_CACHE,
-    _AGENT_EMBED_CACHE,
-    _AGENT_NAME_ALIAS_MAP,
-    _AGENT_STOPWORDS,
-    _AGENT_TOOL_PROFILE_BY_ID,
-    _AGENT_TOOL_PROFILES,
-    _ARTIFACT_CONTEXT_MAX_ITEMS,
     _ARTIFACT_DEFAULT_MAX_ENTRIES,
     _ARTIFACT_DEFAULT_OFFLOAD_THRESHOLD_CHARS,
     _ARTIFACT_DEFAULT_STORAGE_MODE,
     _ARTIFACT_INTERNAL_TOOL_NAMES,
-    _ARTIFACT_LOCAL_ROOT,
     _ARTIFACT_OFFLOAD_PER_PASS_LIMIT,
     _COMPARE_FOLLOWUP_RE,
     _CONTEXT_COMPACTION_DEFAULT_STEP_KEEP,
     _CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS,
     _CONTEXT_COMPACTION_DEFAULT_TRIGGER_RATIO,
     _CONTEXT_COMPACTION_MIN_MESSAGES,
-    _DYNAMIC_TOOL_QUERY_MARKERS,
     _EXPLICIT_FILE_READ_RE,
     _EXTERNAL_MODEL_TOOL_NAMES,
-    _FILESYSTEM_INTENT_RE,
     _FILESYSTEM_NOT_FOUND_MARKERS,
     _LIVE_ROUTING_PHASE_ORDER,
     _LOOP_GUARD_MAX_CONSECUTIVE,
-    _MAP_INTENT_RE,
-    _MARKETPLACE_INTENT_RE,
     _MARKETPLACE_PROVIDER_RE,
     _MAX_AGENT_HOPS_PER_TURN,
-    _ROUTE_STRICT_AGENT_POLICIES,
     _SANDBOX_ALIAS_TOOL_IDS,
     _SANDBOX_CODE_TOOL_IDS,
     _SPECIALIZED_AGENTS,
@@ -195,29 +179,17 @@ from app.agents.new_chat.supervisor_constants import (
     _SUBAGENT_DEFAULT_MAX_CONCURRENCY,
     _SUBAGENT_DEFAULT_RESULT_MAX_CHARS,
     _SUBAGENT_MAX_HANDOFFS_IN_PROMPT,
-    _TRAFFIC_INCIDENT_STRICT_RE,
-    _TRAFFIC_INTENT_RE,
-    _TRAFFIC_STRICT_INTENT_RE,
-    _UNAVAILABLE_RESPONSE_MARKERS,
-    _WEATHER_INTENT_RE,
-    _live_phase_enabled,
-    _normalize_live_routing_phase,
-    AGENT_EMBEDDING_WEIGHT,
-    AGENT_RERANK_CANDIDATES,
-    AgentToolProfile,
     KEEP_TOOL_MSG_COUNT,
+    MAX_TOTAL_STEPS,
     MESSAGE_PRUNING_THRESHOLD,
     TOOL_MSG_THRESHOLD,
-    MAX_TOTAL_STEPS,
+    _live_phase_enabled,
+    _normalize_live_routing_phase,
 )
-from app.agents.new_chat.supervisor_types import (
-    AgentDefinition,
-    SupervisorState,
-    _append_artifact_manifest,
-    _append_compare_outputs,
-    _append_recent,
-    _append_subagent_handoffs,
-    _replace,
+from app.agents.new_chat.supervisor_memory import (
+    _persist_artifact_content,
+    _render_cross_session_memory_context,
+    _select_cross_session_memory_entries,
 )
 from app.agents.new_chat.supervisor_routing import (
     _focused_tool_ids_for_agent,
@@ -232,55 +204,6 @@ from app.agents.new_chat.supervisor_routing import (
     _normalize_route_hint_value,
     _route_allowed_agents,
     _route_default_agent,
-    _score_tool_profile,
-    _select_focused_tool_profiles,
-    _tokenize_focus_terms,
-)
-from app.agents.new_chat.supervisor_text_utils import (
-    _coerce_confidence,
-    _coerce_float_range,
-    _coerce_int_range,
-    _dedupe_repeated_lines,
-    _extract_first_json_object,
-    _normalize_citation_spacing,
-    _normalize_line_for_dedupe,
-    _parse_hitl_confirmation,
-    _remove_inline_critic_payloads,
-    _render_hitl_message,
-    _safe_id_segment,
-    _safe_json,
-    _serialize_artifact_payload,
-    _strip_critic_json,
-    _truncate_for_prompt,
-)
-from app.agents.new_chat.supervisor_cache import (
-    _build_cache_key,
-    _fetch_cached_combo_db,
-    _get_cached_combo,
-    _set_cached_combo,
-    _store_cached_combo_db,
-    clear_agent_combo_cache,
-)
-from app.agents.new_chat.supervisor_agent_retrieval import (
-    _build_agent_rerank_text,
-    _cosine_similarity,
-    _get_agent_embedding,
-    _normalize_vector,
-    _rerank_agents,
-    _score_agent,
-    _smart_retrieve_agents,
-    _smart_retrieve_agents_with_breakdown,
-)
-from app.agents.new_chat.supervisor_tools import (
-    _build_scoped_prompt_for_agent,
-    _build_tool_prompt_block,
-    _default_prompt_for_tool_id,
-    _fallback_tool_ids_for_tool,
-    _format_prompt_template,
-    _normalize_tool_id_list,
-    _sanitize_selected_tool_ids_for_worker,
-    _tool_prompt_for_id,
-    _worker_available_tool_ids,
 )
 from app.agents.new_chat.supervisor_state_utils import (
     _count_tools_since_last_user,
@@ -298,26 +221,29 @@ from app.agents.new_chat.supervisor_state_utils import (
     _format_subagent_handoffs_context,
     _tool_call_name_index,
 )
-from app.agents.new_chat.supervisor_memory import (
-    _artifact_runtime_hitl_thread_scope,
-    _persist_artifact_content,
-    _render_cross_session_memory_context,
-    _select_cross_session_memory_entries,
-    _tokenize_for_memory_relevance,
+from app.agents.new_chat.supervisor_text_utils import (
+    _coerce_confidence,
+    _coerce_float_range,
+    _coerce_int_range,
+    _extract_first_json_object,
+    _parse_hitl_confirmation,
+    _render_hitl_message,
+    _safe_json,
+    _serialize_artifact_payload,
+    _strip_critic_json,
+    _truncate_for_prompt,
 )
-
-
-
-
-
-
-
-
-
-
-
-
-
+from app.agents.new_chat.supervisor_tools import (
+    _build_scoped_prompt_for_agent,
+    _build_tool_prompt_block,
+    _fallback_tool_ids_for_tool,
+    _format_prompt_template,
+    _sanitize_selected_tool_ids_for_worker,
+)
+from app.agents.new_chat.supervisor_types import (
+    AgentDefinition,
+    SupervisorState,
+)
 
 _MAX_TOOL_CALLS_PER_TURN = int(os.environ.get("MAX_TOOL_CALLS", "8"))
 _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
@@ -356,13 +282,6 @@ from app.agents.new_chat.supervisor_helpers import (  # noqa: E402
     _summarize_tool_payload,
     _tool_names_from_messages,
 )
-
-
-
-
-
-
-
 
 
 async def create_supervisor_agent(
@@ -1604,7 +1523,7 @@ async def create_supervisor_agent(
     }
     route_to_speculative_tool_ids: dict[str, list[str]] = {
         "kunskap": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
-        "åtgärd": list(dict.fromkeys((weather_tool_ids[:2] + trafik_tool_ids[:2]))),
+        "åtgärd": list(dict.fromkeys(weather_tool_ids[:2] + trafik_tool_ids[:2])),
         "väder": weather_tool_ids[:6],
         "trafik": trafik_tool_ids[:6],
         "statistik": [
@@ -1788,7 +1707,7 @@ async def create_supervisor_agent(
                 worker.ainvoke(worker_state, config=worker_config),
                 timeout=10.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "status": "failed",
                 "reason": "timeout",
@@ -3216,7 +3135,7 @@ async def create_supervisor_agent(
                 worker.ainvoke(worker_state, config=config),
                 timeout=float(execution_timeout_seconds),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error_message = (
                 f"Agent '{name}' timed out after {int(execution_timeout_seconds)}s."
             )
@@ -3365,7 +3284,7 @@ async def create_supervisor_agent(
                         worker.ainvoke(retry_state, config=config),
                         timeout=float(execution_timeout_seconds),
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     error_message = (
                         f"Agent '{name}' retry timed out after "
                         f"{int(execution_timeout_seconds)}s."
@@ -4017,7 +3936,7 @@ async def create_supervisor_agent(
                         worker.ainvoke(worker_state, config=config),
                         timeout=float(execution_timeout_seconds),
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     error_message = (
                         f"Agent '{agent_name}' timed out after "
                         f"{int(execution_timeout_seconds)}s."
@@ -4334,6 +4253,10 @@ async def create_supervisor_agent(
         hitl_planner_message_template=hitl_planner_message_template,
     )
 
+    # Capture live_tool_index + persisted_tuning for namespace exposure closure
+    _ns_tool_index = live_tool_index
+    _ns_tuning = persisted_tuning
+
     tool_resolver_node = build_tool_resolver_node(
         tool_resolver_prompt_template=tool_resolver_prompt_template,
         latest_user_query_fn=_latest_user_query,
@@ -4349,6 +4272,18 @@ async def create_supervisor_agent(
         ),
         weather_tool_ids=weather_tool_ids,
         trafik_tool_ids=trafik_tool_ids,
+        namespace_tool_ids_fn=(
+            (
+                lambda agent_name, query: get_namespace_tool_ids_with_retrieval_hints(
+                    agent_name,
+                    query,
+                    tool_index=_ns_tool_index,
+                    tuning=_ns_tuning,
+                )
+            )
+            if _ns_tool_index
+            else None
+        ),
     )
     execution_router_node = build_execution_router_node(
         latest_user_query_fn=_latest_user_query,
@@ -5518,9 +5453,9 @@ async def create_supervisor_agent(
     elif debate_mode:
         # ─── Debate Supervisor v1: 4-round debate architecture ────────
         from app.agents.new_chat.debate_executor import (
+            build_debate_convergence_node,
             build_debate_domain_planner_node,
             build_debate_round_executor_node,
-            build_debate_convergence_node,
             build_debate_synthesizer_node,
         )
 
