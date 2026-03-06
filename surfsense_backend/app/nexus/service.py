@@ -75,6 +75,60 @@ from app.nexus.schemas import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers for mapping namespaces to real zone domain_ids
+# ---------------------------------------------------------------------------
+
+
+def _zone_from_namespace_str(namespace: str) -> str:
+    """Derive the real zone domain_id from a namespace string.
+
+    Uses NAMESPACE_ZONE_MAP so "tools/trafik/trafikverket_trafikinfo"
+    resolves to "trafik-och-transport" instead of just "trafik".
+    """
+    from app.nexus.config import NAMESPACE_ZONE_MAP
+
+    if "/" not in namespace:
+        return namespace
+    parts = namespace.split("/")
+    if len(parts) >= 2:
+        prefix = f"{parts[0]}/{parts[1]}"
+        if prefix in NAMESPACE_ZONE_MAP:
+            return NAMESPACE_ZONE_MAP[prefix]
+    return parts[1] if len(parts) > 1 else namespace
+
+
+def _all_zone_centers() -> dict[str, tuple[float, float]]:
+    """Return 2D cluster centers for all 17 domains.
+
+    Spread across a grid so each domain gets a distinct visual cluster
+    in the UMAP space map.
+    """
+    return {
+        # Row 1 (top)
+        "väder-och-klimat": (-4.0, 3.0),
+        "trafik-och-transport": (-2.0, 3.0),
+        "energi-och-miljö": (0.0, 3.0),
+        "hälsa-och-vård": (2.0, 3.0),
+        # Row 2
+        "ekonomi-och-skatter": (-4.0, 1.0),
+        "arbetsmarknad": (-2.0, 1.0),
+        "befolkning-och-demografi": (0.0, 1.0),
+        "utbildning": (2.0, 1.0),
+        # Row 3
+        "näringsliv-och-bolag": (-4.0, -1.0),
+        "fastighet-och-mark": (-2.0, -1.0),
+        "handel-och-marknad": (0.0, -1.0),
+        "politik-och-beslut": (2.0, -1.0),
+        "rättsväsende": (4.0, -1.0),
+        # Row 4 (bottom)
+        "kunskap": (-3.0, -3.0),
+        "skapande": (-1.0, -3.0),
+        "konversation": (1.0, -3.0),
+        "jämförelse": (3.0, -3.0),
+    }
+
+
 class NexusService:
     """Orchestrates the full NEXUS precision routing pipeline."""
 
@@ -538,7 +592,7 @@ class NexusService:
                     continue
                 seen.add(snap.tool_id)
 
-                zone = snap.namespace.split("/")[1] if "/" in snap.namespace else ""
+                zone = _zone_from_namespace_str(snap.namespace)
 
                 # Try real embedding from the configured model
                 prefixed_text = f"[{zone.upper()[:5]}] {snap.tool_id} {snap.namespace}"
@@ -643,9 +697,7 @@ class NexusService:
                         "tool_id": snap.tool_id,
                         "x": snap.umap_x,
                         "y": snap.umap_y,
-                        "zone": snap.namespace.split("/")[1]
-                        if "/" in snap.namespace
-                        else "",
+                        "zone": _zone_from_namespace_str(snap.namespace),
                         "cluster": snap.cluster_label,
                     }
                 )
@@ -665,12 +717,8 @@ class NexusService:
             )
 
         # Generate UMAP-like 2D coordinates clustered by zone
-        zone_centers = {
-            "kunskap": (-1.0, 1.5),
-            "skapande": (2.0, -1.0),
-            "jämförelse": (3.0, 2.0),
-            "konversation": (-3.0, -2.0),
-        }
+        # All 17 domains get distinct cluster centers
+        zone_centers = _all_zone_centers()
         zone_list = list(zone_centers.keys())
 
         points = []
@@ -1298,13 +1346,8 @@ class NexusService:
                 # Fallback: use zone-based synthetic 2D coordinates
                 import random
 
-                zone_centers = {
-                    "kunskap": (-1.0, 1.5),
-                    "skapande": (2.0, -1.0),
-                    "jämförelse": (3.0, 2.0),
-                    "konversation": (-3.0, -2.0),
-                }
-                cx, cy = zone_centers.get(pt.zone, (0, 0))
+                all_centers = _all_zone_centers()
+                cx, cy = all_centers.get(pt.zone, (0, 0))
                 points.append(
                     ToolPoint(
                         tool_id=pt.tool_id,
