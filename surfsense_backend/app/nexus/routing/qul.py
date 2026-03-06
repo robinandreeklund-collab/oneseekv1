@@ -188,7 +188,10 @@ class QueryUnderstandingLayer:
         )
 
         # 5. Zone candidate scoring
-        zone_candidates = self._resolve_zones(domain_hints, entities)
+        zone_candidates = self._resolve_zones(
+            domain_hints, entities,
+            domain_hints_map=domain_hints_map,
+        )
 
         # 6. Complexity classification
         complexity = self._classify_complexity(normalized, is_multi, entities)
@@ -338,20 +341,35 @@ class QueryUnderstandingLayer:
         return hints
 
     def _resolve_zones(
-        self, domain_hints: list[str], entities: QueryEntities
+        self,
+        domain_hints: list[str],
+        entities: QueryEntities,
+        *,
+        domain_hints_map: dict[str, list[str]] | None = None,
     ) -> list[str]:
-        """Determine candidate zones from domain hints and entities."""
-        # Only include actual zone values, not category hints
+        """Determine candidate zones from domain hints and entities.
+
+        Valid zones are derived from the domain_hints_map keys (which may
+        include fine-grained domain IDs like "väder-och-klimat") plus the
+        legacy Zone enum values.
+        """
+        # Build valid zone set from the hints map keys + legacy Zone enum
         valid_zones = {z.value for z in Zone}
+        if domain_hints_map:
+            valid_zones.update(domain_hints_map.keys())
+        else:
+            # Fall back to static DOMAIN_HINTS keys
+            valid_zones.update(DOMAIN_HINTS.keys())
+
         zones: list[str] = [h for h in domain_hints if h in valid_zones]
 
         # Location entities boost kunskap zone (government/statistics data)
-        if entities.locations and Zone.KUNSKAP not in zones:
-            zones.append(Zone.KUNSKAP)
+        if entities.locations and Zone.KUNSKAP.value not in zones:
+            zones.append(Zone.KUNSKAP.value)
 
         # If no hints at all, return broad search
         if not zones:
-            zones = [Zone.KUNSKAP, Zone.SKAPANDE]
+            zones = [Zone.KUNSKAP.value, Zone.SKAPANDE.value]
 
         return zones
 

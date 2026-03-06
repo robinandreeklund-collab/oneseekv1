@@ -177,12 +177,13 @@ class NexusService:
     async def get_zones(self, session: AsyncSession) -> list[ZoneConfigResponse]:
         """Return all zone configurations from DB.
 
-        Auto-seeds missing zones into DB so that all 4 zones always appear.
-        Filters out stale zone names (e.g. old 'myndigheter', 'handling').
+        Auto-seeds missing zones into DB so that all domains appear.
+        Uses ``get_all_zone_prefixes()`` which includes both legacy 4 zones
+        and the new 17 domain zones.
         """
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
 
-        valid_zones = set(ZONE_PREFIXES.keys())
+        valid_zones = set(get_all_zone_prefixes().keys())
 
         result = await session.execute(select(NexusZoneConfig))
         rows = result.scalars().all()

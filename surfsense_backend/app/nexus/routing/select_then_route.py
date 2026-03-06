@@ -69,10 +69,11 @@ class SelectThenRoute:
         Returns:
             Selected zone names (at most max_zones).
         """
-        valid_zones = [z for z in zone_candidates if z in [v.value for v in Zone]]
+        # Accept any zone candidate (domain_ids or legacy zone names)
+        valid_zones = list(zone_candidates) if zone_candidates else []
         if not valid_zones:
             # Fallback: search the two broadest zones
-            return [Zone.KUNSKAP, Zone.SKAPANDE]
+            return [Zone.KUNSKAP.value, Zone.SKAPANDE.value]
         return valid_zones[:max_zones]
 
     def retrieve_per_zone(

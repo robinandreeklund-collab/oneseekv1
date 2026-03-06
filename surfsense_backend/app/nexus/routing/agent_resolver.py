@@ -1,7 +1,8 @@
 """Agent Resolver — selects candidate agents after intent/zone resolution.
 
-Given a zone (intent) and a query, scores and ranks agents using keyword
-matching and domain hint overlap.  No LLM calls — pure heuristic (<2 ms).
+Given a zone (domain/intent) and a query, scores and ranks agents using
+keyword matching and domain hint overlap.  No LLM calls — pure heuristic
+(<2 ms).
 
 Flow position:  QUL (intent/zone) → **AgentResolver** → StR (tool retrieval)
 """
@@ -15,8 +16,8 @@ from dataclasses import dataclass, field
 from app.nexus.config import (
     AGENT_BY_NAME,
     AGENTS_BY_ZONE,
+    DOMAIN_HINTS,
     NexusAgent,
-    Zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,13 +86,13 @@ class AgentResolver:
         organizations: list[str] | None = None,
         max_agents: int = 3,
         agent_by_name: dict[str, NexusAgent] | None = None,
-        agents_by_zone: dict[Zone, list[NexusAgent]] | None = None,
+        agents_by_zone: dict[str, list[NexusAgent]] | None = None,
     ) -> AgentResolutionResult:
         """Score and select agents for the query.
 
         Args:
             query: Normalized user query.
-            zone_candidates: Zones identified by QUL.
+            zone_candidates: Zones (domain_ids) identified by QUL.
             domain_hints: Domain keywords from QUL (zones + category hints).
             organizations: Organization entities from QUL.
             max_agents: Maximum number of agents to select.
@@ -107,20 +108,19 @@ class AgentResolver:
         lower_query = query.lower()
         scored: list[AgentCandidate] = []
 
+        # Build valid zone set from available domain hints + agents_by_zone keys
+        zone_values = set(DOMAIN_HINTS.keys())
+        zone_values.update(_agents_by_zone.keys())
+
         # Separate zone names from category hints in domain_hints
-        zone_values = {z.value for z in Zone}
         category_hints = set()
         if domain_hints:
             category_hints = {h for h in domain_hints if h not in zone_values}
 
-        # Collect agents from candidate zones
+        # Collect agents from candidate zones (using string keys)
         candidate_agents: list[NexusAgent] = []
         for zone_name in zone_candidates:
-            try:
-                zone = Zone(zone_name)
-            except ValueError:
-                continue
-            candidate_agents.extend(_agents_by_zone.get(zone, []))
+            candidate_agents.extend(_agents_by_zone.get(zone_name, []))
 
         # Deduplicate
         seen_names: set[str] = set()

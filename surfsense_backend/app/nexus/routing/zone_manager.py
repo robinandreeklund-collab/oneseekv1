@@ -12,34 +12,32 @@ from typing import Any
 
 import numpy as np
 
-from app.nexus.config import NAMESPACE_ZONE_MAP, ZONE_PREFIXES, Zone
+from app.nexus.config import NAMESPACE_ZONE_MAP, get_all_zone_prefixes
 
 logger = logging.getLogger(__name__)
 
 
 class ZoneManager:
-    """Manages the 4-zone embedding architecture.
+    """Manages the domain-based zone embedding architecture.
 
-    Zone architecture (aligned with platform intents):
-        [KUNSK]  — Kunskap: SMHI, SCB, Trafikverket, Riksdagen, sök, webb
-        [SKAP]   — Skapande: sandbox, podcast, bildgenerering, kartor, kod
-        [JAMFR]  — Jämförelse: multi-model calls (GPT, Claude, Grok)
-        [KONV]   — Konversation: småprat, hälsningar
+    Supports both the 4 legacy zones (kunskap, skapande, jämförelse,
+    konversation) and the new 17 fine-grained domain zones (väder-och-klimat,
+    trafik-och-transport, etc.).
 
     Zone-prefix embeddings improve inter-zone distance by +12-18%
     without fine-tuning the underlying embedding model.
     """
 
     def __init__(self):
-        self.zones = list(Zone)
-        self.prefixes = ZONE_PREFIXES
+        self.prefixes = get_all_zone_prefixes()
+        self.zones = list(self.prefixes.keys())
         self.namespace_map = NAMESPACE_ZONE_MAP
         # Zone centroids (loaded from DB or computed from tool embeddings)
         self._centroids: dict[str, np.ndarray] = {}
 
     def resolve_zone_from_namespace(
         self, namespace: str | tuple[str, ...]
-    ) -> Zone | None:
+    ) -> str | None:
         """Map a namespace (or namespace tuple) to a zone.
 
         Args:
@@ -47,7 +45,7 @@ class ZoneManager:
                        or ("tools", "weather", "smhi")).
 
         Returns:
-            The resolved Zone, or None if no match.
+            The resolved zone string, or None if no match.
         """
         if isinstance(namespace, (list, tuple)):
             ns_str = "/".join(namespace)
@@ -63,19 +61,18 @@ class ZoneManager:
 
         return None
 
-    def get_zone_prefix(self, zone: Zone | str) -> str:
+    def get_zone_prefix(self, zone: str) -> str:
         """Get the prefix token for a zone.
 
         Args:
-            zone: Zone enum or string name.
+            zone: Zone string name (domain_id or legacy zone name).
 
         Returns:
             Prefix string (e.g., "[KUNSK] ").
         """
-        zone_key = Zone(zone) if isinstance(zone, str) else zone
-        return self.prefixes.get(zone_key, "")
+        return self.prefixes.get(zone, "")
 
-    def prefix_text_for_zone(self, text: str, zone: Zone | str) -> str:
+    def prefix_text_for_zone(self, text: str, zone: str) -> str:
         """Prepend zone prefix to text for embedding.
 
         Args:
@@ -101,7 +98,7 @@ class ZoneManager:
         Returns:
             Query string, possibly with zone prefix.
         """
-        if zone_hint and zone_hint in [z.value for z in Zone]:
+        if zone_hint and zone_hint in self.prefixes:
             return self.prefix_text_for_zone(query, zone_hint)
         return query
 
@@ -109,15 +106,15 @@ class ZoneManager:
         """Return zone configuration for seeding or API responses."""
         return [
             {
-                "zone": zone.value,
-                "prefix_token": self.prefixes[zone],
+                "zone": zone,
+                "prefix_token": self.prefixes.get(zone, ""),
             }
             for zone in self.zones
         ]
 
     def get_all_zone_names(self) -> list[str]:
         """Return all zone names."""
-        return [z.value for z in self.zones]
+        return list(self.zones)
 
     # ----- Zone-prefix embedding methods (Sprint 2) -----
 
