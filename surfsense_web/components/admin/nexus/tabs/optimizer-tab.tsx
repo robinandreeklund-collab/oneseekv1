@@ -16,6 +16,7 @@ import {
 	Check,
 	ChevronDown,
 	ChevronRight,
+	Layers,
 	Loader2,
 	Sparkles,
 	X,
@@ -25,14 +26,16 @@ import {
 	nexusApiService,
 	type ToolSuggestionResponse,
 	type OptimizerResultResponse,
+	type IntentLayerItemSuggestion,
+	type IntentLayerResultResponse,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
-type FilterMode = "namespace" | "category";
+type FilterMode = "namespace" | "category" | "intent-layer";
 
 // ---------------------------------------------------------------------------
-// Suggestion Card — diff view for a single tool
+// Shared diff view component
 // ---------------------------------------------------------------------------
 
 function DiffValue({
@@ -72,6 +75,10 @@ function DiffValue({
 		</div>
 	);
 }
+
+// ---------------------------------------------------------------------------
+// Tool Suggestion Card (namespace/category mode)
+// ---------------------------------------------------------------------------
 
 function SuggestionCard({
 	suggestion,
@@ -184,6 +191,131 @@ function SuggestionCard({
 }
 
 // ---------------------------------------------------------------------------
+// Intent Layer Suggestion Card (domain/agent)
+// ---------------------------------------------------------------------------
+
+function IntentLayerSuggestionCard({
+	suggestion,
+	approved,
+	onApprove,
+	onReject,
+}: {
+	suggestion: IntentLayerItemSuggestion;
+	approved: boolean | null;
+	onApprove: () => void;
+	onReject: () => void;
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const typeLabel = suggestion.item_type === "domain" ? "Domän" : "Agent";
+
+	return (
+		<div
+			className={`rounded-lg border p-4 ${
+				approved === true
+					? "border-green-300 bg-green-50/50 dark:border-green-800 dark:bg-green-950/30"
+					: approved === false
+						? "border-red-300 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30 opacity-60"
+						: "border-border"
+			}`}
+		>
+			<div className="flex items-center justify-between">
+				<button
+					type="button"
+					className="flex items-center gap-2 text-left flex-1"
+					onClick={() => setExpanded(!expanded)}
+				>
+					{expanded ? (
+						<ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+					) : (
+						<ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+					)}
+					<div>
+						<div className="flex items-center gap-2">
+							<Badge
+								variant={suggestion.item_type === "domain" ? "default" : "secondary"}
+								className="text-xs py-0"
+							>
+								{typeLabel}
+							</Badge>
+							<p className="font-medium text-sm">{suggestion.item_id}</p>
+						</div>
+						<div className="flex flex-wrap gap-1 mt-0.5">
+							{suggestion.fields_changed.map((f) => (
+								<Badge key={f} variant="outline" className="text-xs py-0">
+									{f}
+								</Badge>
+							))}
+						</div>
+					</div>
+				</button>
+
+				<div className="flex items-center gap-1.5 shrink-0">
+					<Button
+						variant={approved === true ? "default" : "outline"}
+						size="sm"
+						onClick={onApprove}
+						className="h-7 px-2"
+					>
+						<Check className="h-3.5 w-3.5 mr-1" />
+						Godkänn
+					</Button>
+					<Button
+						variant={approved === false ? "destructive" : "outline"}
+						size="sm"
+						onClick={onReject}
+						className="h-7 px-2"
+					>
+						<X className="h-3.5 w-3.5 mr-1" />
+						Avvisa
+					</Button>
+				</div>
+			</div>
+
+			{suggestion.reasoning && (
+				<p className="text-xs text-muted-foreground mt-2 italic">
+					{suggestion.reasoning}
+				</p>
+			)}
+
+			{expanded && (
+				<div className="mt-4 space-y-3 border-t pt-3">
+					<DiffValue
+						label="Description"
+						current={suggestion.current.description}
+						suggested={suggestion.suggested.description}
+					/>
+					<DiffValue
+						label="Keywords"
+						current={suggestion.current.keywords}
+						suggested={suggestion.suggested.keywords}
+					/>
+					<DiffValue
+						label="Excludes"
+						current={suggestion.current.excludes}
+						suggested={suggestion.suggested.excludes}
+					/>
+					<DiffValue
+						label="Main Identifier"
+						current={suggestion.current.main_identifier}
+						suggested={suggestion.suggested.main_identifier}
+					/>
+					<DiffValue
+						label="Core Activity"
+						current={suggestion.current.core_activity}
+						suggested={suggestion.suggested.core_activity}
+					/>
+					<DiffValue
+						label="Unique Scope"
+						current={suggestion.current.unique_scope}
+						suggested={suggestion.suggested.unique_scope}
+					/>
+				</div>
+			)}
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
 // OptimizerTab — main component
 // ---------------------------------------------------------------------------
 
@@ -197,7 +329,14 @@ export function OptimizerTab() {
 	const [loading, setLoading] = useState(true);
 	const [generating, setGenerating] = useState(false);
 	const [applying, setApplying] = useState(false);
+
+	// Tool optimizer state
 	const [result, setResult] = useState<OptimizerResultResponse | null>(null);
+
+	// Intent layer optimizer state
+	const [intentResult, setIntentResult] = useState<IntentLayerResultResponse | null>(null);
+
+	// Shared approval state (keyed by tool_id or item_id)
 	const [approvalMap, setApprovalMap] = useState<Record<string, boolean | null>>({});
 	const [applyResult, setApplyResult] = useState<string | null>(null);
 
@@ -240,16 +379,52 @@ export function OptimizerTab() {
 	})();
 
 	const canGenerate =
-		(filterMode === "namespace" && selectedNamespace) ||
-		(filterMode === "category" && selectedCategory);
+		filterMode === "intent-layer" ||
+		(filterMode === "namespace" && !!selectedNamespace) ||
+		(filterMode === "category" && !!selectedCategory);
+
+	// Reset results when switching modes
+	const switchMode = (mode: FilterMode) => {
+		setFilterMode(mode);
+		setResult(null);
+		setIntentResult(null);
+		setApprovalMap({});
+		setApplyResult(null);
+	};
 
 	const handleGenerate = useCallback(async () => {
 		if (!canGenerate) return;
 		setGenerating(true);
 		setResult(null);
+		setIntentResult(null);
 		setApprovalMap({});
 		setApplyResult(null);
 
+		if (filterMode === "intent-layer") {
+			// Intent layer optimization
+			try {
+				const res = await nexusApiService.intentLayerGenerate({});
+				setIntentResult(res);
+				const map: Record<string, boolean | null> = {};
+				for (const s of res.suggestions) {
+					map[`${s.item_type}:${s.item_id}`] = null;
+				}
+				setApprovalMap(map);
+			} catch (err) {
+				setIntentResult({
+					total_domains: 0,
+					total_agents: 0,
+					suggestions: [],
+					model_used: "",
+					error: err instanceof Error ? err.message : "Unknown error",
+				});
+			} finally {
+				setGenerating(false);
+			}
+			return;
+		}
+
+		// Tool optimization (namespace/category)
 		const request: { category?: string; namespace?: string } = {};
 		if (filterMode === "namespace" && selectedNamespace) {
 			request.namespace = selectedNamespace;
@@ -278,33 +453,74 @@ export function OptimizerTab() {
 		}
 	}, [canGenerate, filterMode, selectedNamespace, selectedCategory]);
 
-	const handleApprove = (toolId: string) => {
+	const handleApprove = (key: string) => {
 		setApprovalMap((prev) => ({
 			...prev,
-			[toolId]: prev[toolId] === true ? null : true,
+			[key]: prev[key] === true ? null : true,
 		}));
 	};
 
-	const handleReject = (toolId: string) => {
+	const handleReject = (key: string) => {
 		setApprovalMap((prev) => ({
 			...prev,
-			[toolId]: prev[toolId] === false ? null : false,
+			[key]: prev[key] === false ? null : false,
 		}));
 	};
 
 	const handleApproveAll = () => {
-		if (!result) return;
-		const map: Record<string, boolean | null> = {};
-		for (const s of result.suggestions) {
-			map[s.tool_id] = true;
+		if (filterMode === "intent-layer" && intentResult) {
+			const map: Record<string, boolean | null> = {};
+			for (const s of intentResult.suggestions) {
+				map[`${s.item_type}:${s.item_id}`] = true;
+			}
+			setApprovalMap(map);
+		} else if (result) {
+			const map: Record<string, boolean | null> = {};
+			for (const s of result.suggestions) {
+				map[s.tool_id] = true;
+			}
+			setApprovalMap(map);
 		}
-		setApprovalMap(map);
 	};
 
 	const handleApply = useCallback(async () => {
-		if (!result) return;
 		setApplying(true);
 		setApplyResult(null);
+
+		if (filterMode === "intent-layer" && intentResult) {
+			// Intent layer apply
+			const approved = intentResult.suggestions
+				.filter((s) => approvalMap[`${s.item_type}:${s.item_id}`] === true)
+				.map((s) => ({
+					item_id: s.item_id,
+					item_type: s.item_type,
+					...s.suggested,
+				}));
+
+			if (approved.length === 0) {
+				setApplyResult("Inga godkända förslag att tillämpa.");
+				setApplying(false);
+				return;
+			}
+
+			try {
+				const res = await nexusApiService.intentLayerApply(approved);
+				setApplyResult(
+					`Tillämpat ${res.applied_domains} domäner och ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu de uppdaterade definitionerna.`,
+				);
+			} catch (err) {
+				setApplyResult(`Fel: ${err instanceof Error ? err.message : "Unknown error"}`);
+			} finally {
+				setApplying(false);
+			}
+			return;
+		}
+
+		// Tool apply
+		if (!result) {
+			setApplying(false);
+			return;
+		}
 
 		const approved = result.suggestions
 			.filter((s) => approvalMap[s.tool_id] === true)
@@ -325,17 +541,30 @@ export function OptimizerTab() {
 				`Tillämpat ${res.applied} verktyg. ${res.skipped > 0 ? `${res.skipped} hoppade över.` : ""} NEXUS använder nu de nya metadata-overrides.`,
 			);
 		} catch (err) {
-			setApplyResult(
-				`Fel: ${err instanceof Error ? err.message : "Unknown error"}`,
-			);
+			setApplyResult(`Fel: ${err instanceof Error ? err.message : "Unknown error"}`);
 		} finally {
 			setApplying(false);
 		}
-	}, [result, approvalMap]);
+	}, [filterMode, result, intentResult, approvalMap]);
 
 	const approvedCount = Object.values(approvalMap).filter((v) => v === true).length;
 	const rejectedCount = Object.values(approvalMap).filter((v) => v === false).length;
 	const pendingCount = Object.values(approvalMap).filter((v) => v === null).length;
+
+	// Active result (either tool or intent layer)
+	const activeModelUsed =
+		filterMode === "intent-layer" ? intentResult?.model_used : result?.model_used;
+	const activeError =
+		filterMode === "intent-layer" ? intentResult?.error : result?.error;
+	const activeSuggestionCount =
+		filterMode === "intent-layer"
+			? (intentResult?.suggestions.length ?? 0)
+			: (result?.suggestions.length ?? 0);
+	const activeTotalCount =
+		filterMode === "intent-layer"
+			? (intentResult?.total_domains ?? 0) + (intentResult?.total_agents ?? 0)
+			: (result?.total_tools ?? 0);
+	const hasResult = filterMode === "intent-layer" ? !!intentResult : !!result;
 
 	return (
 		<div className="space-y-6">
@@ -343,10 +572,10 @@ export function OptimizerTab() {
 			<Alert>
 				<Sparkles className="h-4 w-4" />
 				<AlertDescription>
-					Använd AI (Claude Sonnet) för att optimera verktygsmetadata per namespace.
-					LLM:en ser alla verktyg i batchen och maximerar embedding-separation
-					mellan dem. Godkända förslag sparas som DB-overrides och påverkar
-					NEXUS-routing direkt.
+					Använd AI (Claude Sonnet) för att optimera metadata. Välj
+					namespace/kategori för verktyg, eller &quot;Intent-lager&quot; för att
+					optimera alla domäner och agenter samtidigt. LLM:en maximerar
+					embedding-separation. Godkända förslag sparas som DB-overrides.
 				</AlertDescription>
 			</Alert>
 
@@ -362,22 +591,36 @@ export function OptimizerTab() {
 							<Button
 								variant={filterMode === "namespace" ? "default" : "outline"}
 								size="sm"
-								onClick={() => setFilterMode("namespace")}
+								onClick={() => switchMode("namespace")}
 							>
 								Namespace
 							</Button>
 							<Button
 								variant={filterMode === "category" ? "default" : "outline"}
 								size="sm"
-								onClick={() => setFilterMode("category")}
+								onClick={() => switchMode("category")}
 							>
 								Kategori
+							</Button>
+							<Button
+								variant={filterMode === "intent-layer" ? "default" : "outline"}
+								size="sm"
+								onClick={() => switchMode("intent-layer")}
+							>
+								<Layers className="h-3.5 w-3.5 mr-1.5" />
+								Intent-lager
 							</Button>
 						</div>
 
 						<div className="flex items-end gap-3">
 							<div className="flex-1 max-w-sm">
-								{loading ? (
+								{filterMode === "intent-layer" ? (
+									<p className="text-sm text-muted-foreground py-2">
+										Optimerar hela intent-lagret: alla 17 domäner och 13 agenter
+										skickas till LLM för batch-optimering av keywords,
+										descriptions och excludes.
+									</p>
+								) : loading ? (
 									<div className="flex items-center gap-2 text-muted-foreground h-9">
 										<Loader2 className="h-4 w-4 animate-spin" />
 										Laddar verktyg...
@@ -446,6 +689,11 @@ export function OptimizerTab() {
 										<Loader2 className="h-4 w-4 animate-spin mr-2" />
 										Genererar...
 									</>
+								) : filterMode === "intent-layer" ? (
+									<>
+										<Layers className="h-4 w-4 mr-2" />
+										Optimera Intent-lager
+									</>
 								) : (
 									<>
 										<Sparkles className="h-4 w-4 mr-2" />
@@ -455,9 +703,9 @@ export function OptimizerTab() {
 							</Button>
 						</div>
 
-						{result?.model_used && (
+						{activeModelUsed && (
 							<p className="text-xs text-muted-foreground">
-								Modell: {result.model_used}
+								Modell: {activeModelUsed}
 							</p>
 						)}
 					</div>
@@ -465,31 +713,29 @@ export function OptimizerTab() {
 			</Card>
 
 			{/* Error */}
-			{result?.error && (
+			{activeError && (
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
-					<AlertDescription>{result.error}</AlertDescription>
+					<AlertDescription>{activeError}</AlertDescription>
 				</Alert>
 			)}
 
 			{/* Results */}
-			{result && result.suggestions.length > 0 && (
+			{hasResult && activeSuggestionCount > 0 && (
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between">
 						<div>
 							<CardTitle className="text-base">
-								Förslag ({result.suggestions.length} av {result.total_tools} verktyg)
+								Förslag ({activeSuggestionCount} av {activeTotalCount}{" "}
+								{filterMode === "intent-layer" ? "objekt" : "verktyg"})
 							</CardTitle>
 							<p className="text-xs text-muted-foreground mt-1">
-								{approvedCount} godkända · {rejectedCount} avvisade · {pendingCount} väntande
+								{approvedCount} godkända · {rejectedCount} avvisade · {pendingCount}{" "}
+								väntande
 							</p>
 						</div>
 						<div className="flex items-center gap-2">
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={handleApproveAll}
-							>
+							<Button variant="outline" size="sm" onClick={handleApproveAll}>
 								Godkänn alla
 							</Button>
 							<Button
@@ -519,22 +765,35 @@ export function OptimizerTab() {
 						)}
 
 						<div className="space-y-3">
-							{result.suggestions.map((s) => (
-								<SuggestionCard
-									key={s.tool_id}
-									suggestion={s}
-									approved={approvalMap[s.tool_id] ?? null}
-									onApprove={() => handleApprove(s.tool_id)}
-									onReject={() => handleReject(s.tool_id)}
-								/>
-							))}
+							{filterMode === "intent-layer" && intentResult
+								? intentResult.suggestions.map((s) => {
+										const key = `${s.item_type}:${s.item_id}`;
+										return (
+											<IntentLayerSuggestionCard
+												key={key}
+												suggestion={s}
+												approved={approvalMap[key] ?? null}
+												onApprove={() => handleApprove(key)}
+												onReject={() => handleReject(key)}
+											/>
+										);
+									})
+								: result?.suggestions.map((s) => (
+										<SuggestionCard
+											key={s.tool_id}
+											suggestion={s}
+											approved={approvalMap[s.tool_id] ?? null}
+											onApprove={() => handleApprove(s.tool_id)}
+											onReject={() => handleReject(s.tool_id)}
+										/>
+									))}
 						</div>
 					</CardContent>
 				</Card>
 			)}
 
 			{/* No suggestions */}
-			{result && result.suggestions.length === 0 && !result.error && (
+			{hasResult && activeSuggestionCount === 0 && !activeError && (
 				<Card>
 					<CardContent className="pt-6">
 						<p className="text-sm text-muted-foreground text-center">

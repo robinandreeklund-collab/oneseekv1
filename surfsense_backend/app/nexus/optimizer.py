@@ -526,3 +526,413 @@ class MetadataOptimizer:
     def get_available_categories(self) -> list[str]:
         """Return all available tool categories."""
         return get_category_names()
+
+
+# ---------------------------------------------------------------------------
+# Intent Layer Optimizer
+# ---------------------------------------------------------------------------
+
+_INTENT_LAYER_SYSTEM_PROMPT = """\
+Du är en expert på information retrieval, intent-klassificering och embedding-optimering.
+Din uppgift är att optimera metadata för hela intent-lagret i ett AI-routing-system.
+
+Intent-lagret består av:
+1. DOMÄNER — 17 domäner som fångar olika ämnesområden (väder, trafik, ekonomi, etc.)
+2. AGENTER — 13 agenter som äger specifika verktyg inom varje domän
+
+REGLER FÖR DOMÄNER:
+- Varje domäns keywords MÅSTE vara unika och tydligt skilja sig från andra domäners keywords
+- Description ska vara specifik nog att skilja domänen från närliggande domäner
+- Excludes ska lista domäner/termer som INTE ska matcha denna domän
+- Keywords används för word-boundary matching i svenska frågor
+- Undvik överlappande keywords mellan domäner (t.ex. "kommun" i bara EN domän)
+
+REGLER FÖR AGENTER:
+- Varje agents keywords MÅSTE vara unika inom sin domän och gentemot andra domäners agenter
+- Description ska tydligt separera agenten från andra agenter i samma domän
+- Excludes ska förhindra felrouting till denna agent
+- main_identifier, core_activity och unique_scope bör vara maximalt distinkta
+
+VIKTIGT:
+- Tänk på att keywords matchas med \\b word-boundary regex
+- Flerteckens-keywords (t.ex. "lediga jobb") matchas som substring
+- Domänkeywords triggar zon-routing, agentkeywords triggar agent-routing inom zonen
+- Svara ENBART med valid JSON. Ingen markdown utanför JSON."""
+
+_INTENT_LAYER_USER_TEMPLATE = """\
+Här är hela intent-lagret med {domain_count} domäner och {agent_count} agenter.
+Optimera metadata så att varje domän och agent blir maximalt separerade.
+
+DOMÄNER:
+{domains_json}
+
+AGENTER:
+{agents_json}
+
+Svara med en JSON-objekt med två nycklar:
+{{
+  "domains": [
+    {{
+      "domain_id": "...",
+      "description": "optimerad description",
+      "keywords": ["lista", "av", "keywords"],
+      "excludes": ["termer som INTE ska matcha"],
+      "main_identifier": "...",
+      "core_activity": "...",
+      "unique_scope": "...",
+      "reasoning": "kort motivering"
+    }}
+  ],
+  "agents": [
+    {{
+      "agent_id": "...",
+      "description": "optimerad description",
+      "keywords": ["lista", "av", "keywords"],
+      "excludes": ["termer som INTE ska matcha"],
+      "main_identifier": "...",
+      "core_activity": "...",
+      "unique_scope": "...",
+      "reasoning": "kort motivering"
+    }}
+  ]
+}}
+
+Returnera exakt {domain_count} domäner och {agent_count} agenter."""
+
+
+@dataclass
+class IntentLayerSuggestion:
+    """A single domain or agent suggestion."""
+
+    item_id: str
+    item_type: str  # "domain" | "agent"
+    current: dict[str, Any]
+    suggested: dict[str, Any]
+    reasoning: str = ""
+    fields_changed: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IntentLayerResult:
+    """Result from an intent layer optimizer run."""
+
+    total_domains: int = 0
+    total_agents: int = 0
+    suggestions: list[IntentLayerSuggestion] = field(default_factory=list)
+    model_used: str = ""
+    error: str | None = None
+
+
+class IntentLayerOptimizer:
+    """LLM-powered optimizer for the entire intent layer (domains + agents)."""
+
+    async def generate_suggestions(
+        self,
+        session: AsyncSession,
+        *,
+        llm_config_id: int = -24,
+    ) -> IntentLayerResult:
+        """Generate optimized metadata for all domains and agents."""
+        from app.services.agent_metadata_service import get_effective_agent_metadata
+        from app.services.intent_domain_service import get_effective_intent_domains
+
+        # 1. Load current domains and agents
+        domains = await get_effective_intent_domains(session)
+        agents = await get_effective_agent_metadata(session)
+
+        if not domains and not agents:
+            return IntentLayerResult(error="No domains or agents found")
+
+        # 2. Build current metadata summaries (stripped of non-optimizable fields)
+        domain_meta = self._build_domain_meta(domains)
+        agent_meta = self._build_agent_meta(agents)
+
+        # 3. Build prompt
+        prompt = _INTENT_LAYER_USER_TEMPLATE.format(
+            domain_count=len(domain_meta),
+            agent_count=len(agent_meta),
+            domains_json=json.dumps(domain_meta, ensure_ascii=False, indent=2),
+            agents_json=json.dumps(agent_meta, ensure_ascii=False, indent=2),
+        )
+
+        # 4. Call LLM with intent layer system prompt
+        try:
+            model_string, response_text = await self._call_llm_with_system(
+                _INTENT_LAYER_SYSTEM_PROMPT, prompt, llm_config_id
+            )
+        except Exception as e:
+            logger.error("Intent layer optimizer LLM call failed: %s", e)
+            return IntentLayerResult(
+                total_domains=len(domains),
+                total_agents=len(agents),
+                error=str(e),
+            )
+
+        # 5. Parse response
+        suggestions = self._parse_response(response_text, domain_meta, agent_meta)
+
+        return IntentLayerResult(
+            total_domains=len(domains),
+            total_agents=len(agents),
+            suggestions=suggestions,
+            model_used=model_string,
+        )
+
+    async def apply_suggestions(
+        self,
+        session: AsyncSession,
+        suggestions: list[dict[str, Any]],
+        *,
+        user_id: Any = None,
+    ) -> dict[str, Any]:
+        """Apply approved intent layer suggestions to DB."""
+        from app.services.agent_metadata_service import (
+            upsert_global_agent_metadata_overrides,
+        )
+        from app.services.intent_domain_service import upsert_intent_domain
+
+        domain_count = 0
+        agent_count = 0
+
+        for item in suggestions:
+            item_type = item.get("item_type", "")
+            item_id = item.get("item_id", "")
+            if not item_id:
+                continue
+
+            if item_type == "domain":
+                await upsert_intent_domain(
+                    session,
+                    domain_id=item_id,
+                    payload=item,
+                    updated_by_id=user_id,
+                )
+                domain_count += 1
+
+            elif item_type == "agent":
+                await upsert_global_agent_metadata_overrides(
+                    session,
+                    [(item_id, item)],
+                    updated_by_id=user_id,
+                )
+                agent_count += 1
+
+        if domain_count or agent_count:
+            await session.commit()
+            # Invalidate caches
+            invalidate_cache()
+            try:
+                from app.agents.new_chat.bigtool_store import clear_tool_caches
+
+                clear_tool_caches()
+            except (ImportError, AttributeError):
+                pass
+
+        return {
+            "applied_domains": domain_count,
+            "applied_agents": agent_count,
+            "skipped": len(suggestions) - domain_count - agent_count,
+        }
+
+    # ----- Internal methods -----
+
+    def _build_domain_meta(self, domains: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = []
+        for d in domains:
+            result.append({
+                "domain_id": d.get("domain_id", ""),
+                "label": d.get("label", ""),
+                "description": d.get("description", ""),
+                "keywords": d.get("keywords", [])[:30],
+                "excludes": d.get("excludes", [])[:15],
+                "main_identifier": d.get("main_identifier", ""),
+                "core_activity": d.get("core_activity", ""),
+                "unique_scope": d.get("unique_scope", ""),
+                "geographic_scope": d.get("geographic_scope", ""),
+            })
+        return result
+
+    def _build_agent_meta(self, agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = []
+        for a in agents:
+            routes = a.get("routes", [])
+            result.append({
+                "agent_id": a.get("agent_id", ""),
+                "label": a.get("label", ""),
+                "description": a.get("description", ""),
+                "domain_id": routes[0] if routes else "",
+                "keywords": a.get("keywords", [])[:30],
+                "excludes": a.get("excludes", [])[:15],
+                "main_identifier": a.get("main_identifier", ""),
+                "core_activity": a.get("core_activity", ""),
+                "unique_scope": a.get("unique_scope", ""),
+                "geographic_scope": a.get("geographic_scope", ""),
+            })
+        return result
+
+    async def _call_llm_with_system(
+        self, system_prompt: str, user_prompt: str, config_id: int
+    ) -> tuple[str, str]:
+        """Call LLM with custom system prompt."""
+        from app.agents.new_chat.llm_config import (
+            PROVIDER_MAP,
+            load_llm_config_from_yaml,
+        )
+
+        config = load_llm_config_from_yaml(llm_config_id=config_id)
+        if not config:
+            raise RuntimeError(
+                f"LLM config id={config_id} not found in global_llm_config.yaml"
+            )
+
+        if config.get("custom_provider"):
+            model_string = f"{config['custom_provider']}/{config['model_name']}"
+        else:
+            provider = config.get("provider", "").upper()
+            prefix = PROVIDER_MAP.get(provider, provider.lower())
+            model_string = f"{prefix}/{config['model_name']}"
+
+        kwargs: dict[str, Any] = {
+            "model": model_string,
+            "max_tokens": 32768,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+
+        api_key = config.get("api_key", "")
+        api_base = config.get("api_base", "")
+        if api_key:
+            kwargs["api_key"] = api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+
+        for key, value in config.get("litellm_params", {}).items():
+            if key not in ("api_base", "max_tokens"):
+                kwargs[key] = value
+
+        kwargs["temperature"] = 0.3
+
+        logger.info(
+            "Intent layer optimizer LLM call: model=%s, prompt_len=%d",
+            model_string,
+            len(user_prompt),
+        )
+
+        response = await litellm.acompletion(**kwargs)
+
+        raw_content = response.choices[0].message.content
+        if isinstance(raw_content, list):
+            text_parts = []
+            for block in raw_content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            content = "\n".join(text_parts)
+        else:
+            content = raw_content or ""
+
+        return model_string, content
+
+    def _parse_response(
+        self,
+        response_text: str,
+        domain_meta: list[dict[str, Any]],
+        agent_meta: list[dict[str, Any]],
+    ) -> list[IntentLayerSuggestion]:
+        """Parse LLM response into suggestions list."""
+        domain_by_id = {d["domain_id"]: d for d in domain_meta}
+        agent_by_id = {a["agent_id"]: a for a in agent_meta}
+
+        text = response_text.strip()
+
+        # Strip markdown fences
+        if text.startswith("```"):
+            first_nl = text.find("\n")
+            if first_nl != -1:
+                if text.endswith("```"):
+                    text = text[first_nl + 1 : -3].strip()
+                else:
+                    text = text[first_nl + 1 :].strip()
+
+        parsed = None
+        with contextlib.suppress(json.JSONDecodeError):
+            parsed = json.loads(text)
+
+        if parsed is None:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                with contextlib.suppress(json.JSONDecodeError):
+                    parsed = json.loads(text[start : end + 1])
+
+        if parsed is None or not isinstance(parsed, dict):
+            logger.warning("Failed to parse intent layer response as JSON")
+            return []
+
+        suggestions: list[IntentLayerSuggestion] = []
+
+        # Parse domain suggestions
+        for item in parsed.get("domains", []):
+            if not isinstance(item, dict):
+                continue
+            domain_id = item.get("domain_id", "")
+            if domain_id not in domain_by_id:
+                continue
+            current = domain_by_id[domain_id]
+            suggested, changed = self._diff_fields(current, item)
+            if changed:
+                suggestions.append(IntentLayerSuggestion(
+                    item_id=domain_id,
+                    item_type="domain",
+                    current=current,
+                    suggested=suggested,
+                    reasoning=item.get("reasoning", ""),
+                    fields_changed=changed,
+                ))
+
+        # Parse agent suggestions
+        for item in parsed.get("agents", []):
+            if not isinstance(item, dict):
+                continue
+            agent_id = item.get("agent_id", "")
+            if agent_id not in agent_by_id:
+                continue
+            current = agent_by_id[agent_id]
+            suggested, changed = self._diff_fields(current, item)
+            if changed:
+                suggestions.append(IntentLayerSuggestion(
+                    item_id=agent_id,
+                    item_type="agent",
+                    current=current,
+                    suggested=suggested,
+                    reasoning=item.get("reasoning", ""),
+                    fields_changed=changed,
+                ))
+
+        return suggestions
+
+    def _diff_fields(
+        self, current: dict[str, Any], item: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Compare current and suggested metadata, return (suggested, changed_fields)."""
+        suggested: dict[str, Any] = {}
+        changed: list[str] = []
+        for field_name in (
+            "description",
+            "keywords",
+            "excludes",
+            "main_identifier",
+            "core_activity",
+            "unique_scope",
+        ):
+            if field_name in item:
+                new_val = item[field_name]
+                old_val = current.get(field_name)
+                suggested[field_name] = new_val
+                if new_val != old_val:
+                    changed.append(field_name)
+        return suggested, changed

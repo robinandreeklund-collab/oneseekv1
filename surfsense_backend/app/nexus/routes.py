@@ -25,6 +25,9 @@ from app.nexus.schemas import (
     ForgeGenerateRequest,
     GateStatus,
     HubnessReport,
+    IntentLayerApplyRequest,
+    IntentLayerGenerateRequest,
+    IntentLayerResultResponse,
     MetricsTrend,
     NexusConfigResponse,
     NexusHealthResponse,
@@ -1106,6 +1109,75 @@ async def optimizer_apply(
     and immediately picked up by NEXUS routing.
     """
     optimizer = _get_optimizer()
+    result = await optimizer.apply_suggestions(
+        session,
+        request.suggestions,
+        user_id=user.id if user else None,
+    )
+    return result
+
+
+# ------------------------------------------------------------------
+# Intent Layer Optimizer
+# ------------------------------------------------------------------
+
+_intent_optimizer = None
+
+
+def _get_intent_optimizer():
+    global _intent_optimizer
+    if _intent_optimizer is None:
+        from app.nexus.optimizer import IntentLayerOptimizer
+
+        _intent_optimizer = IntentLayerOptimizer()
+    return _intent_optimizer
+
+
+@nexus_router.post(
+    "/optimizer/intent-layer/generate",
+    response_model=IntentLayerResultResponse,
+)
+async def intent_layer_generate(
+    request: IntentLayerGenerateRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Generate optimized metadata for the entire intent layer.
+
+    Sends all 17 domains and 13 agents to an LLM which returns
+    optimized keywords, descriptions, excludes, etc. for each.
+    """
+    optimizer = _get_intent_optimizer()
+    result = await optimizer.generate_suggestions(
+        session, llm_config_id=request.llm_config_id
+    )
+    return IntentLayerResultResponse(
+        total_domains=result.total_domains,
+        total_agents=result.total_agents,
+        suggestions=[
+            {
+                "item_id": s.item_id,
+                "item_type": s.item_type,
+                "current": s.current,
+                "suggested": s.suggested,
+                "reasoning": s.reasoning,
+                "fields_changed": s.fields_changed,
+            }
+            for s in result.suggestions
+        ],
+        model_used=result.model_used,
+        error=result.error,
+    )
+
+
+@nexus_router.post("/optimizer/intent-layer/apply")
+async def intent_layer_apply(
+    request: IntentLayerApplyRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Apply approved intent layer suggestions as DB overrides."""
+    optimizer = _get_intent_optimizer()
     result = await optimizer.apply_suggestions(
         session,
         request.suggestions,

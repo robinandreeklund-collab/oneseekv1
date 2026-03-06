@@ -521,6 +521,29 @@ export interface OptimizerApplyResponse {
 	skipped: number;
 }
 
+export interface IntentLayerItemSuggestion {
+	item_id: string;
+	item_type: "domain" | "agent";
+	current: Record<string, unknown>;
+	suggested: Record<string, unknown>;
+	reasoning: string;
+	fields_changed: string[];
+}
+
+export interface IntentLayerResultResponse {
+	total_domains: number;
+	total_agents: number;
+	suggestions: IntentLayerItemSuggestion[];
+	model_used: string;
+	error: string | null;
+}
+
+export interface IntentLayerApplyResponse {
+	applied_domains: number;
+	applied_agents: number;
+	skipped: number;
+}
+
 export interface ShadowReportResponse {
 	feedback_store: {
 		total_patterns: number;
@@ -803,6 +826,19 @@ class NexusApiService {
 
 	optimizerApply = (suggestions: Record<string, unknown>[]) =>
 		fetchNexus<OptimizerApplyResponse>("/optimizer/apply", {
+			method: "POST",
+			body: JSON.stringify({ suggestions }),
+		});
+
+	// Intent Layer Optimizer
+	intentLayerGenerate = (request?: { llm_config_id?: number }) =>
+		fetchNexus<IntentLayerResultResponse>("/optimizer/intent-layer/generate", {
+			method: "POST",
+			body: JSON.stringify(request || {}),
+		});
+
+	intentLayerApply = (suggestions: Record<string, unknown>[]) =>
+		fetchNexus<IntentLayerApplyResponse>("/optimizer/intent-layer/apply", {
 			method: "POST",
 			body: JSON.stringify({ suggestions }),
 		});

@@ -380,3 +380,38 @@ class OptimizerApplyRequest(BaseModel):
     suggestions: list[dict] = Field(
         ..., description="List of tool metadata dicts with tool_id + fields to apply"
     )
+
+
+# ---------------------------------------------------------------------------
+# Intent Layer Optimizer
+# ---------------------------------------------------------------------------
+
+
+class IntentLayerGenerateRequest(BaseModel):
+    llm_config_id: int = -24
+
+
+class IntentLayerItemSuggestion(BaseModel):
+    """A single domain or agent suggestion."""
+
+    item_id: str
+    item_type: str  # "domain" | "agent"
+    current: dict = Field(default_factory=dict)
+    suggested: dict = Field(default_factory=dict)
+    reasoning: str = ""
+    fields_changed: list[str] = Field(default_factory=list)
+
+
+class IntentLayerResultResponse(BaseModel):
+    total_domains: int = 0
+    total_agents: int = 0
+    suggestions: list[IntentLayerItemSuggestion] = Field(default_factory=list)
+    model_used: str = ""
+    error: str | None = None
+
+
+class IntentLayerApplyRequest(BaseModel):
+    suggestions: list[dict] = Field(
+        ...,
+        description="List of domain/agent dicts with item_id, item_type, + fields",
+    )
