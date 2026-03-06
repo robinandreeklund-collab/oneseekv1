@@ -9,6 +9,7 @@ from app.agents.new_chat.supervisor_constants import (
     _AGENT_NAME_ALIAS_MAP,
     _AGENT_STOPWORDS,
     _AGENT_TOOL_PROFILES,
+    _ALTERNATIVE_RESPONSE_MARKERS,
     _DYNAMIC_TOOL_QUERY_MARKERS,
     _FILESYSTEM_INTENT_RE,
     _MAP_INTENT_RE,
@@ -18,7 +19,6 @@ from app.agents.new_chat.supervisor_constants import (
     _TRAFFIC_INTENT_RE,
     _TRAFFIC_STRICT_INTENT_RE,
     _UNAVAILABLE_RESPONSE_MARKERS,
-    _ALTERNATIVE_RESPONSE_MARKERS,
     _WEATHER_INTENT_RE,
     AgentToolProfile,
 )
@@ -212,3 +212,111 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         if any(token in normalized for token in tokens):
             return resolved
     return None
+
+
+# ── Registry-aware agent + tool resolution ────────────────────────────
+
+def resolve_default_agent_with_registry(
+    route_hint: str | None,
+    query: str,
+    registry: Any | None,
+) -> str:
+    """Pick the best agent for a route, using registry if available.
+
+    Falls back to the legacy ``_route_default_agent`` when no registry
+    is provided or the domain has no agents.
+    """
+    if registry is not None:
+        try:
+            from app.agents.new_chat.routing import Route, route_to_domains
+            from app.services.agent_resolver_service import (
+                resolve_default_agent_for_domain,
+            )
+
+            route_value = _normalize_route_hint_value(route_hint)
+            try:
+                route_enum = Route(route_value)
+            except (ValueError, KeyError):
+                route_enum = None
+            if route_enum is not None:
+                domain_ids = route_to_domains(route_enum)
+                for domain_id in domain_ids:
+                    agent_id = resolve_default_agent_for_domain(
+                        query=query,
+                        domain_id=domain_id,
+                        registry=registry,
+                    )
+                    if agent_id:
+                        return agent_id
+        except Exception:
+            pass
+    allowed = _route_allowed_agents(route_hint)
+    return _route_default_agent(route_hint, allowed)
+
+
+def resolve_allowed_agents_with_registry(
+    route_hint: str | None,
+    registry: Any | None,
+) -> set[str]:
+    """Return allowed agent IDs for a route, using registry if available.
+
+    Falls back to ``_route_allowed_agents`` when no registry is available.
+    """
+    if registry is not None:
+        try:
+            from app.agents.new_chat.routing import Route, route_to_domains
+
+            route_value = _normalize_route_hint_value(route_hint)
+            try:
+                route_enum = Route(route_value)
+            except (ValueError, KeyError):
+                route_enum = None
+            if route_enum is not None:
+                domain_ids = route_to_domains(route_enum)
+                agent_ids: set[str] = set()
+                for domain_id in domain_ids:
+                    agents = list(
+                        (registry.agents_by_domain or {}).get(domain_id) or []
+                    )
+                    for agent in agents:
+                        agent_id = str(
+                            agent.get("agent_id") or ""
+                        ).strip().lower()
+                        if agent_id and agent.get("enabled", True):
+                            agent_ids.add(agent_id)
+                if agent_ids:
+                    return agent_ids
+        except Exception:
+            pass
+    return _route_allowed_agents(route_hint)
+
+
+def resolve_focused_tool_ids_with_registry(
+    agent_id: str,
+    query: str,
+    registry: Any | None,
+    *,
+    limit: int = 5,
+) -> list[str]:
+    """Return focused tool IDs for an agent, using registry if available.
+
+    Falls back to ``_focused_tool_ids_for_agent`` when no registry is
+    available.
+    """
+    if registry is not None:
+        try:
+            from app.services.tool_resolver_service import (
+                resolve_tool_ids_for_agent,
+            )
+
+            tool_ids = resolve_tool_ids_for_agent(
+                query=query,
+                agent_id=agent_id,
+                registry=registry,
+                top_k=limit,
+            )
+            if tool_ids:
+                return tool_ids
+        except Exception:
+            pass
+    return _focused_tool_ids_for_agent(agent_id, query, limit=limit)
