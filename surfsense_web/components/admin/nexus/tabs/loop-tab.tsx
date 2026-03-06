@@ -173,6 +173,7 @@ function ProposalCard({
 											<th className="pb-1.5 pr-2">Fraga</th>
 											<th className="pb-1.5 pr-2">Forvantad</th>
 											<th className="pb-1.5 pr-2">Fick</th>
+											<th className="pb-1.5 pr-2">LLM valde</th>
 											<th className="pb-1.5 pr-2">Intent/Zon</th>
 											<th className="pb-1.5 pr-2">Agent</th>
 											<th className="pb-1.5 pr-2">Band</th>
@@ -196,6 +197,24 @@ function ProposalCard({
 												</td>
 												<td className="py-1.5 pr-2 font-mono text-red-600">
 													{fq.got_tool}
+												</td>
+												<td
+													className="py-1.5 pr-2 font-mono"
+													title={fq.llm_judge_reasoning || ""}
+												>
+													{fq.llm_judge_tool ? (
+														<span
+															className={
+																fq.llm_judge_tool === fq.expected_tool
+																	? "text-green-700"
+																	: "text-amber-600"
+															}
+														>
+															{fq.llm_judge_tool}
+														</span>
+													) : (
+														"—"
+													)}
 												</td>
 												<td className="py-1.5 pr-2">
 													{fq.resolved_zone || "—"}
@@ -594,6 +613,11 @@ export function LoopTab() {
 										P@1: {(liveProgress.precision_at_1 * 100).toFixed(1)}%
 									</span>
 								)}
+								{liveProgress.llm_judge_agreement_rate != null && (
+									<span>
+										LLM-agree: {Math.round(liveProgress.llm_judge_agreement_rate * 100)}%
+									</span>
+								)}
 							</div>
 						)}
 						{/* Event log */}
@@ -882,6 +906,84 @@ export function LoopTab() {
 																</CardContent>
 															</Card>
 
+															{/* LLM Judge summary */}
+															{detail.llm_judge && (
+																<Card>
+																	<CardHeader className="py-3 px-4">
+																		<CardTitle className="text-sm">
+																			LLM Judge
+																		</CardTitle>
+																	</CardHeader>
+																	<CardContent className="px-4 pb-4 space-y-3">
+																		<div className="grid grid-cols-2 gap-4 text-sm">
+																			<div>
+																				<p className="text-muted-foreground">
+																					NEXUS-overens
+																				</p>
+																				<p className="text-lg font-bold">
+																					{detail.llm_judge.agreements}/{detail.llm_judge.total}{" "}
+																					<span className="text-sm font-normal text-muted-foreground">
+																						({Math.round(detail.llm_judge.agreement_rate * 100)}%)
+																					</span>
+																				</p>
+																			</div>
+																			<div>
+																				<p className="text-muted-foreground">
+																					LLM korrekt
+																				</p>
+																				<p className="text-lg font-bold">
+																					{detail.llm_judge.correct}/{detail.llm_judge.total}{" "}
+																					<span className="text-sm font-normal text-muted-foreground">
+																						({Math.round(detail.llm_judge.accuracy * 100)}%)
+																					</span>
+																				</p>
+																			</div>
+																		</div>
+																		{detail.llm_judge.disagreements.length > 0 && (
+																			<div className="space-y-1.5">
+																				<p className="text-xs font-medium text-muted-foreground">
+																					Disagreements ({detail.llm_judge.disagreements.length})
+																				</p>
+																				<div className="max-h-48 overflow-y-auto">
+																					<table className="w-full text-xs">
+																						<thead>
+																							<tr className="border-b text-left text-muted-foreground">
+																								<th className="pb-1 pr-2">Fraga</th>
+																								<th className="pb-1 pr-2">NEXUS</th>
+																								<th className="pb-1 pr-2">LLM</th>
+																								<th className="pb-1 pr-2">Forvantad</th>
+																								<th className="pb-1">Motivering</th>
+																							</tr>
+																						</thead>
+																						<tbody>
+																							{detail.llm_judge.disagreements.map((d, idx) => (
+																								<tr key={`disagree-${idx}`} className="border-b last:border-0">
+																									<td className="py-1 pr-2 max-w-[150px] truncate" title={d.query}>
+																										{d.query}
+																									</td>
+																									<td className="py-1 pr-2 font-mono text-red-600">
+																										{d.nexus_tool}
+																									</td>
+																									<td className={`py-1 pr-2 font-mono ${d.llm_tool === d.expected_tool ? "text-green-700" : "text-amber-600"}`}>
+																										{d.llm_tool}
+																									</td>
+																									<td className="py-1 pr-2 font-mono text-muted-foreground">
+																										{d.expected_tool}
+																									</td>
+																									<td className="py-1 max-w-[200px] truncate text-muted-foreground" title={d.reasoning}>
+																										{d.reasoning}
+																									</td>
+																								</tr>
+																							))}
+																						</tbody>
+																					</table>
+																				</div>
+																			</div>
+																		)}
+																	</CardContent>
+																</Card>
+															)}
+
 															{/* Iteration details */}
 															{detail.iterations &&
 																detail.iterations.length > 0 && (
@@ -911,6 +1013,11 @@ export function LoopTab() {
 																							<span>
 																								MRR: {(iter.mrr * 100).toFixed(1)}%
 																							</span>
+																							{iter.llm_judge_agreement_rate != null && (
+																								<span>
+																									LLM-agree: {Math.round(iter.llm_judge_agreement_rate * 100)}%
+																								</span>
+																							)}
 																						</div>
 																					</div>
 																				))}

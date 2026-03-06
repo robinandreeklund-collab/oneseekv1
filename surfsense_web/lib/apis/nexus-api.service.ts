@@ -377,6 +377,30 @@ export interface LoopIterationDetail {
 	band_distribution: number[];
 	platform_comparisons: number;
 	platform_agreements: number;
+	llm_judge_total?: number;
+	llm_judge_agreements?: number;
+	llm_judge_correct?: number;
+	llm_judge_agreement_rate?: number | null;
+	llm_judge_accuracy?: number | null;
+	llm_judge_disagreements?: LlmJudgeDisagreement[];
+}
+
+export interface LlmJudgeDisagreement {
+	query: string;
+	nexus_tool: string;
+	llm_tool: string;
+	expected_tool: string;
+	reasoning: string;
+	nexus_rank_of_chosen: number;
+}
+
+export interface LlmJudgeSummary {
+	total: number;
+	agreements: number;
+	correct: number;
+	agreement_rate: number;
+	accuracy: number;
+	disagreements: LlmJudgeDisagreement[];
 }
 
 export interface LoopProposalFailedQuery {
@@ -388,6 +412,8 @@ export interface LoopProposalFailedQuery {
 	band: number;
 	confidence: number;
 	difficulty: string;
+	llm_judge_tool?: string | null;
+	llm_judge_reasoning?: string;
 }
 
 export interface LoopProposal {
@@ -416,6 +442,7 @@ export interface LoopRunDetail {
 	platform_agreements: number;
 	iterations?: LoopIterationDetail[];
 	total_cases_available?: number;
+	llm_judge?: LlmJudgeSummary | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +477,12 @@ export interface LoopStreamEvent {
 	iterations_completed?: number;
 	embedding_delta?: number;
 	status?: string;
+	llm_judge_total?: number;
+	llm_judge_agreements?: number;
+	llm_judge_correct?: number;
+	llm_judge_agreement_rate?: number | null;
+	llm_judge_accuracy?: number | null;
+	llm_judge_disagreements?: LlmJudgeDisagreement[];
 }
 
 // ---------------------------------------------------------------------------

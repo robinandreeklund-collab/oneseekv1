@@ -2037,6 +2037,100 @@ class NexusService:
         return MetricsTrend(period_days=days, data_points=data_points)
 
     # ------------------------------------------------------------------
+    # LLM Tool Judge — let an LLM pick the best tool from NEXUS candidates
+    # ------------------------------------------------------------------
+
+    async def llm_judge_tools(
+        self,
+        query: str,
+        candidates: list[dict],
+        *,
+        top_k: int = 5,
+    ) -> dict:
+        """Ask an LLM to choose the best tool from NEXUS-ranked candidates.
+
+        Args:
+            query: The user query.
+            candidates: NEXUS-ranked tool dicts with tool_id, name, description, score.
+            top_k: How many top candidates to present to the LLM.
+
+        Returns:
+            Dict with chosen_tool, reasoning, nexus_rank_of_chosen, agreement.
+        """
+        from app.nexus.llm import nexus_llm_call
+
+        shortlist = candidates[:top_k]
+        if not shortlist:
+            return {
+                "chosen_tool": None,
+                "reasoning": "Inga kandidater att bedöma.",
+                "nexus_rank_of_chosen": -1,
+                "agreement": False,
+            }
+
+        tool_lines = []
+        for i, c in enumerate(shortlist, 1):
+            score = c.get("score", c.get("calibrated_confidence", 0))
+            tool_lines.append(
+                f"{i}. {c.get('tool_id', c.get('name', '?'))} "
+                f"(poäng {score:.3f}) — {c.get('description', '')[:120]}"
+            )
+
+        prompt = (
+            f"Du är en verktygsväljare. Givet användarens fråga, välj ETT verktyg "
+            f"från listan som bäst kan besvara frågan.\n\n"
+            f"Fråga: {query}\n\n"
+            f"Kandidater:\n" + "\n".join(tool_lines) + "\n\n"
+            f"Svara EXAKT i detta format (inget annat):\n"
+            f"VERKTYG: <tool_id>\n"
+            f"MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            response = await nexus_llm_call(prompt)
+            chosen_tool = None
+            reasoning = ""
+            for line in response.strip().splitlines():
+                line_stripped = line.strip()
+                if line_stripped.upper().startswith("VERKTYG:"):
+                    chosen_tool = line_stripped.split(":", 1)[1].strip()
+                elif line_stripped.upper().startswith("MOTIVERING:"):
+                    reasoning = line_stripped.split(":", 1)[1].strip()
+
+            # Find the NEXUS rank of the chosen tool
+            nexus_rank = -1
+            candidate_ids = [
+                c.get("tool_id", c.get("name", "")) for c in shortlist
+            ]
+            if chosen_tool and chosen_tool in candidate_ids:
+                nexus_rank = candidate_ids.index(chosen_tool) + 1
+            elif chosen_tool:
+                # Fuzzy match — LLM might return slightly different name
+                for idx, cid in enumerate(candidate_ids):
+                    if chosen_tool.lower() in cid.lower() or cid.lower() in chosen_tool.lower():
+                        chosen_tool = cid  # Normalize to actual tool_id
+                        nexus_rank = idx + 1
+                        break
+
+            nexus_top1 = candidate_ids[0] if candidate_ids else None
+            agreement = chosen_tool == nexus_top1
+
+            return {
+                "chosen_tool": chosen_tool,
+                "reasoning": reasoning,
+                "nexus_rank_of_chosen": nexus_rank,
+                "agreement": agreement,
+            }
+        except Exception as e:
+            logger.warning("LLM judge failed: %s", e)
+            return {
+                "chosen_tool": None,
+                "reasoning": f"LLM-anrop misslyckades: {e}",
+                "nexus_rank_of_chosen": -1,
+                "agreement": False,
+            }
+
+    # ------------------------------------------------------------------
     # Auto Loop Run (Sprint 5)
     # ------------------------------------------------------------------
 
@@ -2182,6 +2276,10 @@ class NexusService:
             correct_at_1 = 0
             correct_at_5 = 0
             reciprocal_ranks: list[float] = []
+            llm_judge_total = 0
+            llm_judge_agreements = 0
+            llm_judge_correct = 0
+            llm_judge_disagreements: list[dict] = []
 
             # --- Parallel evaluation helper --------------------------------
             # Each case gets its own DB session to avoid SQLAlchemy
@@ -2190,6 +2288,13 @@ class NexusService:
 
             from app.agents.new_chat.forge_pool import forge_pool
             from app.db import async_session_maker
+
+            # Build tool description lookup for LLM judge
+            _tool_desc_map: dict[str, str] = {
+                pt.tool_id: pt.description
+                for pt in platform_tools
+                if pt.category != "external_model"
+            }
 
             async def _eval_one_case(case_obj):
                 """Evaluate a single test case (runs inside forge pool slot)."""
@@ -2203,6 +2308,22 @@ class NexusService:
                     )
                     platform_tool = platform_result.get("top1")
 
+                    # LLM judge: let LLM pick from NEXUS candidates
+                    llm_judge_result = None
+                    if decision.candidates:
+                        judge_candidates = [
+                            {
+                                "tool_id": c.tool_id,
+                                "name": c.tool_id,
+                                "description": _tool_desc_map.get(c.tool_id, ""),
+                                "score": c.calibrated_score,
+                            }
+                            for c in decision.candidates[:5]
+                        ]
+                        llm_judge_result = await self.llm_judge_tools(
+                            case_obj.question, judge_candidates, top_k=5
+                        )
+
                     await case_session.commit()
 
                 return {
@@ -2214,6 +2335,7 @@ class NexusService:
                     "resolved_zone": decision.resolved_zone or "",
                     "selected_agent": decision.selected_agent or "",
                     "confidence": round(decision.calibrated_confidence, 3),
+                    "llm_judge": llm_judge_result,
                 }
 
             # Process in batches — each batch runs concurrently via forge pool
@@ -2265,6 +2387,25 @@ class NexusService:
                         if nexus_tool == platform_tool:
                             platform_agreements += 1
 
+                    # LLM judge tracking
+                    llm_judge = br.get("llm_judge")
+                    if llm_judge and llm_judge.get("chosen_tool"):
+                        llm_judge_total += 1
+                        llm_chosen = llm_judge["chosen_tool"]
+                        if llm_chosen == nexus_tool:
+                            llm_judge_agreements += 1
+                        if case_obj.expected_tool and llm_chosen == case_obj.expected_tool:
+                            llm_judge_correct += 1
+                        if llm_chosen != nexus_tool:
+                            llm_judge_disagreements.append({
+                                "query": case_obj.question,
+                                "nexus_tool": nexus_tool or "(none)",
+                                "llm_tool": llm_chosen,
+                                "expected_tool": case_obj.expected_tool or "(unknown)",
+                                "reasoning": llm_judge.get("reasoning", ""),
+                                "nexus_rank_of_chosen": llm_judge.get("nexus_rank_of_chosen", -1),
+                            })
+
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
                         failures += 1
                         failed_queries.append(
@@ -2279,6 +2420,16 @@ class NexusService:
                                 "band": br["band"],
                                 "confidence": br["confidence"],
                                 "difficulty": getattr(case_obj, "difficulty", ""),
+                                "llm_judge_tool": (
+                                    llm_judge.get("chosen_tool")
+                                    if llm_judge
+                                    else None
+                                ),
+                                "llm_judge_reasoning": (
+                                    llm_judge.get("reasoning", "")
+                                    if llm_judge
+                                    else ""
+                                ),
                             }
                         )
 
@@ -2291,6 +2442,17 @@ class NexusService:
                 else 0.0
             )
 
+            llm_judge_agreement_rate = (
+                llm_judge_agreements / llm_judge_total
+                if llm_judge_total > 0
+                else None
+            )
+            llm_judge_accuracy = (
+                llm_judge_correct / llm_judge_total
+                if llm_judge_total > 0
+                else None
+            )
+
             iter_result = {
                 "iteration": iteration,
                 "total_tests": total_tests,
@@ -2301,16 +2463,31 @@ class NexusService:
                 "band_distribution": band_counts,
                 "platform_comparisons": platform_comparisons,
                 "platform_agreements": platform_agreements,
+                "llm_judge_total": llm_judge_total,
+                "llm_judge_agreements": llm_judge_agreements,
+                "llm_judge_correct": llm_judge_correct,
+                "llm_judge_agreement_rate": (
+                    round(llm_judge_agreement_rate, 3)
+                    if llm_judge_agreement_rate is not None
+                    else None
+                ),
+                "llm_judge_accuracy": (
+                    round(llm_judge_accuracy, 3)
+                    if llm_judge_accuracy is not None
+                    else None
+                ),
+                "llm_judge_disagreements": llm_judge_disagreements[:20],
             }
             all_iteration_results.append(iter_result)
 
             logger.info(
-                "Auto-loop #%d iter %d: %d/%d failures (P@1=%.3f)",
+                "Auto-loop #%d iter %d: %d/%d failures (P@1=%.3f, LLM-agree=%.1f%%)",
                 loop_number,
                 iteration,
                 failures,
                 total_tests,
                 p_at_1,
+                (llm_judge_agreement_rate or 0) * 100,
             )
 
             # Cluster failures and create proposals
@@ -2644,11 +2821,34 @@ class NexusService:
                             "band": fq.get("band", -1),
                             "confidence": fq.get("confidence", 0.0),
                             "difficulty": fq.get("difficulty", ""),
+                            "llm_judge_tool": fq.get("llm_judge_tool"),
+                            "llm_judge_reasoning": fq.get("llm_judge_reasoning", ""),
                         }
                         for fq in related_queries[:10]  # Cap at 10 queries per proposal
                     ],
                 }
             )
+
+        # Aggregate LLM judge stats from all iterations
+        llm_judge_summary = None
+        all_disagreements: list[dict] = []
+        total_llm_total = 0
+        total_llm_agree = 0
+        total_llm_correct = 0
+        for ir in all_iteration_results:
+            total_llm_total += ir.get("llm_judge_total", 0)
+            total_llm_agree += ir.get("llm_judge_agreements", 0)
+            total_llm_correct += ir.get("llm_judge_correct", 0)
+            all_disagreements.extend(ir.get("llm_judge_disagreements", []))
+        if total_llm_total > 0:
+            llm_judge_summary = {
+                "total": total_llm_total,
+                "agreements": total_llm_agree,
+                "correct": total_llm_correct,
+                "agreement_rate": round(total_llm_agree / total_llm_total, 3),
+                "accuracy": round(total_llm_correct / total_llm_total, 3),
+                "disagreements": all_disagreements[:30],
+            }
 
         db_run.metadata_proposals = {
             "proposals": enriched_proposals,
@@ -2657,6 +2857,7 @@ class NexusService:
             "band_distribution": final_band_counts,
             "iterations": all_iteration_results,
             "total_cases_available": total_case_count,
+            "llm_judge": llm_judge_summary,
         }
         db_run.approved_proposals = 0
         db_run.embedding_delta = total_embedding_delta
@@ -2819,6 +3020,13 @@ class NexusService:
         cumulative_proposals = []
         cumulative_root_causes: list[str] = []
 
+        # Build tool description lookup for LLM judge
+        _tool_desc_map: dict[str, str] = {
+            pt.tool_id: pt.description
+            for pt in _pt_tools
+            if pt.category != "external_model"
+        }
+
         async def _eval_one_case(case_obj):
             async with async_session_maker() as case_session:
                 decision = await self.route_query(case_obj.question, case_session)
@@ -2828,6 +3036,23 @@ class NexusService:
                     case_obj.question, session=case_session
                 )
                 platform_tool = platform_result.get("top1")
+
+                # LLM judge: let LLM pick from NEXUS candidates
+                llm_judge_result = None
+                if decision.candidates:
+                    judge_candidates = [
+                        {
+                            "tool_id": c.tool_id,
+                            "name": c.tool_id,
+                            "description": _tool_desc_map.get(c.tool_id, ""),
+                            "score": c.calibrated_score,
+                        }
+                        for c in decision.candidates[:5]
+                    ]
+                    llm_judge_result = await self.llm_judge_tools(
+                        case_obj.question, judge_candidates, top_k=5
+                    )
+
                 await case_session.commit()
             return {
                 "case": case_obj,
@@ -2838,6 +3063,7 @@ class NexusService:
                 "resolved_zone": decision.resolved_zone or "",
                 "selected_agent": decision.selected_agent or "",
                 "confidence": round(decision.calibrated_confidence, 3),
+                "llm_judge": llm_judge_result,
             }
 
         for iteration in range(1, max_iterations + 1):
@@ -2858,6 +3084,10 @@ class NexusService:
             correct_at_1 = 0
             correct_at_5 = 0
             reciprocal_ranks: list[float] = []
+            llm_judge_total = 0
+            llm_judge_agreements = 0
+            llm_judge_correct = 0
+            llm_judge_disagreements: list[dict] = []
 
             num_batches = (len(cases) + batch_size - 1) // batch_size
             for batch_idx, batch_start in enumerate(
@@ -2905,6 +3135,25 @@ class NexusService:
                         platform_comparisons += 1
                         if nexus_tool == platform_tool:
                             platform_agreements += 1
+                    # LLM judge tracking
+                    llm_judge = br.get("llm_judge")
+                    if llm_judge and llm_judge.get("chosen_tool"):
+                        llm_judge_total += 1
+                        llm_chosen = llm_judge["chosen_tool"]
+                        if llm_chosen == nexus_tool:
+                            llm_judge_agreements += 1
+                        if case_obj.expected_tool and llm_chosen == case_obj.expected_tool:
+                            llm_judge_correct += 1
+                        if llm_chosen != nexus_tool:
+                            llm_judge_disagreements.append({
+                                "query": case_obj.question,
+                                "nexus_tool": nexus_tool or "(none)",
+                                "llm_tool": llm_chosen,
+                                "expected_tool": case_obj.expected_tool or "(unknown)",
+                                "reasoning": llm_judge.get("reasoning", ""),
+                                "nexus_rank_of_chosen": llm_judge.get("nexus_rank_of_chosen", -1),
+                            })
+
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
                         failures += 1
                         failed_queries.append(
@@ -2919,6 +3168,16 @@ class NexusService:
                                 "band": br["band"],
                                 "confidence": br["confidence"],
                                 "difficulty": getattr(case_obj, "difficulty", ""),
+                                "llm_judge_tool": (
+                                    llm_judge.get("chosen_tool")
+                                    if llm_judge
+                                    else None
+                                ),
+                                "llm_judge_reasoning": (
+                                    llm_judge.get("reasoning", "")
+                                    if llm_judge
+                                    else ""
+                                ),
                             }
                         )
 
@@ -2928,6 +3187,17 @@ class NexusService:
                 sum(reciprocal_ranks) / len(reciprocal_ranks)
                 if reciprocal_ranks
                 else 0.0
+            )
+
+            llm_judge_agreement_rate = (
+                llm_judge_agreements / llm_judge_total
+                if llm_judge_total > 0
+                else None
+            )
+            llm_judge_accuracy = (
+                llm_judge_correct / llm_judge_total
+                if llm_judge_total > 0
+                else None
             )
 
             iter_result = {
@@ -2940,13 +3210,30 @@ class NexusService:
                 "band_distribution": band_counts,
                 "platform_comparisons": platform_comparisons,
                 "platform_agreements": platform_agreements,
+                "llm_judge_total": llm_judge_total,
+                "llm_judge_agreements": llm_judge_agreements,
+                "llm_judge_correct": llm_judge_correct,
+                "llm_judge_agreement_rate": (
+                    round(llm_judge_agreement_rate, 3)
+                    if llm_judge_agreement_rate is not None
+                    else None
+                ),
+                "llm_judge_accuracy": (
+                    round(llm_judge_accuracy, 3)
+                    if llm_judge_accuracy is not None
+                    else None
+                ),
+                "llm_judge_disagreements": llm_judge_disagreements[:20],
             }
             all_iteration_results.append(iter_result)
 
             yield {
                 "type": "iteration",
                 "step": "eval_done",
-                "detail": f"Iteration {iteration} klar — {failures}/{total_tests} fel, P@1={p_at_1:.1%}",
+                "detail": (
+                    f"Iteration {iteration} klar — {failures}/{total_tests} fel, "
+                    f"P@1={p_at_1:.1%}, LLM-agree={((llm_judge_agreement_rate or 0) * 100):.0f}%"
+                ),
                 "iteration": iteration,
                 "total_iterations": max_iterations,
                 "failures": failures,
@@ -2954,6 +3241,33 @@ class NexusService:
                 "precision_at_1": round(p_at_1, 3),
                 "mrr": round(mrr, 3),
             }
+
+            # Emit LLM judge summary event per iteration
+            if llm_judge_total > 0:
+                yield {
+                    "type": "progress",
+                    "step": "llm_judge",
+                    "detail": (
+                        f"LLM-judge: {llm_judge_agreements}/{llm_judge_total} överens med NEXUS "
+                        f"({((llm_judge_agreement_rate or 0) * 100):.0f}%), "
+                        f"LLM korrekt: {llm_judge_correct}/{llm_judge_total}"
+                    ),
+                    "iteration": iteration,
+                    "llm_judge_total": llm_judge_total,
+                    "llm_judge_agreements": llm_judge_agreements,
+                    "llm_judge_correct": llm_judge_correct,
+                    "llm_judge_agreement_rate": (
+                        round(llm_judge_agreement_rate, 3)
+                        if llm_judge_agreement_rate is not None
+                        else None
+                    ),
+                    "llm_judge_accuracy": (
+                        round(llm_judge_accuracy, 3)
+                        if llm_judge_accuracy is not None
+                        else None
+                    ),
+                    "llm_judge_disagreements": llm_judge_disagreements[:10],
+                }
 
             # Cluster + root cause
             yield {
@@ -3259,11 +3573,34 @@ class NexusService:
                             "band": fq.get("band", -1),
                             "confidence": fq.get("confidence", 0.0),
                             "difficulty": fq.get("difficulty", ""),
+                            "llm_judge_tool": fq.get("llm_judge_tool"),
+                            "llm_judge_reasoning": fq.get("llm_judge_reasoning", ""),
                         }
                         for fq in related_queries[:10]
                     ],
                 }
             )
+
+        # Aggregate LLM judge stats from all iterations
+        llm_judge_summary = None
+        all_disagreements: list[dict] = []
+        total_llm_total = 0
+        total_llm_agree = 0
+        total_llm_correct = 0
+        for ir in all_iteration_results:
+            total_llm_total += ir.get("llm_judge_total", 0)
+            total_llm_agree += ir.get("llm_judge_agreements", 0)
+            total_llm_correct += ir.get("llm_judge_correct", 0)
+            all_disagreements.extend(ir.get("llm_judge_disagreements", []))
+        if total_llm_total > 0:
+            llm_judge_summary = {
+                "total": total_llm_total,
+                "agreements": total_llm_agree,
+                "correct": total_llm_correct,
+                "agreement_rate": round(total_llm_agree / total_llm_total, 3),
+                "accuracy": round(total_llm_correct / total_llm_total, 3),
+                "disagreements": all_disagreements[:30],
+            }
 
         db_run.total_tests = final_total_tests
         db_run.failures = final_failures
@@ -3274,6 +3611,7 @@ class NexusService:
             "band_distribution": final_band_counts,
             "iterations": all_iteration_results,
             "total_cases_available": total_case_count,
+            "llm_judge": llm_judge_summary,
         }
         db_run.approved_proposals = 0
         db_run.embedding_delta = total_embedding_delta

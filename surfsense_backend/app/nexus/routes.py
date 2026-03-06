@@ -711,6 +711,7 @@ async def get_loop_run_detail(
         "platform_agreements": meta.get("platform_agreements", 0),
         "iterations": meta.get("iterations", []),
         "total_cases_available": meta.get("total_cases_available"),
+        "llm_judge": meta.get("llm_judge"),
     }
 
 
