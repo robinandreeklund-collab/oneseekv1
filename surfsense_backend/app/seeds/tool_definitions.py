@@ -232,8 +232,18 @@ DEFAULT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 
 def get_default_tool_definitions() -> dict[str, dict[str, Any]]:
-    """Return default tools as a dict keyed by tool_id."""
-    return {tool["tool_id"]: tool for tool in DEFAULT_TOOL_DEFINITIONS}
+    """Return default tools as a dict keyed by tool_id.
+
+    Includes both static definitions and dynamically-imported specialized
+    agent tools (SMHI, Trafikverket, SCB, etc.).
+    """
+    result = {tool["tool_id"]: tool for tool in DEFAULT_TOOL_DEFINITIONS}
+    # Merge in specialized agent tools so they appear in the registry
+    for tool in build_tool_definitions_from_profiles():
+        tool_id = tool.get("tool_id", "")
+        if tool_id and tool_id not in result:
+            result[tool_id] = tool
+    return result
 
 
 def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
