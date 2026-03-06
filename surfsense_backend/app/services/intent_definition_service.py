@@ -271,6 +271,22 @@ async def get_global_intent_definition_overrides(
 async def get_effective_intent_definitions(
     session: AsyncSession,
 ) -> list[dict[str, Any]]:
+    """Return merged intent definitions.
+
+    Tries the new GraphRegistry first (17 domains).  Falls back to the
+    old 4-intent defaults + GlobalIntentDefinition overrides if the
+    registry is empty or unavailable.
+    """
+    try:
+        from app.services.graph_registry_service import load_graph_registry
+
+        registry = await load_graph_registry(session)
+        if registry.domains:
+            return domains_to_intent_definitions(registry.domains)
+    except Exception:
+        pass
+
+    # Fallback: old 4-intent system
     defaults = get_default_intent_definitions()
     overrides = await get_global_intent_definition_overrides(session)
     merged = {**defaults}

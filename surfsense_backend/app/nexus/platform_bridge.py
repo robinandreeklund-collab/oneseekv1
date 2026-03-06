@@ -279,7 +279,23 @@ def invalidate_cache() -> None:
 
 
 def get_platform_intents() -> dict[str, dict[str, Any]]:
-    """Get intent definitions from the real intent_definition_service."""
+    """Get intent definitions from the real platform.
+
+    Uses the new GraphRegistry seed domains when available (17 domains),
+    falling back to the old 4-intent defaults.
+    """
+    try:
+        from app.seeds.intent_domains import get_default_intent_domains
+        from app.services.intent_definition_service import (
+            domains_to_intent_definitions,
+        )
+
+        domains = list(get_default_intent_domains().values())
+        if domains:
+            defs = domains_to_intent_definitions(domains)
+            return {d["intent_id"]: d for d in defs}
+    except Exception:
+        pass
     from app.services.intent_definition_service import (
         get_default_intent_definitions,
     )

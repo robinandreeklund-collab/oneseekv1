@@ -87,10 +87,19 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
             {"tool_id": "smhi_brandrisk_fwif", "label": "SMHI Brandrisk FWIF"},
             {"tool_id": "smhi_brandrisk_fwia", "label": "SMHI Brandrisk FWIA"},
             {"tool_id": "smhi_solstralning_strang", "label": "SMHI Solstrålning"},
-            {"tool_id": "trafikverket_vader_stationer", "label": "Trafikverket Väder Stationer"},
-            {"tool_id": "trafikverket_vader_halka", "label": "Trafikverket Väder Halka"},
+            {
+                "tool_id": "trafikverket_vader_stationer",
+                "label": "Trafikverket Väder Stationer",
+            },
+            {
+                "tool_id": "trafikverket_vader_halka",
+                "label": "Trafikverket Väder Halka",
+            },
             {"tool_id": "trafikverket_vader_vind", "label": "Trafikverket Väder Vind"},
-            {"tool_id": "trafikverket_vader_temperatur", "label": "Trafikverket Väder Temperatur"},
+            {
+                "tool_id": "trafikverket_vader_temperatur",
+                "label": "Trafikverket Väder Temperatur",
+            },
         ],
         "main_identifier": "Vaderagent",
         "core_activity": "Hamtar vaderprognoser och vagvaderdata fran SMHI och Trafikverket",
@@ -457,7 +466,14 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "agent_id": "syntes",
         "label": "Syntes",
         "description": "Syntes och jamforelser av flera kallor och modeller.",
-        "keywords": ["synthesis", "syntes", "jämför", "jamfor", "compare", "sammanfatta"],
+        "keywords": [
+            "synthesis",
+            "syntes",
+            "jämför",
+            "jamfor",
+            "compare",
+            "sammanfatta",
+        ],
         "namespace": ["agents", "synthesis"],
         "prompt_key": "synthesis",
         "routes": ["jämförelse"],
@@ -573,7 +589,9 @@ def normalize_agent_metadata_payload(
         _normalize_optional_text(default_payload.get("label"))
         or resolved_agent_id.replace("_", " ").title()
     )
-    fallback_description = _normalize_optional_text(default_payload.get("description")) or ""
+    fallback_description = (
+        _normalize_optional_text(default_payload.get("description")) or ""
+    )
     fallback_keywords = _normalize_keywords(default_payload.get("keywords"))
     fallback_prompt_key = _normalize_optional_text(default_payload.get("prompt_key"))
     fallback_namespace = _normalize_namespace(default_payload.get("namespace"))
@@ -585,20 +603,34 @@ def normalize_agent_metadata_payload(
     fallback_geographic_scope = _normalize_text(default_payload.get("geographic_scope"))
     fallback_excludes = _normalize_text_list(default_payload.get("excludes"))
     label = _normalize_optional_text(payload.get("label")) or fallback_label
-    description = _normalize_optional_text(payload.get("description")) or fallback_description
+    description = (
+        _normalize_optional_text(payload.get("description")) or fallback_description
+    )
     keywords = _normalize_keywords(payload.get("keywords")) or fallback_keywords
-    prompt_key = _normalize_optional_text(payload.get("prompt_key")) or fallback_prompt_key
+    prompt_key = (
+        _normalize_optional_text(payload.get("prompt_key")) or fallback_prompt_key
+    )
     namespace = _normalize_namespace(payload.get("namespace")) or fallback_namespace
-    routes = _normalize_routes(payload.get("routes")) if "routes" in payload else fallback_routes
+    routes = (
+        _normalize_routes(payload.get("routes"))
+        if "routes" in payload
+        else fallback_routes
+    )
     flow_tools = (
         _normalize_flow_tools(payload.get("flow_tools"))
         if "flow_tools" in payload
         else fallback_flow_tools
     )
-    main_identifier = _normalize_text(payload.get("main_identifier")) or fallback_main_identifier
-    core_activity = _normalize_text(payload.get("core_activity")) or fallback_core_activity
+    main_identifier = (
+        _normalize_text(payload.get("main_identifier")) or fallback_main_identifier
+    )
+    core_activity = (
+        _normalize_text(payload.get("core_activity")) or fallback_core_activity
+    )
     unique_scope = _normalize_text(payload.get("unique_scope")) or fallback_unique_scope
-    geographic_scope = _normalize_text(payload.get("geographic_scope")) or fallback_geographic_scope
+    geographic_scope = (
+        _normalize_text(payload.get("geographic_scope")) or fallback_geographic_scope
+    )
     excludes = _normalize_text_list(payload.get("excludes")) or fallback_excludes
     return {
         "agent_id": resolved_agent_id,
@@ -633,7 +665,9 @@ def _serialize_override_payload(payload: Mapping[str, Any]) -> str:
     return json.dumps(dict(payload), ensure_ascii=False, sort_keys=True)
 
 
-def agent_metadata_payload_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+def agent_metadata_payload_equal(
+    left: Mapping[str, Any], right: Mapping[str, Any]
+) -> bool:
     left_norm = normalize_agent_metadata_payload(left, agent_id=left.get("agent_id"))
     right_norm = normalize_agent_metadata_payload(right, agent_id=right.get("agent_id"))
     return left_norm == right_norm
@@ -648,11 +682,7 @@ async def get_global_agent_metadata_overrides(
         key = str(raw_key or "").strip()
         if not key.startswith(_AGENT_METADATA_OVERRIDE_PREFIX):
             continue
-        agent_id = (
-            key[len(_AGENT_METADATA_OVERRIDE_PREFIX) :]
-            .strip()
-            .lower()
-        )
+        agent_id = key[len(_AGENT_METADATA_OVERRIDE_PREFIX) :].strip().lower()
         if not agent_id:
             continue
         payload: dict[str, Any] | None = None
@@ -673,7 +703,68 @@ async def get_global_agent_metadata_overrides(
     return overrides
 
 
+def _registry_agents_to_metadata(
+    registry: Any,
+) -> list[dict[str, Any]]:
+    """Convert GraphRegistry agents into the old agent-metadata format.
+
+    The old format expects: agent_id, label, description, keywords,
+    prompt_key, namespace, routes, flow_tools, main_identifier, …
+    """
+    results: list[dict[str, Any]] = []
+    for domain_id, agents in (registry.agents_by_domain or {}).items():
+        for agent in agents:
+            agent_id = agent.get("agent_id", "")
+            if not agent_id:
+                continue
+            if not agent.get("enabled", True):
+                continue
+            raw_ns = agent.get("primary_namespaces") or []
+            namespace = raw_ns[0] if raw_ns else ["agents", agent_id]
+            # Build flow_tools from registry tools_by_agent
+            tools = (registry.tools_by_agent or {}).get(agent_id, [])
+            flow_tools = [
+                {"tool_id": t.get("tool_id", ""), "label": t.get("label", "")}
+                for t in tools
+                if t.get("tool_id")
+            ]
+            results.append(
+                {
+                    "agent_id": agent_id,
+                    "label": agent.get("label", agent_id),
+                    "description": agent.get("description", ""),
+                    "keywords": agent.get("keywords", []),
+                    "prompt_key": agent.get("prompt_key", ""),
+                    "namespace": namespace,
+                    "routes": [domain_id] if domain_id else [],
+                    "flow_tools": flow_tools,
+                    "main_identifier": agent.get("main_identifier", ""),
+                    "core_activity": agent.get("core_activity", ""),
+                    "unique_scope": agent.get("unique_scope", ""),
+                    "geographic_scope": agent.get("geographic_scope", ""),
+                    "excludes": agent.get("excludes", []),
+                }
+            )
+    return results
+
+
 async def get_effective_agent_metadata(session: AsyncSession) -> list[dict[str, Any]]:
+    """Return merged agent metadata.
+
+    Tries the new GraphRegistry first (agents from domain hierarchy).
+    Falls back to old hardcoded defaults + prompt-based overrides if the
+    registry is empty or unavailable.
+    """
+    try:
+        from app.services.graph_registry_service import load_graph_registry
+
+        registry = await load_graph_registry(session)
+        if registry.agents_by_domain:
+            return _registry_agents_to_metadata(registry)
+    except Exception:
+        pass
+
+    # Fallback: old hardcoded system
     defaults = get_default_agent_metadata()
     overrides = await get_global_agent_metadata_overrides(session)
     merged: dict[str, dict[str, Any]] = {}
