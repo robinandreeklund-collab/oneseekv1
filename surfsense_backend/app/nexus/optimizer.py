@@ -378,7 +378,8 @@ class MetadataOptimizer:
         if api_key:
             kwargs["api_key"] = api_key
         if api_base:
-            kwargs["api_base"] = api_base
+            # Strip trailing /v1 — LiteLLM adds it for Anthropic, causing /v1/v1
+            kwargs["api_base"] = api_base.rstrip("/").removesuffix("/v1")
 
         # Add litellm_params (but never let global config override our max_tokens)
         for key, value in config.get("litellm_params", {}).items():
@@ -806,7 +807,7 @@ class IntentLayerOptimizer:
         if api_key:
             kwargs["api_key"] = api_key
         if api_base:
-            kwargs["api_base"] = api_base
+            kwargs["api_base"] = api_base.rstrip("/").removesuffix("/v1")
 
         for key, value in config.get("litellm_params", {}).items():
             if key not in ("api_base", "max_tokens"):
