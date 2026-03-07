@@ -2,15 +2,21 @@
 
 Given a resolved domain_id and a user query, this module scores and ranks
 candidate agents from ``registry.agents_by_domain[domain_id]``.  The scoring
-pipeline mirrors the intent-level lexical+priority approach so that the
+pipeline uses lexical matching + embedding cosine similarity so that the
 supervisor can select the best specialist agent without hardcoded if/else
 chains.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Embedding similarity weight relative to lexical scoring.
+_EMBEDDING_WEIGHT = 4.0
 
 
 def _normalize_text(value: str) -> str:
@@ -134,6 +140,47 @@ def resolve_agents_for_domain(
         for agent in agents
         if agent.get("enabled", True)
     ]
+
+    # Add embedding similarity scores
+    try:
+        from app.services.embedding_scorer import compute_embedding_scores
+
+        embedding_docs = [
+            {
+                "id": c.agent_id,
+                "label": c.label,
+                "description": c.description,
+                "keywords": c.keywords,
+            }
+            for c in scored
+        ]
+        embed_scores = compute_embedding_scores(
+            query, embedding_docs,
+            id_key="id",
+            label_key="label",
+            description_key="description",
+            keywords_key="keywords",
+        )
+        if embed_scores:
+            scored = [
+                AgentCandidate(
+                    agent_id=c.agent_id,
+                    domain_id=c.domain_id,
+                    label=c.label,
+                    description=c.description,
+                    keywords=c.keywords,
+                    priority=c.priority,
+                    score=round(
+                        c.score + embed_scores.get(c.agent_id, 0.0) * _EMBEDDING_WEIGHT,
+                        4,
+                    ),
+                    keyword_hits=c.keyword_hits,
+                    name_match=c.name_match,
+                )
+                for c in scored
+            ]
+    except Exception:
+        pass
 
     # Deduplicate by agent_id (keep highest score)
     seen: dict[str, AgentCandidate] = {}

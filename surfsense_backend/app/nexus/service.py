@@ -1329,6 +1329,48 @@ class NexusService:
             event.explicit_feedback = explicit
 
         await session.flush()
+
+        # Propagate feedback to the live retrieval_feedback_store so it
+        # affects subsequent routing decisions (not just DB/calibration).
+        if explicit is not None and event.selected_tool and event.query_text:
+            success = explicit > 0
+            try:
+                from app.agents.new_chat.retrieval_feedback import (
+                    get_global_retrieval_feedback_store,
+                )
+
+                store = get_global_retrieval_feedback_store()
+                store.record(
+                    tool_id=event.selected_tool,
+                    query=event.query_text,
+                    success=success,
+                    competitor_tool_id=None,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to propagate feedback to retrieval_feedback_store",
+                    exc_info=True,
+                )
+
+            # Also persist to GlobalRetrievalFeedbackSignal table so future
+            # supervisor sessions load the feedback via hydration.
+            try:
+                from app.services.retrieval_feedback_persistence_service import (
+                    upsert_retrieval_feedback_signal,
+                )
+
+                await upsert_retrieval_feedback_signal(
+                    session,
+                    tool_id=event.selected_tool,
+                    query=event.query_text,
+                    success=success,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to persist feedback to GlobalRetrievalFeedbackSignal",
+                    exc_info=True,
+                )
+
         return True
 
     # ------------------------------------------------------------------

@@ -2,14 +2,20 @@
 
 Given a resolved agent_id and a user query, this module scores and ranks
 candidate tools from ``registry.tools_by_agent[agent_id]``.  Tools are
-scored lexically against the query so the planner/executor can bind the
-most relevant tools without hardcoded tool sets.
+scored using lexical matching + embedding cosine similarity so the
+planner/executor can bind the most relevant tools without hardcoded tool sets.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Embedding similarity weight relative to lexical scoring.
+_EMBEDDING_WEIGHT = 3.0
 
 
 def _normalize_text(value: str) -> str:
@@ -135,6 +141,50 @@ def resolve_tools_for_agent(
         for tool in tools
         if tool.get("enabled", True)
     ]
+
+    # Add embedding similarity scores
+    try:
+        from app.services.embedding_scorer import compute_embedding_scores
+
+        embedding_docs = [
+            {
+                "id": c.tool_id,
+                "label": c.label,
+                "description": c.description,
+                "keywords": c.keywords,
+            }
+            for c in scored
+        ]
+        embed_scores = compute_embedding_scores(
+            query, embedding_docs,
+            id_key="id",
+            label_key="label",
+            description_key="description",
+            keywords_key="keywords",
+        )
+        if embed_scores:
+            scored = [
+                ToolCandidate(
+                    tool_id=c.tool_id,
+                    agent_id=c.agent_id,
+                    label=c.label,
+                    description=c.description,
+                    keywords=c.keywords,
+                    category=c.category,
+                    namespace=c.namespace,
+                    priority=c.priority,
+                    score=round(
+                        c.score + embed_scores.get(c.tool_id, 0.0) * _EMBEDDING_WEIGHT,
+                        4,
+                    ),
+                    keyword_hits=c.keyword_hits,
+                    name_match=c.name_match,
+                )
+                for c in scored
+            ]
+    except Exception:
+        pass
+
     scored.sort(
         key=lambda c: (-c.score, c.priority, c.tool_id),
     )
