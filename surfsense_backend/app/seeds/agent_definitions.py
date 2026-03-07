@@ -1,7 +1,10 @@
 """Default agent definition seed data.
 
-Maps the current 13 hardcoded agents to their respective domains.
+Maps agents to their respective domains.
 Each agent has metadata for retrieval scoring and worker configuration.
+
+Trafikverket is split into 3 sub-agents (tåg, väg, vägväder) and
+SMHI into 3 sub-agents (prognos, vatten, risk) for more precise routing.
 """
 
 from __future__ import annotations
@@ -9,13 +12,14 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
+    # ── SMHI sub-agents (split for precise routing) ──
     {
         "agent_id": "väder",
         "domain_id": "väder-och-klimat",
-        "label": "SMHI Väderdata",
+        "label": "SMHI Väderprognos & Observationer",
         "description": (
-            "Hämtar väderdata, prognoser, observationer och varningar "
-            "från SMHI:s API:er (meteorologi, hydrologi, oceanografi, brandrisk)."
+            "Väderprognoser, snöprognoser, väderanalyser och "
+            "meteorologiska observationer från SMHI."
         ),
         "keywords": [
             "väder",
@@ -26,10 +30,10 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
             "vind",
             "prognos",
             "varning",
-            "brandrisk",
-            "hydrologi",
-            "oceanografi",
             "nederbörd",
+            "observation",
+            "metfcst",
+            "mesan",
         ],
         "priority": 100,
         "enabled": True,
@@ -38,41 +42,199 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "fallback_namespaces": [["tools", "weather"]],
         "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
         "main_identifier": "VäderAgent",
-        "core_activity": "Hämtar väderdata och prognoser från SMHI",
-        "unique_scope": "SMHI meteorologisk data",
+        "core_activity": "Hämtar väderprognoser och observationer från SMHI",
+        "unique_scope": "SMHI meteorologisk data — prognoser och observationer",
         "geographic_scope": "Sverige",
         "excludes": ["trafik", "statistik", "bolag"],
     },
     {
-        "agent_id": "trafik",
-        "domain_id": "trafik-och-transport",
-        "label": "Trafikverket Data",
+        "agent_id": "väder-vatten",
+        "domain_id": "väder-och-klimat",
+        "label": "SMHI Hydrologi & Oceanografi",
         "description": (
-            "Hämtar trafikinformation, störningar, väglag, "
-            "järnvägsstatus och resplanering."
+            "Hydrologiska observationer (vattenstånd, vattenföring, grundvatten) "
+            "och oceanografiska mätningar (havsnivå, våghöjd, havstemperatur) från SMHI."
+        ),
+        "keywords": [
+            "hydrologi",
+            "vattenstånd",
+            "vattenföring",
+            "grundvatten",
+            "oceanografi",
+            "hav",
+            "havsnivå",
+            "våghöjd",
+            "havstemperatur",
+            "sjö",
+            "vänern",
+            "vättern",
+            "ström",
+            "salinitet",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "weather_prompt",
+        "primary_namespaces": [["tools", "weather", "hydro"]],
+        "fallback_namespaces": [["tools", "weather"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "VattenAgent",
+        "core_activity": "Hämtar hydrologiska och oceanografiska data från SMHI",
+        "unique_scope": "SMHI vatten- och havsdata",
+        "geographic_scope": "Sverige",
+        "excludes": ["trafik", "statistik", "bolag"],
+    },
+    {
+        "agent_id": "väder-risk",
+        "domain_id": "väder-och-klimat",
+        "label": "SMHI Brandrisk & Solstrålning",
+        "description": (
+            "Brandriskvärden (FWI-index, prognos och analys) samt "
+            "solstrålningsdata (UV, global irradians, PAR) från SMHI STRÅNG-modellen."
+        ),
+        "keywords": [
+            "brandrisk",
+            "eldningsförbud",
+            "fwi",
+            "brand",
+            "skogsbrand",
+            "solstrålning",
+            "uv",
+            "uv-index",
+            "irradians",
+            "sol",
+            "solenergi",
+            "par",
+            "strång",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "weather_prompt",
+        "primary_namespaces": [["tools", "weather", "risk"]],
+        "fallback_namespaces": [["tools", "weather"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "RiskAgent",
+        "core_activity": "Hämtar brandrisk och solstrålning från SMHI",
+        "unique_scope": "SMHI brandrisk- och solstrålningsdata",
+        "geographic_scope": "Sverige",
+        "excludes": ["trafik", "statistik", "bolag"],
+    },
+    # ── Trafikverket sub-agents (split for precise routing) ──
+    {
+        "agent_id": "trafik-tag",
+        "domain_id": "trafik-och-transport",
+        "label": "Tågtrafik & Resplanering",
+        "description": (
+            "Tåginformation — förseningar, tidtabeller, stationer, inställda tåg, "
+            "tågprognoser och resplanering med kollektivtrafik via Trafiklab."
+        ),
+        "keywords": [
+            "tåg",
+            "tåget",
+            "tag",
+            "järnväg",
+            "tågförsening",
+            "försening",
+            "tidtabell",
+            "avgång",
+            "ankomst",
+            "station",
+            "inställd",
+            "inställda",
+            "resplanering",
+            "kollektivtrafik",
+            "buss",
+            "pendeltåg",
+            "trafiklab",
+            "sj",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "trafik_prompt",
+        "primary_namespaces": [["tools", "trafik", "tag"]],
+        "fallback_namespaces": [["tools", "trafik"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "TågAgent",
+        "core_activity": "Hämtar tåginformation och resplanering",
+        "unique_scope": "Tågtrafik, tidtabeller och resplanering",
+        "geographic_scope": "Sverige",
+        "excludes": ["väder", "statistik", "bolag"],
+    },
+    {
+        "agent_id": "trafik-vag",
+        "domain_id": "trafik-och-transport",
+        "label": "Vägtrafik & Trafikläge",
+        "description": (
+            "Väginformation — störningar, olyckor, köer, vägarbeten, vägstatus, "
+            "underhåll, hastigheter, avstängningar, trafikkameror och trafikprognoser."
         ),
         "keywords": [
             "trafik",
             "trafikverket",
             "väg",
-            "järnväg",
+            "vägar",
             "störning",
             "olycka",
-            "väglag",
+            "kö",
             "köer",
+            "vägarbete",
+            "vägstatus",
+            "underhåll",
+            "hastighet",
+            "avstängning",
+            "kamera",
+            "trafikkamera",
             "restid",
+            "trafikprognos",
+            "framkomlighet",
+            "e4",
+            "e6",
+            "motorväg",
         ],
         "priority": 100,
         "enabled": True,
         "prompt_key": "trafik_prompt",
-        "primary_namespaces": [["tools", "trafik", "trafikverket"]],
+        "primary_namespaces": [["tools", "trafik", "vag"]],
         "fallback_namespaces": [["tools", "trafik"]],
         "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
-        "main_identifier": "TrafikAgent",
-        "core_activity": "Hämtar trafikdata och störningar",
-        "unique_scope": "Trafikverkets realtidsdata",
+        "main_identifier": "VägAgent",
+        "core_activity": "Hämtar vägtrafik, störningar och trafikläge",
+        "unique_scope": "Vägtrafik, störningar, kameror och vägstatus",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "statistik", "bolag"],
+    },
+    {
+        "agent_id": "trafik-vagvader",
+        "domain_id": "trafik-och-transport",
+        "label": "Vägväder & Väglag",
+        "description": (
+            "Vägväder från Trafikverkets väderstationer — halka, isrisk, "
+            "vind på broar, temperatur vid vägnätet och väglag."
+        ),
+        "keywords": [
+            "vägväder",
+            "väglag",
+            "halka",
+            "isrisk",
+            "is",
+            "vind",
+            "vindby",
+            "temperatur",
+            "väderstation",
+            "mätpunkt",
+            "bro",
+            "öresundsbron",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "trafik_prompt",
+        "primary_namespaces": [["tools", "trafik", "vagvader"]],
+        "fallback_namespaces": [["tools", "trafik"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "VägväderAgent",
+        "core_activity": "Hämtar vägväder, halka och väglag",
+        "unique_scope": "Trafikverkets vägväder och väglagsdata",
+        "geographic_scope": "Sverige",
+        "excludes": ["statistik", "bolag"],
     },
     {
         "agent_id": "statistik",

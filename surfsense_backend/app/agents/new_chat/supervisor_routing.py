@@ -1,4 +1,5 @@
 """Intent detection, routing, and agent aliasing functions for supervisor agent."""
+
 from __future__ import annotations
 
 import re
@@ -78,7 +79,9 @@ def _route_allowed_agents(route_hint: str | None) -> set[str]:
     return set(_ROUTE_STRICT_AGENT_POLICIES.get(route, set()))
 
 
-def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
+def _route_default_agent(
+    route_hint: str | None, allowed: set[str] | None = None
+) -> str:
     route = _normalize_route_hint_value(route_hint)
     # Minimal defaults for the 4 broad routes + backward compat aliases.
     # Domain-specific agent selection is handled by the registry-aware
@@ -93,9 +96,14 @@ def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None
         "compare": "syntes",
         "smalltalk": "konversation",
         # Domain-specific routes that already have a matching agent name
-        "trafik": "trafik",
+        "trafik": "trafik-vag",
+        "trafik-tag": "trafik-tag",
+        "trafik-vag": "trafik-vag",
+        "trafik-vagvader": "trafik-vagvader",
         "statistik": "statistik",
         "väder": "väder",
+        "väder-vatten": "väder-vatten",
+        "väder-risk": "väder-risk",
         "marknad": "marknad",
         "bolag": "bolag",
         "riksdagen": "riksdagen",
@@ -129,7 +137,9 @@ def _tokenize_focus_terms(text: str) -> set[str]:
     return {token for token in tokens if token not in _AGENT_STOPWORDS}
 
 
-def _score_tool_profile(profile: AgentToolProfile, query_norm: str, tokens: set[str]) -> int:
+def _score_tool_profile(
+    profile: AgentToolProfile, query_norm: str, tokens: set[str]
+) -> int:
     score = 0
     if profile.tool_id and profile.tool_id.lower() in query_norm:
         score += 6
@@ -176,12 +186,19 @@ def _select_focused_tool_profiles(
     return profiles[: max(1, int(limit))]
 
 
-def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
+def _focused_tool_ids_for_agent(
+    agent_name: str, task: str, *, limit: int = 5
+) -> list[str]:
     normalized_task = _normalize_text(task)
     normalized_agent_name = str(agent_name or "").strip().lower()
-    if normalized_agent_name in {"kunskap", "statistik", "åtgärd", "knowledge", "statistics", "action"} and any(
-        marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
-    ):
+    if normalized_agent_name in {
+        "kunskap",
+        "statistik",
+        "åtgärd",
+        "knowledge",
+        "statistics",
+        "action",
+    } and any(marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS):
         # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
         # instead of locking the worker to static profile IDs.
         return []
@@ -204,13 +221,37 @@ def _guess_agent_from_alias(alias: str) -> str | None:
     if direct:
         return direct
     token_rules: list[tuple[tuple[str, ...], str]] = [
-        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "väder"),
+        (
+            (
+                "smhi",
+                "weather",
+                "vader",
+                "väder",
+                "temperatur",
+                "regn",
+                "sno",
+                "snö",
+                "vind",
+            ),
+            "väder",
+        ),
         (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
         (("map", "kart", "geo"), "kartor"),
         (("stat", "scb", "data"), "statistik"),
         (("riks", "parliament", "politik"), "riksdagen"),
         (("bolag", "company", "business", "org"), "bolag"),
-        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marknad"),
+        (
+            (
+                "blocket",
+                "tradera",
+                "annons",
+                "begagnat",
+                "köp",
+                "sälj",
+                "marknadsplats",
+            ),
+            "marknad",
+        ),
         (("browser", "web", "scrape", "search"), "webb"),
         (("media", "podcast", "image", "video"), "media"),
         (("code", "python", "calc", "kod"), "kod"),
@@ -225,6 +266,7 @@ def _guess_agent_from_alias(alias: str) -> str | None:
 
 
 # ── Registry-aware agent + tool resolution ────────────────────────────
+
 
 def resolve_default_agent_with_registry(
     route_hint: str | None,
@@ -289,9 +331,7 @@ def resolve_allowed_agents_with_registry(
                         (registry.agents_by_domain or {}).get(domain_id) or []
                     )
                     for agent in agents:
-                        agent_id = str(
-                            agent.get("agent_id") or ""
-                        ).strip().lower()
+                        agent_id = str(agent.get("agent_id") or "").strip().lower()
                         if agent_id and agent.get("enabled", True):
                             agent_ids.add(agent_id)
                 if agent_ids:

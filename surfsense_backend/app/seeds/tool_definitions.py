@@ -216,15 +216,15 @@ DEFAULT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "enabled": True,
         "priority": 150,
     },
-    # ── Trafiklab route tool ──
+    # ── Trafiklab route tool (assigned to tåg-agent) ──
     {
         "tool_id": "trafiklab_route",
-        "agent_id": "trafik",
+        "agent_id": "trafik-tag",
         "label": "Resplanering",
         "description": "Planerar resa med kollektivtrafik via Trafiklab.",
         "keywords": ["resplanering", "trafiklab", "kollektivtrafik", "buss", "tåg"],
         "category": "trafik",
-        "namespace": ["tools", "trafik", "trafiklab"],
+        "namespace": ["tools", "trafik", "tag"],
         "enabled": True,
         "priority": 100,
     },
@@ -255,16 +255,15 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
     """
     additional: list[dict[str, Any]] = []
 
-    agent_tool_mapping = {
-        "väder": "app.agents.new_chat.tools.smhi:SMHI_TOOL_DEFINITIONS",
-        "trafik": "app.agents.new_chat.tools.trafikverket:TRAFIKVERKET_TOOL_DEFINITIONS",
+    # Simple agents: one import path → one agent_id
+    simple_agent_tool_mapping = {
         "statistik": "app.agents.new_chat.statistics_agent:SCB_TOOL_DEFINITIONS",
         "riksdagen": "app.agents.new_chat.riksdagen_agent:RIKSDAGEN_TOOL_DEFINITIONS",
         "bolag": "app.agents.new_chat.tools.bolagsverket:BOLAGSVERKET_TOOL_DEFINITIONS",
         "marknad": "app.agents.new_chat.marketplace_tools:MARKETPLACE_TOOL_DEFINITIONS",
     }
 
-    for agent_id, import_path in agent_tool_mapping.items():
+    for agent_id, import_path in simple_agent_tool_mapping.items():
         try:
             module_path, attr_name = import_path.rsplit(":", 1)
             import importlib
@@ -295,5 +294,94 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
                     "priority": 100,
                 }
             )
+
+    # ── SMHI: split across 3 sub-agents by category ──
+    smhi_agent_by_category = {
+        "smhi_vaderprognoser": "väder",
+        "smhi_vaderanalyser": "väder",
+        "smhi_vaderobservationer": "väder",
+        "smhi_hydrologi": "väder-vatten",
+        "smhi_oceanografi": "väder-vatten",
+        "smhi_brandrisk": "väder-risk",
+        "smhi_solstralning": "väder-risk",
+    }
+    smhi_ns_by_agent = {
+        "väder": ["tools", "weather", "smhi"],
+        "väder-vatten": ["tools", "weather", "hydro"],
+        "väder-risk": ["tools", "weather", "risk"],
+    }
+    try:
+        from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+
+        for definition in SMHI_TOOL_DEFINITIONS:
+            tool_id = str(getattr(definition, "tool_id", ""))
+            if not tool_id:
+                continue
+            category = str(getattr(definition, "category", ""))
+            sub_agent = smhi_agent_by_category.get(category, "väder")
+            additional.append(
+                {
+                    "tool_id": tool_id,
+                    "agent_id": sub_agent,
+                    "label": str(getattr(definition, "name", tool_id)),
+                    "description": str(getattr(definition, "description", "")),
+                    "keywords": list(getattr(definition, "keywords", [])),
+                    "category": category,
+                    "namespace": list(
+                        smhi_ns_by_agent.get(sub_agent, ["tools", "weather", "smhi"])
+                    ),
+                    "enabled": True,
+                    "priority": 100,
+                }
+            )
+    except Exception:
+        pass
+
+    # ── Trafikverket: split across 3 sub-agents by category ──
+    trafik_agent_by_category = {
+        "trafikverket_tag": "trafik-tag",
+        "trafikverket_trafikinfo": "trafik-vag",
+        "trafikverket_vag": "trafik-vag",
+        "trafikverket_kameror": "trafik-vag",
+        "trafikverket_prognos": "trafik-vag",
+        "trafikverket_vader": "trafik-vagvader",
+    }
+    trafik_ns_by_agent = {
+        "trafik-tag": ["tools", "trafik", "tag"],
+        "trafik-vag": ["tools", "trafik", "vag"],
+        "trafik-vagvader": ["tools", "trafik", "vagvader"],
+    }
+    # Special case: tågprognos goes to trafik-tag, not trafik-vag
+    trafik_tool_override = {
+        "trafikverket_prognos_tag": "trafik-tag",
+    }
+    try:
+        from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+
+        for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
+            tool_id = str(getattr(definition, "tool_id", ""))
+            if not tool_id:
+                continue
+            category = str(getattr(definition, "category", ""))
+            sub_agent = trafik_tool_override.get(
+                tool_id, trafik_agent_by_category.get(category, "trafik-vag")
+            )
+            additional.append(
+                {
+                    "tool_id": tool_id,
+                    "agent_id": sub_agent,
+                    "label": str(getattr(definition, "name", tool_id)),
+                    "description": str(getattr(definition, "description", "")),
+                    "keywords": list(getattr(definition, "keywords", [])),
+                    "category": category,
+                    "namespace": list(
+                        trafik_ns_by_agent.get(sub_agent, ["tools", "trafik", "vag"])
+                    ),
+                    "enabled": True,
+                    "priority": 100,
+                }
+            )
+    except Exception:
+        pass
 
     return additional

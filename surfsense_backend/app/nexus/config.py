@@ -56,10 +56,13 @@ def get_all_zone_prefixes() -> dict[str, str]:
 # Namespace prefix → zone mapping (aligned with platform routing)
 NAMESPACE_ZONE_MAP: dict[str, str] = {
     "tools/knowledge": Zone.KUNSKAP,
+    # SMHI sub-agent namespaces (all map to same domain)
     "tools/weather": "väder-och-klimat",
+    # Trafikverket sub-agent namespaces (all map to same domain)
+    "tools/trafik": "trafik-och-transport",
+    # Other domains
     "tools/politik": "politik-och-beslut",
     "tools/statistics": "ekonomi-och-skatter",
-    "tools/trafik": "trafik-och-transport",
     "tools/bolag": "näringsliv-och-bolag",
     "tools/marketplace": "handel-och-marknad",
     "tools/action": Zone.SKAPANDE,
