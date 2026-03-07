@@ -138,7 +138,10 @@ class NexusService:
         self.ood_detector = DarkMatterDetector()
         self.band_cascade = ConfidenceBandCascade()
         self.zone_manager = ZoneManager()
-        self.platt_scaler = PlattCalibratedReranker()
+        # Per-zone Platt scalers: zone → scaler.
+        # Global fallback used when no zone-specific scaler exists.
+        self._platt_global = PlattCalibratedReranker()
+        self._platt_by_zone: dict[str, PlattCalibratedReranker] = {}
         # Sprint 2 additions
         self.str_pipeline = SelectThenRoute(zone_manager=self.zone_manager)
         self.schema_verifier = SchemaVerifier()
@@ -153,6 +156,24 @@ class NexusService:
         self.deploy_control = DeployControl()
         # Shadow observer — reads from real platform routing pipeline
         self.shadow_observer = ShadowObserver()
+
+    # -- Per-zone Platt helpers --
+
+    @property
+    def platt_scaler(self) -> PlattCalibratedReranker:
+        """Backward-compat: return the global Platt scaler."""
+        return self._platt_global
+
+    def _get_platt_for_zone(self, zone: str | None) -> PlattCalibratedReranker:
+        """Get the best Platt scaler for a zone.
+
+        Returns zone-specific scaler if fitted, else global fallback.
+        """
+        if zone and zone in self._platt_by_zone:
+            scaler = self._platt_by_zone[zone]
+            if scaler.is_fitted:
+                return scaler
+        return self._platt_global
 
     # ------------------------------------------------------------------
     # Dynamic Agent Loading (from admin flow DB)
@@ -484,10 +505,14 @@ class NexusService:
             top_score = str_result.top_score
             second_score = str_result.second_score
 
-            # Step 4: Calibrate scores (use reranked scores when available)
+            # Step 4: Calibrate scores using zone-specific Platt scaler
+            resolved_zone = (
+                analysis.zone_candidates[0] if analysis.zone_candidates else None
+            )
+            zone_platt = self._get_platt_for_zone(resolved_zone)
             for rank, c in enumerate(str_result.candidates):
                 raw = rerank_scores.get(c.tool_id, c.raw_score)
-                calibrated = self.platt_scaler.calibrate(raw)
+                calibrated = zone_platt.calibrate(raw)
                 candidates.append(
                     RoutingCandidate(
                         tool_id=c.tool_id,
@@ -1270,39 +1295,53 @@ class NexusService:
     # ------------------------------------------------------------------
 
     async def load_calibration(self, session: AsyncSession) -> None:
-        """Load active calibration parameters from DB."""
+        """Load active calibration parameters from DB (per-zone)."""
+        import numpy as _np
+
         result = await session.execute(
             select(NexusCalibrationParam).where(
                 NexusCalibrationParam.is_active.is_(True),
                 NexusCalibrationParam.calibration_method == "platt",
             )
         )
-        row = result.scalars().first()
-        if row and row.param_a is not None and row.param_b is not None:
-            # Sanity check: reject degenerate params that crush all outputs
-            import numpy as _np
+        rows = result.scalars().all()
 
-            _test = _np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+        _test = _np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+
+        for row in rows:
+            if row.param_a is None or row.param_b is None:
+                continue
             _out = 1.0 / (1.0 + _np.exp(row.param_a * _test + row.param_b))
             if _np.max(_out) < 0.01 or _np.min(_out) > 0.99:
                 logger.warning(
-                    "Loaded Platt params degenerate (A=%.4f, B=%.4f → max=%.6f). "
-                    "Using unfitted pass-through instead.",
+                    "Platt params degenerate for zone=%s (A=%.4f, B=%.4f). Skipping.",
+                    row.zone,
                     row.param_a,
                     row.param_b,
-                    float(_np.max(_out)),
+                )
+                continue
+
+            scaler = PlattCalibratedReranker(
+                PlattParams(
+                    a=row.param_a,
+                    b=row.param_b,
+                    fitted=True,
+                    n_samples=row.fitted_on_samples or 0,
+                )
+            )
+
+            if row.zone == "__global__":
+                self._platt_global = scaler
+                logger.info(
+                    "Loaded global Platt: A=%.4f, B=%.4f",
+                    row.param_a,
+                    row.param_b,
                 )
             else:
-                self.platt_scaler = PlattCalibratedReranker(
-                    PlattParams(
-                        a=row.param_a,
-                        b=row.param_b,
-                        fitted=True,
-                        n_samples=row.fitted_on_samples or 0,
-                    )
-                )
+                self._platt_by_zone[row.zone] = scaler
                 logger.info(
-                    "Loaded Platt calibration: A=%.4f, B=%.4f",
+                    "Loaded Platt for zone=%s: A=%.4f, B=%.4f",
+                    row.zone,
                     row.param_a,
                     row.param_b,
                 )
@@ -1870,58 +1909,98 @@ class NexusService:
 
         return ECEReport(global_ece=global_ece, per_zone=per_zone)
 
-    async def fit_calibration(self, session: AsyncSession) -> dict:
+    async def fit_calibration(
+        self,
+        session: AsyncSession,
+        *,
+        zone: str | None = None,
+        category: str | None = None,
+    ) -> dict:
         """Fit Platt calibration using routing event data.
 
-        Collects (raw_score, band) pairs from routing events and fits
-        the Platt sigmoid to produce calibrated confidence scores.
+        Per-zone fitting: each domain gets its own sigmoid parameters
+        so that training one category (e.g. väder) doesn't pollute others.
+
+        Args:
+            zone: Fit only for this zone/domain (e.g. "väder-och-klimat").
+            category: Fit only for events matching this tool category
+                (e.g. "smhi"). Resolves to zone via platform tools.
         """
         from datetime import UTC, datetime
 
-        # Load routing events with scores
-        result = await session.execute(
+        from app.nexus.config import get_all_zone_prefixes
+
+        # Resolve category → zone if needed
+        target_zone: str | None = zone
+        if category and not target_zone:
+            from app.nexus.platform_bridge import get_platform_tools
+
+            cat_tools = [
+                t for t in get_platform_tools() if t.category == category
+            ]
+            if cat_tools:
+                target_zone = cat_tools[0].zone
+
+        # Load routing events with scores, optionally filtered by zone
+        stmt = (
             select(NexusRoutingEvent)
             .where(NexusRoutingEvent.raw_reranker_score.isnot(None))
             .order_by(NexusRoutingEvent.routed_at.desc())
-            .limit(1000)
+            .limit(2000)
         )
+        if target_zone:
+            stmt = stmt.where(NexusRoutingEvent.resolved_zone == target_zone)
+
+        result = await session.execute(stmt)
         events = result.scalars().all()
 
         if len(events) < 10:
             return {
                 "status": "insufficient_data",
-                "message": f"Need at least 10 scored events, got {len(events)}",
+                "message": (
+                    f"Need ≥10 scored events"
+                    f"{f' for zone {target_zone}' if target_zone else ''}"
+                    f", got {len(events)}"
+                ),
+                "zone": target_zone,
             }
 
         # Build training data: raw_score → binary label (band 0/1 = correct)
-        scores = []
-        labels = []
-        for ev in events:
-            scores.append(ev.raw_reranker_score)
-            labels.append(1.0 if ev.band <= 1 else 0.0)
+        scores = [ev.raw_reranker_score for ev in events]
+        labels = [1.0 if ev.band <= 1 else 0.0 for ev in events]
 
         # Fit Platt scaler
-        params = self.platt_scaler.fit(scores, labels)
+        scaler = PlattCalibratedReranker()
+        params = scaler.fit(scores, labels)
 
-        # Persist calibration per zone (all 17 domain zones)
-        from app.nexus.config import get_all_zone_prefixes
+        if not params.fitted:
+            return {
+                "status": "degenerate",
+                "message": "Platt fit rejected as degenerate",
+                "zone": target_zone,
+            }
 
-        all_zones = get_all_zone_prefixes()
+        # Determine which zones to write
+        if target_zone:
+            zones_to_write = [target_zone]
+        else:
+            # Global fit: write to __global__ key
+            zones_to_write = ["__global__"]
+
         fitted_count = 0
-        for zone in all_zones:
-            # Deactivate old params
+        for z in zones_to_write:
+            # Deactivate old params for this zone
             old = await session.execute(
                 select(NexusCalibrationParam).where(
-                    NexusCalibrationParam.zone == zone,
+                    NexusCalibrationParam.zone == z,
                     NexusCalibrationParam.is_active.is_(True),
                 )
             )
             for old_row in old.scalars().all():
                 old_row.is_active = False
 
-            # Insert new
             cal = NexusCalibrationParam(
-                zone=zone,
+                zone=z,
                 calibration_method="platt",
                 param_a=params.a,
                 param_b=params.b,
@@ -1934,10 +2013,17 @@ class NexusService:
             session.add(cal)
             fitted_count += 1
 
+        # Update in-memory scalers
+        if target_zone:
+            self._platt_by_zone[target_zone] = scaler
+        else:
+            self._platt_global = scaler
+
         await session.commit()
 
         return {
             "status": "completed",
+            "zone": target_zone or "__global__",
             "fitted_on_samples": len(scores),
             "param_a": params.a,
             "param_b": params.b,
@@ -2176,7 +2262,13 @@ class NexusService:
             "ece_global": ece_report.global_ece,
             "ood_rate": round(ood_rate, 4),
             "namespace_purity": round(namespace_purity, 4),
-            "platt_calibrated": self.platt_scaler.is_fitted,
+            "platt_calibrated": (
+                self._platt_global.is_fitted
+                or any(s.is_fitted for s in self._platt_by_zone.values())
+            ),
+            "platt_zones_fitted": len(
+                [z for z, s in self._platt_by_zone.items() if s.is_fitted]
+            ),
             "total_events": total,
             "total_tools": tool_count,
             "total_hard_negatives": hn_count,
@@ -2836,11 +2928,11 @@ class NexusService:
             # The first pass gives us (raw_score, correct/incorrect) pairs —
             # exactly what Platt sigmoid needs.  Fitting once makes band
             # thresholds meaningful for subsequent iterations.
-            if iteration == 1 and not self.platt_scaler.is_fitted and len(platt_raw_scores) >= 10:
+            if iteration == 1 and not self._platt_global.is_fitted and len(platt_raw_scores) >= 10:
                 try:
-                    self.platt_scaler.fit(platt_raw_scores, platt_labels)
+                    self._platt_global.fit(platt_raw_scores, platt_labels)
                     logger.info(
-                        "Auto-loop #%d: Auto-fitted Platt calibration from %d samples",
+                        "Auto-loop #%d: Auto-fitted global Platt from %d samples",
                         loop_number, len(platt_raw_scores),
                     )
                 except Exception as e:
@@ -3779,14 +3871,14 @@ class NexusService:
             if failures == 0 or iteration == max_iterations:
                 break
 
-            # ── Auto-fit Platt calibration after first iteration ──────────
-            if iteration == 1 and not self.platt_scaler.is_fitted and len(platt_raw_scores) >= 10:
+            # ── Auto-fit global Platt calibration after first iteration ─────
+            if iteration == 1 and not self._platt_global.is_fitted and len(platt_raw_scores) >= 10:
                 try:
-                    self.platt_scaler.fit(platt_raw_scores, platt_labels)
+                    self._platt_global.fit(platt_raw_scores, platt_labels)
                     yield {
                         "type": "progress",
                         "step": "platt_fitted",
-                        "detail": f"Platt-kalibrering anpassad från {len(platt_raw_scores)} samples",
+                        "detail": f"Global Platt anpassad från {len(platt_raw_scores)} samples",
                         "iteration": iteration,
                     }
                 except Exception as e:

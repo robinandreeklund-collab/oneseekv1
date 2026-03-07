@@ -1042,14 +1042,24 @@ async def get_calibration_params(
     return await service.get_calibration_params(session)
 
 
+class CalibrationFitRequest(BaseModel):
+    zone: str | None = None
+    category: str | None = None
+
+
 @nexus_router.post("/calibration/fit")
 async def fit_calibration(
+    request: CalibrationFitRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Trigger calibration fitting using routing event data."""
-    return await service.fit_calibration(session)
+    """Fit Platt calibration. Optionally filter by zone or category for per-zone fit."""
+    return await service.fit_calibration(
+        session,
+        zone=request.zone if request else None,
+        category=request.category if request else None,
+    )
 
 
 @nexus_router.get("/calibration/ece", response_model=ECEReport)

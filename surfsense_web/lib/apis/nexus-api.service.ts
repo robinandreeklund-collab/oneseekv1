@@ -813,8 +813,11 @@ class NexusApiService {
 	getCalibrationParams = () =>
 		fetchNexus<CalibrationParamsResponse[]>("/calibration/params");
 
-	fitCalibration = () =>
-		fetchNexus<Record<string, string>>("/calibration/fit", { method: "POST" });
+	fitCalibration = (options?: { zone?: string; category?: string }) =>
+		fetchNexus<Record<string, string>>("/calibration/fit", {
+			method: "POST",
+			body: JSON.stringify(options ?? {}),
+		});
 
 	getCalibrationECE = () =>
 		fetchNexus<ECEReportResponse>("/calibration/ece");
