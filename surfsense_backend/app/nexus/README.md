@@ -1,6 +1,6 @@
 # NEXUS — Retrieval Intelligence Platform
 
-> **Version:** 2.1.0
+> **Version:** 2.2.0
 > **Källa:** `docs/eval/nexus.md` (komplett specifikation)
 > **Princip:** Fristående system — 0 beroenden till gammalt eval-system
 
@@ -76,9 +76,11 @@ app/nexus/
 Mäter kontinuerligt embedding-rymd-hälsa:
 - **Silhouette score** per zon (global + per-namespace)
 - **UMAP 2D** projektioner (PCA fallback utan umap-learn)
+- **Namespace-filtrering** — visa rymden för ett specifikt namespace eller zon
 - **Confusion pairs** — verktyg som är för nära varandra (threshold 0.85)
 - **Hubness detection** — verktyg som dominerar NN-resultat (threshold 0.08)
 - **Inter-zone distances** — centroid-avstånd mellan zoner
+- **Snapshot namespace** — varje punkt inkluderar namespace för filtrering i UI
 
 ### Lager 2: SYNTH FORGE
 LLM-genererade testfrågor via LiteLLM (konfigurerad modell):
@@ -86,6 +88,7 @@ LLM-genererade testfrågor via LiteLLM (konfigurerad modell):
 - **4 frågor per nivå per verktyg** = 16 testfall/verktyg
 - **Roundtrip-verifiering**: query → retrieve → check top-3
 - **Adversarial cases** → hard negative bank
+- **Expected intent/agent**: deriveras automatiskt från verktygets zon och namespace-mappning
 
 ### Lager 3: AUTO LOOP
 7-stegs självförbättrande pipeline:
@@ -96,6 +99,19 @@ LLM-genererade testfrågor via LiteLLM (konfigurerad modell):
 5. Testa fix isolerat (**beräkna embedding delta**)
 6. Köa för human review
 7. Om godkänt: deploya & reindexera
+
+**3-nivå pipeline-mätning (Intent → Agent → Tool):**
+- Varje testfall har `expected_intent`, `expected_agent` och `expected_tool`
+- Auto-loop mäter accuracy på alla tre nivåer per iteration
+- Kaskadeffekter synliggörs — fel intent → troligen fel agent → troligen fel tool
+- Metriker: `intent_accuracy`, `agent_accuracy`, `precision_at_1` (tool)
+
+**LLM Tool Judge:**
+- Kör parallellt med NEXUS embedding-baserade scoring
+- Skickar top-5 kandidater till LLM som väljer bästa verktyg med motivering
+- Dubbelsidigt: jämför NEXUS accuracy vs LLM accuracy mot expected_tool
+- 2x2 korsmatris: båda rätt, bara NEXUS rätt, bara LLM rätt, båda fel
+- Oenigheter loggas med winner-klassificering (nexus/llm/neither/tie)
 
 ### Lager 4: EVAL LEDGER
 5-stegs pipeline-metriker:
@@ -161,7 +177,7 @@ Alla tabeller har `nexus_` prefix. Separata från legacy eval-systemet.
 
 | Tabell | Beskrivning |
 |--------|-------------|
-| `nexus_synthetic_cases` | Synth Forge-genererade testfall |
+| `nexus_synthetic_cases` | Synth Forge-genererade testfall (inkl. expected_intent, expected_agent) |
 | `nexus_space_snapshots` | Embedding-rymd snapshots (UMAP coords) |
 | `nexus_auto_loop_runs` | Auto-loop körningshistorik |
 | `nexus_pipeline_metrics` | Pipeline-steg metriker (5 stages) |
@@ -199,6 +215,7 @@ DELETE /api/v1/nexus/forge/cases/{id}
 
 # Auto Loop (Lager 3)
 POST   /api/v1/nexus/loop/start
+POST   /api/v1/nexus/loop/start-stream    # SSE med 3-nivå metrics + LLM Judge
 GET    /api/v1/nexus/loop/runs
 GET    /api/v1/nexus/loop/runs/{id}
 POST   /api/v1/nexus/loop/runs/{id}/approve
@@ -236,9 +253,9 @@ surfsense_web/
 ├── components/admin/nexus/
 │   ├── nexus-dashboard.tsx           ← 6-tab orchestrator
 │   ├── tabs/
-│   │   ├── space-tab.tsx             ← UMAP + silhouette + confusion + hubness
+│   │   ├── space-tab.tsx             ← UMAP med namespace/zon-filter + hubness + confusion
 │   │   ├── forge-tab.tsx             ← Generera testfrågor per verktyg/kategori
-│   │   ├── loop-tab.tsx              ← Auto-loop status, körningshistorik
+│   │   ├── loop-tab.tsx              ← Auto-loop med 3-nivå metrics + LLM Judge korsmatris
 │   │   ├── ledger-tab.tsx            ← 5-stage pipeline metriker
 │   │   └── deploy-tab.tsx            ← Triple-gate per verktyg, promote/rollback
 │   └── shared/
@@ -282,3 +299,7 @@ surfsense_web/
 | Reranker Delta | >+12pp |
 | Syntetiska testfall/verktyg | 16 |
 | Auto Loop-förbättring | Mätbar separation-ökning per vecka |
+| Intent Accuracy | >90% |
+| Agent Accuracy | >85% |
+| Tool Accuracy (P@1) | >80% |
+| LLM Judge Agreement | >75% |
