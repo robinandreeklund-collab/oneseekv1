@@ -170,10 +170,7 @@ class SelectThenRoute:
             filtered_entries = [
                 t
                 for t in tool_entries
-                if any(
-                    t.get("namespace", "").startswith(ns)
-                    for ns in agent_namespaces
-                )
+                if any(t.get("namespace", "").startswith(ns) for ns in agent_namespaces)
             ]
             # Fall back to unfiltered if agent filter yields nothing
             if filtered_entries:

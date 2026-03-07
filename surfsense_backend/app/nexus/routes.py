@@ -328,7 +328,7 @@ async def get_category_metadata(
 
     by_cat = get_platform_tools_by_category()
     # Build labels: use category name, capitalized. Special cases for known providers.
-    _LABEL_OVERRIDES = {
+    label_overrides = {
         "smhi": "SMHI (Väder)",
         "scb": "SCB (Statistik)",
         "kolada": "Kolada (Nyckeltal)",
@@ -346,7 +346,7 @@ async def get_category_metadata(
         categories.append(
             {
                 "category_id": cat_id,
-                "label": _LABEL_OVERRIDES.get(cat_id, cat_id.replace("_", " ").title()),
+                "label": label_overrides.get(cat_id, cat_id.replace("_", " ").title()),
                 "tool_count": len(by_cat[cat_id]),
             }
         )

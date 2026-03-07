@@ -47,7 +47,7 @@ class ZoneManager:
         Returns:
             The resolved zone string, or None if no match.
         """
-        if isinstance(namespace, (list, tuple)):
+        if isinstance(namespace, list | tuple):
             ns_str = "/".join(namespace)
         else:
             ns_str = namespace

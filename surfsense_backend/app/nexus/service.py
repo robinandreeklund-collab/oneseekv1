@@ -850,7 +850,7 @@ class NexusService:
                     "y": cy + random.uniform(-0.8, 0.8),
                     "zone": pt.zone,
                     "namespace": "/".join(pt.namespace)
-                    if isinstance(pt.namespace, (list, tuple))
+                    if isinstance(pt.namespace, list | tuple)
                     else pt.namespace,
                     "cluster": cluster,
                 }
@@ -891,7 +891,7 @@ class NexusService:
                         zone=pt.zone,
                         embedding=emb.tolist(),
                         namespace="/".join(pt.namespace)
-                        if isinstance(pt.namespace, (list, tuple))
+                        if isinstance(pt.namespace, list | tuple)
                         else pt.namespace,
                     )
                 )
@@ -1565,10 +1565,12 @@ class NexusService:
             top_ids = {e[0]["tool_id"] for e in top_entries}
             for entry_dict, score in raw_entries[20:]:
                 ns = entry_dict.get("namespace", "")
-                if any(ns.startswith(prefix) for prefix in agent_namespaces):
-                    if entry_dict["tool_id"] not in top_ids:
-                        top_entries.append((entry_dict, score))
-                        top_ids.add(entry_dict["tool_id"])
+                if (
+                    any(ns.startswith(prefix) for prefix in agent_namespaces)
+                    and entry_dict["tool_id"] not in top_ids
+                ):
+                    top_entries.append((entry_dict, score))
+                    top_ids.add(entry_dict["tool_id"])
 
         # NO normalization — scores are already in [0, 1] from cosine similarity.
         # Band thresholds (0.95/0.80/0.60/0.40) are designed for this scale.
@@ -1969,8 +1971,6 @@ class NexusService:
         """
         from datetime import UTC, datetime
 
-        from app.nexus.config import get_all_zone_prefixes
-
         # Resolve category → zone if needed
         target_zone: str | None = zone
         if category and not target_zone:
@@ -2032,11 +2032,7 @@ class NexusService:
         ece = _compute_ece(calibrated_scores, labels)
 
         # Determine which zones to write
-        if target_zone:
-            zones_to_write = [target_zone]
-        else:
-            # Global fit: write to __global__ key
-            zones_to_write = ["__global__"]
+        zones_to_write = [target_zone] if target_zone else ["__global__"]
 
         fitted_count = 0
         for z in zones_to_write:
@@ -2417,9 +2413,9 @@ class NexusService:
             f"från listan som bäst kan besvara frågan.\n\n"
             f"Fråga: {query}\n\n"
             f"Kandidater:\n" + "\n".join(tool_lines) + "\n\n"
-            f"Svara EXAKT i detta format (inget annat):\n"
-            f"VERKTYG: <tool_id>\n"
-            f"MOTIVERING: <en mening>\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "VERKTYG: <tool_id>\n"
+            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2571,20 +2567,20 @@ class NexusService:
         from app.nexus.embeddings import nexus_precompute
         from app.nexus.platform_bridge import get_platform_tools
 
-        ZONE_PREFIXES = get_all_zone_prefixes()
+        zone_prefixes = get_all_zone_prefixes()
         all_query_texts = [c.question.lower() for c in cases]
         # Also precompute zone-prefixed variants
         platform_tools = get_platform_tools()
         zone_prefixed_queries = set()
         for q in all_query_texts:
             zone_prefixed_queries.add(q)
-            for prefix in ZONE_PREFIXES.values():
+            for prefix in zone_prefixes.values():
                 zone_prefixed_queries.add(f"{prefix}{q}")
         tool_texts = set()
         for pt in platform_tools:
             if pt.category == "external_model":
                 continue
-            zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+            zone_prefix = zone_prefixes.get(pt.zone, "")
             # Match the exact format used by _build_tool_entries_from_platform
             kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
             ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
@@ -2656,7 +2652,11 @@ class NexusService:
                 if pt.category != "external_model"
             }
 
-            async def _eval_one_case(case_obj):
+            async def _eval_one_case(
+                case_obj,
+                _tdm=_tool_desc_map,
+                _tbi=_tools_by_id,
+            ):
                 """Evaluate a single test case (runs inside forge pool slot)."""
                 async with async_session_maker() as case_session:
                     decision = await self.route_query(case_obj.question, case_session)
@@ -2680,7 +2680,7 @@ class NexusService:
                             {
                                 "tool_id": c.tool_id,
                                 "name": c.tool_id,
-                                "description": _tool_desc_map.get(c.tool_id, ""),
+                                "description": _tdm.get(c.tool_id, ""),
                                 "score": c.calibrated_score,
                             }
                             for c in decision.candidates
@@ -2691,9 +2691,9 @@ class NexusService:
                             and decision.agent_resolution.tool_namespaces
                         ):
                             nexus_ids = {c.tool_id for c in decision.candidates}
-                            for tid, desc in _tool_desc_map.items():
+                            for tid, desc in _tdm.items():
                                 if tid not in nexus_ids:
-                                    pt = _tools_by_id.get(tid)
+                                    pt = _tbi.get(tid)
                                     if pt and len(pt.namespace) >= 2:
                                         ns_str = f"{pt.namespace[0]}/{pt.namespace[1]}"
                                         if any(
@@ -3111,7 +3111,7 @@ class NexusService:
                     ]
                     recompute_texts = []
                     for pt in updated_tools:
-                        zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+                        zone_prefix = zone_prefixes.get(pt.zone, "")
                         kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
                         ex_text = (
                             " | ".join(pt.example_queries[:2])
@@ -3517,19 +3517,19 @@ class NexusService:
         from app.nexus.embeddings import nexus_precompute
         from app.nexus.platform_bridge import get_platform_tools as _get_pt
 
-        ZONE_PREFIXES = get_all_zone_prefixes()
+        zone_prefixes = get_all_zone_prefixes()
         _pt_tools = _get_pt()
         all_query_texts = [c.question.lower() for c in cases]
         zone_prefixed_queries = set()
         for q in all_query_texts:
             zone_prefixed_queries.add(q)
-            for prefix in ZONE_PREFIXES.values():
+            for prefix in zone_prefixes.values():
                 zone_prefixed_queries.add(f"{prefix}{q}")
         tool_texts = set()
         for pt in _pt_tools:
             if pt.category == "external_model":
                 continue
-            zp = ZONE_PREFIXES.get(pt.zone, "")
+            zp = zone_prefixes.get(pt.zone, "")
             # Match the exact format used by _build_tool_entries_from_platform
             kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
             ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
@@ -3565,7 +3565,11 @@ class NexusService:
             pt.tool_id: pt for pt in _pt_tools if pt.category != "external_model"
         }
 
-        async def _eval_one_case(case_obj):
+        async def _eval_one_case(
+            case_obj,
+            _tdm=_tool_desc_map,
+            _tbi=_tools_by_id,
+        ):
             async with async_session_maker() as case_session:
                 decision = await self.route_query(case_obj.question, case_session)
                 nexus_tool = decision.selected_tool
@@ -3585,7 +3589,7 @@ class NexusService:
                         {
                             "tool_id": c.tool_id,
                             "name": c.tool_id,
-                            "description": _tool_desc_map.get(c.tool_id, ""),
+                            "description": _tdm.get(c.tool_id, ""),
                             "score": c.calibrated_score,
                         }
                         for c in decision.candidates
@@ -3596,9 +3600,9 @@ class NexusService:
                         and decision.agent_resolution.tool_namespaces
                     ):
                         nexus_ids = {c.tool_id for c in decision.candidates}
-                        for tid, desc in _tool_desc_map.items():
+                        for tid, desc in _tdm.items():
                             if tid not in nexus_ids:
-                                pt = _tools_by_id.get(tid)
+                                pt = _tbi.get(tid)
                                 if pt and len(pt.namespace) >= 2:
                                     ns_str = f"{pt.namespace[0]}/{pt.namespace[1]}"
                                     if any(
@@ -4094,7 +4098,7 @@ class NexusService:
                     ]
                     recompute_texts = []
                     for pt in updated_tools:
-                        zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
+                        zone_prefix = zone_prefixes.get(pt.zone, "")
                         kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
                         ex_text = (
                             " | ".join(pt.example_queries[:2])

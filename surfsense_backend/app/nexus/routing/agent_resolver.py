@@ -103,7 +103,9 @@ class AgentResolver:
             AgentResolutionResult with ranked candidates and selected agents.
         """
         # Use provided dynamic lookups, or fall back to static config
-        _agents_by_zone = agents_by_zone if agents_by_zone is not None else AGENTS_BY_ZONE
+        _agents_by_zone = (
+            agents_by_zone if agents_by_zone is not None else AGENTS_BY_ZONE
+        )
 
         lower_query = query.lower()
         scored: list[AgentCandidate] = []

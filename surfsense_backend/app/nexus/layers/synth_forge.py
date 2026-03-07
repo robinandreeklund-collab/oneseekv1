@@ -183,8 +183,8 @@ class SynthForge:
 
         tool_id = tool_metadata.get("tool_id", "")
         namespace = tool_metadata.get("namespace", "")
-        expected_intent = tool_metadata.get("zone", None)
-        expected_agent = tool_metadata.get("agent", None)
+        expected_intent = tool_metadata.get("zone")
+        expected_agent = tool_metadata.get("agent")
         prompt = self.build_prompt(tool_metadata)
 
         try:

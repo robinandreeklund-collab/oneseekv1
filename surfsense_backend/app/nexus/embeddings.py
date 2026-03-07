@@ -118,7 +118,7 @@ def _raw_embed_many(model, texts: list[str]) -> list[np.ndarray]:
         # Use model.embed_batch for real GPU batching
         raw = model.embed_batch(uncached_texts)
         with _cache_lock:
-            for idx, emb in zip(uncached_indices, raw):
+            for idx, emb in zip(uncached_indices, raw, strict=False):
                 if not isinstance(emb, np.ndarray):
                     emb = np.array(emb)
                 results[idx] = emb
@@ -199,9 +199,7 @@ def nexus_embed_batch(texts: list[str]) -> list[list[float]] | None:
         return None
 
 
-def nexus_batch_score(
-    query: str, documents: list[str]
-) -> list[float] | None:
+def nexus_batch_score(query: str, documents: list[str]) -> list[float] | None:
     """Score one query against many documents efficiently.
 
     Embeds query once, batch-embeds all documents, then computes
@@ -249,12 +247,16 @@ def nexus_precompute(texts: list[str]) -> int:
     try:
         embeddings = model.embed_batch(new_texts)
         with _cache_lock:
-            for text, emb in zip(new_texts, embeddings):
+            for text, emb in zip(new_texts, embeddings, strict=False):
                 if not isinstance(emb, np.ndarray):
                     emb = np.array(emb)
                 if len(_EMBED_CACHE) < _EMBED_CACHE_MAX:
                     _EMBED_CACHE[text] = emb
-        logger.info("NEXUS: Pre-computed %d embeddings (cache size: %d)", len(new_texts), len(_EMBED_CACHE))
+        logger.info(
+            "NEXUS: Pre-computed %d embeddings (cache size: %d)",
+            len(new_texts),
+            len(_EMBED_CACHE),
+        )
         return len(new_texts)
     except Exception as e:
         logger.error("NEXUS: Precompute failed: %s", e)

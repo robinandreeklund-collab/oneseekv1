@@ -164,9 +164,7 @@ class ShadowObserver:
 
             # Filter tools and batch-compute embedding scores
             filtered_tools = [pt for pt in tools if pt.category != "external_model"]
-            tool_texts = [
-                f"{pt.tool_id} {pt.description}" for pt in filtered_tools
-            ]
+            tool_texts = [f"{pt.tool_id} {pt.description}" for pt in filtered_tools]
             emb_scores = nexus_batch_score(query_lower, tool_texts)
 
             # Score each tool

@@ -149,9 +149,7 @@ class MetadataOptimizer:
 
         # 5. Call LLM
         try:
-            model_string, response_text = await self._call_llm(
-                prompt, llm_config_id
-            )
+            model_string, response_text = await self._call_llm(prompt, llm_config_id)
         except Exception as e:
             logger.error("Optimizer LLM call failed: %s", e)
             return OptimizerResult(
@@ -268,11 +266,7 @@ class MetadataOptimizer:
         if category:
             tools = [t for t in tools if t.category == category]
         if namespace:
-            tools = [
-                t
-                for t in tools
-                if "/".join(t.namespace).startswith(namespace)
-            ]
+            tools = [t for t in tools if "/".join(t.namespace).startswith(namespace)]
         return tools
 
     def _get_tool_by_id(self, tool_id: str) -> PlatformTool | None:
@@ -281,9 +275,7 @@ class MetadataOptimizer:
                 return t
         return None
 
-    async def _load_overrides(
-        self, session: AsyncSession
-    ) -> dict[str, dict[str, Any]]:
+    async def _load_overrides(self, session: AsyncSession) -> dict[str, dict[str, Any]]:
         """Load existing metadata overrides from DB."""
         from app.services.tool_metadata_service import (
             get_global_tool_metadata_overrides,
@@ -328,9 +320,7 @@ class MetadataOptimizer:
             result.append(meta)
         return result
 
-    def _build_prompt(
-        self, category: str, tools_meta: list[dict[str, Any]]
-    ) -> str:
+    def _build_prompt(self, category: str, tools_meta: list[dict[str, Any]]) -> str:
         """Build the LLM prompt."""
         # Compact JSON representation of tools
         tools_json = json.dumps(tools_meta, ensure_ascii=False, indent=2)
@@ -341,9 +331,7 @@ class MetadataOptimizer:
             tools_json=tools_json,
         )
 
-    async def _call_llm(
-        self, prompt: str, config_id: int
-    ) -> tuple[str, str]:
+    async def _call_llm(self, prompt: str, config_id: int) -> tuple[str, str]:
         """Call LLM and return (model_string, response_text)."""
         from app.agents.new_chat.llm_config import (
             PROVIDER_MAP,
@@ -744,35 +732,39 @@ class IntentLayerOptimizer:
     def _build_domain_meta(self, domains: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result = []
         for d in domains:
-            result.append({
-                "domain_id": d.get("domain_id", ""),
-                "label": d.get("label", ""),
-                "description": d.get("description", ""),
-                "keywords": d.get("keywords", [])[:30],
-                "excludes": d.get("excludes", [])[:15],
-                "main_identifier": d.get("main_identifier", ""),
-                "core_activity": d.get("core_activity", ""),
-                "unique_scope": d.get("unique_scope", ""),
-                "geographic_scope": d.get("geographic_scope", ""),
-            })
+            result.append(
+                {
+                    "domain_id": d.get("domain_id", ""),
+                    "label": d.get("label", ""),
+                    "description": d.get("description", ""),
+                    "keywords": d.get("keywords", [])[:30],
+                    "excludes": d.get("excludes", [])[:15],
+                    "main_identifier": d.get("main_identifier", ""),
+                    "core_activity": d.get("core_activity", ""),
+                    "unique_scope": d.get("unique_scope", ""),
+                    "geographic_scope": d.get("geographic_scope", ""),
+                }
+            )
         return result
 
     def _build_agent_meta(self, agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result = []
         for a in agents:
             routes = a.get("routes", [])
-            result.append({
-                "agent_id": a.get("agent_id", ""),
-                "label": a.get("label", ""),
-                "description": a.get("description", ""),
-                "domain_id": routes[0] if routes else "",
-                "keywords": a.get("keywords", [])[:30],
-                "excludes": a.get("excludes", [])[:15],
-                "main_identifier": a.get("main_identifier", ""),
-                "core_activity": a.get("core_activity", ""),
-                "unique_scope": a.get("unique_scope", ""),
-                "geographic_scope": a.get("geographic_scope", ""),
-            })
+            result.append(
+                {
+                    "agent_id": a.get("agent_id", ""),
+                    "label": a.get("label", ""),
+                    "description": a.get("description", ""),
+                    "domain_id": routes[0] if routes else "",
+                    "keywords": a.get("keywords", [])[:30],
+                    "excludes": a.get("excludes", [])[:15],
+                    "main_identifier": a.get("main_identifier", ""),
+                    "core_activity": a.get("core_activity", ""),
+                    "unique_scope": a.get("unique_scope", ""),
+                    "geographic_scope": a.get("geographic_scope", ""),
+                }
+            )
         return result
 
     async def _call_llm_with_system(
@@ -895,14 +887,16 @@ class IntentLayerOptimizer:
             current = domain_by_id[domain_id]
             suggested, changed = self._diff_fields(current, item)
             if changed:
-                suggestions.append(IntentLayerSuggestion(
-                    item_id=domain_id,
-                    item_type="domain",
-                    current=current,
-                    suggested=suggested,
-                    reasoning=item.get("reasoning", ""),
-                    fields_changed=changed,
-                ))
+                suggestions.append(
+                    IntentLayerSuggestion(
+                        item_id=domain_id,
+                        item_type="domain",
+                        current=current,
+                        suggested=suggested,
+                        reasoning=item.get("reasoning", ""),
+                        fields_changed=changed,
+                    )
+                )
 
         # Parse agent suggestions
         for item in parsed.get("agents", []):
@@ -914,14 +908,16 @@ class IntentLayerOptimizer:
             current = agent_by_id[agent_id]
             suggested, changed = self._diff_fields(current, item)
             if changed:
-                suggestions.append(IntentLayerSuggestion(
-                    item_id=agent_id,
-                    item_type="agent",
-                    current=current,
-                    suggested=suggested,
-                    reasoning=item.get("reasoning", ""),
-                    fields_changed=changed,
-                ))
+                suggestions.append(
+                    IntentLayerSuggestion(
+                        item_id=agent_id,
+                        item_type="agent",
+                        current=current,
+                        suggested=suggested,
+                        reasoning=item.get("reasoning", ""),
+                        fields_changed=changed,
+                    )
+                )
 
         return suggestions
 

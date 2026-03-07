@@ -49,12 +49,15 @@ class PlatformTool:
 # Intent/Zone mapping — matches the real routing system
 # ---------------------------------------------------------------------------
 
+
 def _build_platform_intents() -> tuple[str, ...]:
     """Build platform intents dynamically from seed domain data."""
     try:
         from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS
 
-        return tuple(d["domain_id"] for d in DEFAULT_INTENT_DOMAINS if d.get("domain_id"))
+        return tuple(
+            d["domain_id"] for d in DEFAULT_INTENT_DOMAINS if d.get("domain_id")
+        )
     except Exception:
         # Fallback: load all domain IDs from get_all_zone_prefixes
         try:
@@ -365,6 +368,7 @@ def get_platform_intents() -> dict[str, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 _PLATFORM_AGENTS_CACHE: list[dict[str, str]] | None = None
+
 
 def _build_static_fallback_agents() -> list[dict[str, str]]:
     """Build fallback agent list from seed data, using domain_ids as zones."""
