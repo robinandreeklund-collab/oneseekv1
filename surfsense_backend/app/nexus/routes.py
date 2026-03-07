@@ -780,7 +780,10 @@ async def approve_loop_run(
                     namespaces.add(ns)
 
         # Run optimizer for each affected namespace to get real metadata
+        from app.nexus.platform_bridge import apply_overrides_to_cache
+
         optimizer = _get_optimizer()
+        memory_overrides: dict[str, dict] = {}
         for ns in namespaces:
             try:
                 result = await optimizer.generate_suggestions(
@@ -802,6 +805,10 @@ async def approve_loop_run(
                             user_id=user.id if user else None,
                         )
                         applied += apply_result.get("applied", 0)
+                        # Collect overrides for in-memory patching
+                        for s in result.suggestions:
+                            if s.tool_id in affected_tool_ids and s.suggested.get("description"):
+                                memory_overrides[s.tool_id] = s.suggested
             except Exception as exc:
                 import logging
 
@@ -809,6 +816,15 @@ async def approve_loop_run(
                     "Optimizer failed for namespace %s: %s", ns, exc
                 )
                 optimizer_error = str(exc)
+
+        # Patch in-memory cache so routing immediately uses new metadata
+        if memory_overrides:
+            apply_overrides_to_cache(memory_overrides)
+            try:
+                from app.nexus.embeddings import nexus_clear_embed_cache
+                nexus_clear_embed_cache()
+            except ImportError:
+                pass
 
     run.status = "approved"
     run.approved_proposals = approved_count
@@ -1117,6 +1133,23 @@ async def optimizer_apply(
         request.suggestions,
         user_id=user.id if user else None,
     )
+
+    # Patch in-memory cache so routing immediately sees new metadata
+    from app.nexus.platform_bridge import apply_overrides_to_cache
+
+    memory_overrides: dict[str, dict] = {}
+    for s in request.suggestions:
+        tool_id = s.get("tool_id", "")
+        if tool_id and s.get("description"):
+            memory_overrides[tool_id] = s
+    if memory_overrides:
+        apply_overrides_to_cache(memory_overrides)
+        try:
+            from app.nexus.embeddings import nexus_clear_embed_cache
+            nexus_clear_embed_cache()
+        except ImportError:
+            pass
+
     return result
 
 

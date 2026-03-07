@@ -2300,8 +2300,12 @@ class NexusService:
             if pt.category == "external_model":
                 continue
             zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-            tool_texts.add(f"{zone_prefix}{pt.tool_id} {pt.description}")
-            tool_texts.add(f"{pt.tool_id} {pt.description}")
+            # Match the exact format used by _build_tool_entries_from_platform
+            kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+            ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
+            tool_texts.add(
+                f"{zone_prefix}{pt.tool_id} {pt.description} {kw_text} {ex_text}".strip()
+            )
 
         precompute_texts = list(zone_prefixed_queries | tool_texts)
         n_precomputed = nexus_precompute(precompute_texts)
@@ -2659,7 +2663,10 @@ class NexusService:
             try:
                 from app.nexus.embeddings import nexus_clear_embed_cache
                 from app.nexus.optimizer import MetadataOptimizer
-                from app.nexus.platform_bridge import get_platform_tools as _get_pt
+                from app.nexus.platform_bridge import (
+                    apply_overrides_to_cache,
+                    get_platform_tools as _get_pt,
+                )
 
                 # Map tool_id → namespace string for failed tools
                 tool_ns_map: dict[str, str] = {}
@@ -2675,6 +2682,8 @@ class NexusService:
 
                 optimizer = MetadataOptimizer()
                 applied_tool_ids: set[str] = set()
+                # Collect all overrides to patch in-memory cache
+                memory_overrides: dict[str, dict] = {}
 
                 for ns in ns_set:
                     try:
@@ -2698,25 +2707,30 @@ class NexusService:
                                 )
                                 await session.commit()
 
-                            # Update proposed_value on proposals
+                            # Collect overrides + update proposed_value on proposals
+                            for s in opt_result.suggestions:
+                                if s.suggested.get("description"):
+                                    memory_overrides[s.tool_id] = s.suggested
+                                    applied_tool_ids.add(s.tool_id)
                             desc_map = {
-                                s.tool_id: s.suggested.get("description", "")
-                                for s in opt_result.suggestions
-                                if s.suggested.get("description")
+                                tid: ov.get("description", "")
+                                for tid, ov in memory_overrides.items()
                             }
                             for p in proposals:
                                 if p.tool_id in desc_map:
                                     p.proposed_value = desc_map[p.tool_id]
-                                    applied_tool_ids.add(p.tool_id)
                     except Exception as e:
                         logger.warning(
                             "Auto-loop optimizer failed for ns=%s: %s", ns, e
                         )
 
                 if applied_tool_ids:
+                    # Patch in-memory tool cache so route_query sees new metadata
+                    apply_overrides_to_cache(memory_overrides)
                     # Clear embedding cache so next iteration uses new metadata
                     nexus_clear_embed_cache()
-                    # Re-precompute embeddings for updated tools
+                    # Re-precompute embeddings for updated tools — match the
+                    # exact text format used by _build_tool_entries_from_platform
                     updated_tools = [
                         pt
                         for pt in _get_pt()
@@ -2725,12 +2739,17 @@ class NexusService:
                     recompute_texts = []
                     for pt in updated_tools:
                         zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-                        recompute_texts.append(
+                        kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+                        ex_text = (
+                            " | ".join(pt.example_queries[:2])
+                            if pt.example_queries
+                            else ""
+                        )
+                        full_text = (
                             f"{zone_prefix}{pt.tool_id} {pt.description}"
+                            f" {kw_text} {ex_text}".strip()
                         )
-                        recompute_texts.append(
-                            f"{pt.tool_id} {pt.description}"
-                        )
+                        recompute_texts.append(full_text)
                     if recompute_texts:
                         nexus_precompute(recompute_texts)
 
@@ -3131,8 +3150,12 @@ class NexusService:
             if pt.category == "external_model":
                 continue
             zp = ZONE_PREFIXES.get(pt.zone, "")
-            tool_texts.add(f"{zp}{pt.tool_id} {pt.description}")
-            tool_texts.add(f"{pt.tool_id} {pt.description}")
+            # Match the exact format used by _build_tool_entries_from_platform
+            kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+            ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
+            tool_texts.add(
+                f"{zp}{pt.tool_id} {pt.description} {kw_text} {ex_text}".strip()
+            )
 
         precompute_texts = list(zone_prefixed_queries | tool_texts)
         n_precomputed = nexus_precompute(precompute_texts)
@@ -3151,7 +3174,8 @@ class NexusService:
         cumulative_proposals = []
         cumulative_root_causes: list[str] = []
 
-        # Build tool description lookup for LLM judge
+        # Tool description lookup for LLM judge — mutable dict so it can be
+        # refreshed between iterations when the optimizer patches tools.
         _tool_desc_map: dict[str, str] = {
             pt.tool_id: pt.description
             for pt in _pt_tools
@@ -3198,6 +3222,13 @@ class NexusService:
             }
 
         for iteration in range(1, max_iterations + 1):
+            # Refresh tool description map (picks up optimizer patches)
+            _tool_desc_map.clear()
+            _tool_desc_map.update({
+                pt.tool_id: pt.description
+                for pt in _get_pt()
+                if pt.category != "external_model"
+            })
             yield {
                 "type": "progress",
                 "step": "eval_start",
@@ -3526,6 +3557,7 @@ class NexusService:
             try:
                 from app.nexus.embeddings import nexus_clear_embed_cache
                 from app.nexus.optimizer import MetadataOptimizer
+                from app.nexus.platform_bridge import apply_overrides_to_cache
 
                 # Map tool_id → namespace string for failed tools
                 tool_ns_map: dict[str, str] = {}
@@ -3541,6 +3573,8 @@ class NexusService:
 
                 optimizer = MetadataOptimizer()
                 applied_tool_ids: set[str] = set()
+                # Collect all overrides to patch in-memory cache
+                memory_overrides: dict[str, dict] = {}
 
                 for ns in ns_set:
                     try:
@@ -3563,15 +3597,18 @@ class NexusService:
                                 )
                                 await session.commit()
 
+                            # Collect overrides + update proposed_value on proposals
+                            for s in opt_result.suggestions:
+                                if s.suggested.get("description"):
+                                    memory_overrides[s.tool_id] = s.suggested
+                                    applied_tool_ids.add(s.tool_id)
                             desc_map = {
-                                s.tool_id: s.suggested.get("description", "")
-                                for s in opt_result.suggestions
-                                if s.suggested.get("description")
+                                tid: ov.get("description", "")
+                                for tid, ov in memory_overrides.items()
                             }
                             for p in proposals:
                                 if p.tool_id in desc_map:
                                     p.proposed_value = desc_map[p.tool_id]
-                                    applied_tool_ids.add(p.tool_id)
                     except Exception as e:
                         logger.warning(
                             "Auto-loop stream optimizer failed for ns=%s: %s",
@@ -3579,17 +3616,28 @@ class NexusService:
                         )
 
                 if applied_tool_ids:
+                    # Patch in-memory tool cache so route_query sees new metadata
+                    apply_overrides_to_cache(memory_overrides)
                     nexus_clear_embed_cache()
+                    # Re-precompute embeddings — match the exact text format
+                    # used by _build_tool_entries_from_platform
                     updated_tools = [
                         pt for pt in _get_pt() if pt.tool_id in applied_tool_ids
                     ]
                     recompute_texts = []
                     for pt in updated_tools:
                         zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-                        recompute_texts.append(
-                            f"{zone_prefix}{pt.tool_id} {pt.description}"
+                        kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+                        ex_text = (
+                            " | ".join(pt.example_queries[:2])
+                            if pt.example_queries
+                            else ""
                         )
-                        recompute_texts.append(f"{pt.tool_id} {pt.description}")
+                        full_text = (
+                            f"{zone_prefix}{pt.tool_id} {pt.description}"
+                            f" {kw_text} {ex_text}".strip()
+                        )
+                        recompute_texts.append(full_text)
                     if recompute_texts:
                         nexus_precompute(recompute_texts)
 

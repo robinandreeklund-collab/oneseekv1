@@ -286,6 +286,50 @@ def invalidate_cache() -> None:
     _CACHE = None
 
 
+def apply_overrides_to_cache(
+    overrides: dict[str, dict[str, Any]],
+) -> int:
+    """Patch in-memory tool cache with metadata overrides.
+
+    This is critical for the auto-loop: the optimizer writes improved metadata
+    to the DB, but ``get_platform_tools()`` loads from Python source constants.
+    This function bridges the gap by directly mutating cached PlatformTool
+    objects so the next ``route_query()`` call sees updated descriptions,
+    keywords, etc.
+
+    Args:
+        overrides: Mapping of tool_id → {description, keywords, ...}.
+
+    Returns:
+        Number of tools patched.
+    """
+    tools = get_platform_tools()
+    tool_by_id = {t.tool_id: t for t in tools}
+    patched = 0
+
+    for tool_id, fields in overrides.items():
+        tool = tool_by_id.get(tool_id)
+        if not tool:
+            continue
+
+        for attr in (
+            "description",
+            "keywords",
+            "example_queries",
+            "excludes",
+            "geographic_scope",
+        ):
+            val = fields.get(attr)
+            if val is not None:
+                setattr(tool, attr, val)
+
+        patched += 1
+
+    if patched:
+        logger.info("Platform bridge: patched %d tools in memory", patched)
+    return patched
+
+
 # ---------------------------------------------------------------------------
 # Intent definitions from real platform
 # ---------------------------------------------------------------------------
