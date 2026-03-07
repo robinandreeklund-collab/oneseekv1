@@ -2041,15 +2041,19 @@ class NexusService:
         ece_report = await self.get_ece_report(session)
 
         # Schema verification rate (namespace purity proxy)
+        # Only count non-OOD events to avoid ratio > 1.0
+        non_ood_count = total - ood_count
         schema_verified_count = (
             await session.scalar(
                 select(func.count())
                 .select_from(NexusRoutingEvent)
-                .where(NexusRoutingEvent.schema_verified.is_(True))
+                .where(
+                    NexusRoutingEvent.schema_verified.is_(True),
+                    NexusRoutingEvent.is_ood.is_(False),
+                )
             )
             or 0
         )
-        non_ood_count = total - ood_count
         namespace_purity = (
             schema_verified_count / non_ood_count if non_ood_count > 0 else 0.0
         )

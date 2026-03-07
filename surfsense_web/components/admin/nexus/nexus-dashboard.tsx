@@ -336,7 +336,7 @@ function OverviewTab() {
 								/>
 								<StatusCard
 									label="Reranker Delta"
-									value={metrics.reranker_delta != null ? `+${(metrics.reranker_delta * 100).toFixed(1)}pp` : "—"}
+									value={metrics.reranker_delta != null ? `${metrics.reranker_delta >= 0 ? "+" : ""}${(metrics.reranker_delta * 100).toFixed(1)}pp` : "—"}
 									color={metrics.reranker_delta != null && metrics.reranker_delta > 0.12 ? "green" : undefined}
 								/>
 								<StatusCard
