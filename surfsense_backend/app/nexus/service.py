@@ -2355,7 +2355,7 @@ class NexusService:
             score = c.get("score", c.get("calibrated_confidence", 0))
             tool_lines.append(
                 f"{i}. {c.get('tool_id', c.get('name', '?'))} "
-                f"(poäng {score:.3f}) — {c.get('description', '')[:120]}"
+                f"(poäng {score:.3f}) — {c.get('description', '')}"
             )
 
         prompt = (
