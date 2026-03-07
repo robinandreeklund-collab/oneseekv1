@@ -376,6 +376,7 @@ class NexusService:
         session: AsyncSession,
         *,
         tool_entries: list[dict] | None = None,
+        run_llm_judge: bool = False,
     ) -> RoutingDecision:
         """Run the full precision routing pipeline.
 
@@ -537,6 +538,33 @@ class NexusService:
             raw_margin=raw_margin,
         )
 
+        # Optional: LLM Tool Judge
+        llm_judge_result = None
+        if run_llm_judge and candidates:
+            from app.nexus.platform_bridge import get_platform_tools as _gpt
+            from app.nexus.schemas import LlmJudgeResult
+
+            _desc_map = {t.tool_id: t.description for t in _gpt()}
+            judge_candidates = [
+                {
+                    "tool_id": c.tool_id,
+                    "name": c.tool_id,
+                    "description": _desc_map.get(c.tool_id, ""),
+                    "score": c.calibrated_score,
+                }
+                for c in candidates[:5]
+            ]
+            try:
+                judge_raw = await self.llm_judge_tools(query, judge_candidates)
+                llm_judge_result = LlmJudgeResult(
+                    chosen_tool=judge_raw.get("chosen_tool"),
+                    reasoning=judge_raw.get("reasoning", ""),
+                    nexus_rank_of_chosen=judge_raw.get("nexus_rank_of_chosen", -1),
+                    agreement=judge_raw.get("agreement", False),
+                )
+            except Exception:
+                pass  # LLM judge is optional — don't fail routing
+
         elapsed_ms = (time.monotonic() - start_time) * 1000
 
         decision = RoutingDecision(
@@ -554,6 +582,7 @@ class NexusService:
             is_ood=ood_result.is_ood,
             schema_verified=schema_verified,
             latency_ms=elapsed_ms,
+            llm_judge=llm_judge_result,
         )
 
         # Log routing event

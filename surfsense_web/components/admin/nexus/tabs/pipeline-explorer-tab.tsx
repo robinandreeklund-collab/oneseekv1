@@ -40,6 +40,7 @@ export function PipelineExplorerTab() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [history, setHistory] = useState<Array<{ query: string; result: RoutingDecision }>>([]);
+	const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
 
 	const handleRun = async () => {
 		const q = query.trim();
@@ -47,7 +48,9 @@ export function PipelineExplorerTab() {
 		setLoading(true);
 		setError(null);
 		try {
-			const decision = await nexusApiService.routeQuery(q);
+			const decision = await nexusApiService.routeQuery(q, {
+				llm_judge: llmJudgeEnabled,
+			});
 			setResult(decision);
 			setHistory((prev) => [{ query: q, result: decision }, ...prev].slice(0, 10));
 		} catch (err: unknown) {
@@ -87,6 +90,16 @@ export function PipelineExplorerTab() {
 							disabled={loading}
 							className="flex-1"
 						/>
+						<label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								checked={llmJudgeEnabled}
+								onChange={(e) => setLlmJudgeEnabled(e.target.checked)}
+								disabled={loading}
+								className="rounded"
+							/>
+							LLM Judge
+						</label>
 						<Button onClick={handleRun} disabled={loading || !query.trim()}>
 							{loading ? (
 								<Loader2 className="h-4 w-4 animate-spin mr-1.5" />
@@ -209,6 +222,25 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 					>
 						Band {result.band} — {result.band_name}
 					</span>
+
+					{/* LLM Judge */}
+					{result.llm_judge && (
+						<>
+							<ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+							<Badge
+								className={`gap-1 font-mono ${
+									result.llm_judge.agreement
+										? "bg-green-100 text-green-800 border-green-300"
+										: "bg-amber-100 text-amber-800 border-amber-300"
+								}`}
+							>
+								<span className="opacity-60">llm:</span>
+								{result.llm_judge.chosen_tool
+									? result.llm_judge.chosen_tool.split("/").pop()
+									: "—"}
+							</Badge>
+						</>
+					)}
 
 					{/* Latency */}
 					<span className="text-xs text-muted-foreground ml-2">
@@ -349,22 +381,65 @@ function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateR
 
 function ToolStage({ result }: { result: RoutingDecision }) {
 	const top5 = result.candidates.slice(0, 5);
+	const judge = result.llm_judge;
 
 	return (
 		<StageCard number={3} title="Tool (StR + Rerank)" color="bg-emerald-500">
 			<div className="space-y-3 text-sm">
-				<Row label="Valt verktyg">
+				<Row label="NEXUS valde">
 					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono">
 						{result.selected_tool ?? "—"}
 					</Badge>
 				</Row>
+
+				{/* LLM Judge result */}
+				{judge && (
+					<div className="rounded-md border p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<span className="text-xs font-medium text-muted-foreground">LLM Judge</span>
+							{judge.agreement ? (
+								<Badge className="bg-green-100 text-green-700 border-green-300 text-[10px] py-0">
+									Overens
+								</Badge>
+							) : (
+								<Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[10px] py-0">
+									Oenig
+								</Badge>
+							)}
+						</div>
+						<Row label="LLM valde">
+							<Badge
+								className={`font-mono ${
+									judge.agreement
+										? "bg-emerald-100 text-emerald-800 border-emerald-300"
+										: "bg-amber-100 text-amber-800 border-amber-300"
+								}`}
+							>
+								{judge.chosen_tool ?? "—"}
+							</Badge>
+						</Row>
+						{judge.nexus_rank_of_chosen > 0 && !judge.agreement && (
+							<Row label="NEXUS-rank" value={`#${judge.nexus_rank_of_chosen}`} />
+						)}
+						{judge.reasoning && (
+							<Row label="Motivering">
+								<span className="text-muted-foreground italic">{judge.reasoning}</span>
+							</Row>
+						)}
+					</div>
+				)}
 
 				{top5.length > 0 && (
 					<div>
 						<p className="text-xs text-muted-foreground mb-1">Topp-{top5.length} kandidater</p>
 						<div className="space-y-1">
 							{top5.map((c, i) => (
-								<ToolCandidateRow key={c.tool_id} candidate={c} isSelected={i === 0} />
+								<ToolCandidateRow
+									key={c.tool_id}
+									candidate={c}
+									isSelected={i === 0}
+									isLlmChoice={judge?.chosen_tool === c.tool_id}
+								/>
 							))}
 						</div>
 					</div>
@@ -374,7 +449,12 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 					<Collapsible title={`Alla kandidater (${result.candidates.length})`}>
 						<div className="space-y-1">
 							{result.candidates.map((c, i) => (
-								<ToolCandidateRow key={c.tool_id} candidate={c} isSelected={i === 0} />
+								<ToolCandidateRow
+									key={c.tool_id}
+									candidate={c}
+									isSelected={i === 0}
+									isLlmChoice={judge?.chosen_tool === c.tool_id}
+								/>
 							))}
 						</div>
 					</Collapsible>
@@ -384,7 +464,15 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 	);
 }
 
-function ToolCandidateRow({ candidate, isSelected }: { candidate: RoutingCandidate; isSelected: boolean }) {
+function ToolCandidateRow({
+	candidate,
+	isSelected,
+	isLlmChoice,
+}: {
+	candidate: RoutingCandidate;
+	isSelected: boolean;
+	isLlmChoice?: boolean;
+}) {
 	return (
 		<div
 			className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
@@ -397,6 +485,16 @@ function ToolCandidateRow({ candidate, isSelected }: { candidate: RoutingCandida
 					{candidate.tool_id}
 				</span>
 				<Badge variant="outline" className="text-[10px] py-0">{candidate.zone}</Badge>
+				{isLlmChoice && !isSelected && (
+					<Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[10px] py-0">
+						LLM
+					</Badge>
+				)}
+				{isLlmChoice && isSelected && (
+					<Badge className="bg-green-100 text-green-700 border-green-300 text-[10px] py-0">
+						LLM
+					</Badge>
+				)}
 			</div>
 			<div className="flex items-center gap-3 font-mono">
 				<span className="text-muted-foreground">raw: {candidate.raw_score.toFixed(3)}</span>

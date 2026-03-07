@@ -435,7 +435,9 @@ async def route_query(
     service: NexusService = Depends(_get_service),
 ):
     """Run the full precision routing pipeline."""
-    return await service.route_query(request.query, session)
+    return await service.route_query(
+        request.query, session, run_llm_judge=request.llm_judge
+    )
 
 
 # ------------------------------------------------------------------

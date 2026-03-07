@@ -105,6 +105,13 @@ export interface AgentResolution {
 	tool_namespaces: string[];
 }
 
+export interface LlmJudgeToolResult {
+	chosen_tool: string | null;
+	reasoning: string;
+	nexus_rank_of_chosen: number;
+	agreement: boolean;
+}
+
 export interface RoutingDecision {
 	query_analysis: QueryAnalysis;
 	agent_resolution: AgentResolution | null;
@@ -118,6 +125,7 @@ export interface RoutingDecision {
 	is_ood: boolean;
 	schema_verified: boolean;
 	latency_ms: number;
+	llm_judge: LlmJudgeToolResult | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -640,10 +648,10 @@ class NexusApiService {
 			body: JSON.stringify({ query }),
 		});
 
-	routeQuery = (query: string) =>
+	routeQuery = (query: string, options?: { llm_judge?: boolean }) =>
 		fetchNexus<RoutingDecision>("/routing/route", {
 			method: "POST",
-			body: JSON.stringify({ query }),
+			body: JSON.stringify({ query, llm_judge: options?.llm_judge ?? false }),
 		});
 
 	// Space Auditor (Sprint 2)

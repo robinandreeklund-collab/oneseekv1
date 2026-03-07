@@ -76,6 +76,13 @@ class AgentResolution(BaseModel):
     tool_namespaces: list[str] = Field(default_factory=list)
 
 
+class LlmJudgeResult(BaseModel):
+    chosen_tool: str | None = None
+    reasoning: str = ""
+    nexus_rank_of_chosen: int = -1
+    agreement: bool = False
+
+
 class RoutingDecision(BaseModel):
     query_analysis: QueryAnalysis
     agent_resolution: AgentResolution | None = None
@@ -89,10 +96,12 @@ class RoutingDecision(BaseModel):
     is_ood: bool = False
     schema_verified: bool = False
     latency_ms: float = 0.0
+    llm_judge: LlmJudgeResult | None = None
 
 
 class RouteQueryRequest(BaseModel):
     query: str
+    llm_judge: bool = False
 
 
 # ---------------------------------------------------------------------------
