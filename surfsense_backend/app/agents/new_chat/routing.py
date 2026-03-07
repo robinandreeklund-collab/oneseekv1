@@ -82,40 +82,41 @@ ROUTE_CITATIONS_ENABLED: dict[Route, bool] = {
 }
 
 
-# ── Domain-to-Route backward compatibility ───────────────────────────
-# Maps domain_id (from the new DB-driven hierarchy) to the legacy Route
-# enum.  Used during the transition period so that existing code that
-# expects a Route value can operate on domain-based intent results.
+# ── Domain-to-Route mapping ──────────────────────────────────────────
+# Maps domain_id to a legacy Route enum value.  The 4 broad routes and
+# a small backward-compat set are defined here; all other domains get
+# their ``fallback_route`` from the DB seed data (intent_domains).
 
 _DOMAIN_ROUTE_MAP: dict[str, Route] = {
-    # Knowledge / information domains → KUNSKAP
-    "väder-och-klimat": Route.KUNSKAP,
-    "trafik-och-transport": Route.KUNSKAP,
-    "ekonomi-och-skatter": Route.KUNSKAP,
-    "arbetsmarknad": Route.KUNSKAP,
-    "befolkning-och-demografi": Route.KUNSKAP,
-    "utbildning": Route.KUNSKAP,
-    "näringsliv-och-bolag": Route.KUNSKAP,
-    "fastighet-och-mark": Route.KUNSKAP,
-    "energi-och-miljö": Route.KUNSKAP,
-    "handel-och-marknad": Route.KUNSKAP,
-    "politik-och-beslut": Route.KUNSKAP,
-    "hälsa-och-vård": Route.KUNSKAP,
-    "rättsväsende": Route.KUNSKAP,
     "kunskap": Route.KUNSKAP,
-    # Creation domain → SKAPANDE
     "skapande": Route.SKAPANDE,
-    # Conversation domain → KONVERSATION
     "konversation": Route.KONVERSATION,
-    # Compare domain → JAMFORELSE
     "jämförelse": Route.JAMFORELSE,
 }
+
+# Populated at import time from seed data when available.  This avoids
+# a hardcoded list that must be kept in sync with the DB.
+try:
+    from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS as _SEED_DOMAINS
+
+    for _domain in _SEED_DOMAINS:
+        _did = str(_domain.get("domain_id") or "").strip().lower()
+        _fr = str(_domain.get("fallback_route") or "").strip().lower()
+        if _did and _fr:
+            try:
+                _DOMAIN_ROUTE_MAP[_did] = Route(_fr)
+            except (ValueError, KeyError):
+                pass
+except Exception:
+    pass
 
 
 def domain_to_route(domain_id: str) -> Route:
     """Map a domain_id to a legacy Route enum value.
 
-    Returns ``Route.KUNSKAP`` as fallback for unknown domains.
+    Uses seed data / DB fallback_route when available.  Returns
+    ``Route.KUNSKAP`` only as an ultimate fallback for truly unknown
+    domains.
     """
     normalized = str(domain_id or "").strip().lower()
     return _DOMAIN_ROUTE_MAP.get(normalized, Route.KUNSKAP)

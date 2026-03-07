@@ -1508,12 +1508,26 @@ async def create_supervisor_agent(
         }
         return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
 
-    route_to_intent_id = {
+    # Build route_to_intent_id dynamically from registry domains so that
+    # domain-specific intent_ids (väder-och-klimat, trafik-och-transport …)
+    # are visible to the intent resolver, not only the 4 broad routes.
+    route_to_intent_id: dict[str, str] = {}
+    if graph_registry is not None:
+        for domain in graph_registry.domains:
+            domain_id = str(domain.get("domain_id") or "").strip().lower()
+            if domain_id and domain.get("enabled", True):
+                fallback_route = str(domain.get("fallback_route") or domain_id).strip().lower()
+                route_to_intent_id[domain_id] = domain_id
+                # Also register by fallback_route if not already taken by a more
+                # specific domain.
+                if fallback_route and fallback_route not in route_to_intent_id:
+                    route_to_intent_id[fallback_route] = domain_id
+    # Ensure the 4 broad route values always exist as keys (backward compat)
+    broad_route_defaults = {
         "kunskap": "kunskap",
         "skapande": "skapande",
         "jämförelse": "jämförelse",
         "konversation": "konversation",
-        # Backward compat
         "knowledge": "kunskap",
         "action": "skapande",
         "statistics": "kunskap",
@@ -1521,6 +1535,9 @@ async def create_supervisor_agent(
         "smalltalk": "konversation",
         "mixed": "mixed",
     }
+    for key, value in broad_route_defaults.items():
+        if key not in route_to_intent_id:
+            route_to_intent_id[key] = value
     route_to_speculative_tool_ids: dict[str, list[str]] = {
         "kunskap": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
         "åtgärd": list(dict.fromkeys(weather_tool_ids[:2] + trafik_tool_ids[:2])),
@@ -1545,7 +1562,23 @@ async def create_supervisor_agent(
     ) -> str:
         normalized_tool_id = str(tool_id or "").strip().lower()
         if not normalized_tool_id:
-            return "kunskap"
+            state_route = str(
+                ((state or {}).get("resolved_intent") or {}).get("route")
+                or (state or {}).get("route_hint")
+                or ""
+            ).strip()
+            allowed = _route_allowed_agents(state_route)
+            return _route_default_agent(state_route, allowed)
+
+        # Registry-aware lookup: find which agent owns this tool
+        if graph_registry is not None and graph_registry.tool_index:
+            tool_entry = graph_registry.tool_index.get(normalized_tool_id)
+            if tool_entry:
+                agent_id = str(tool_entry.get("agent_id") or "").strip().lower()
+                if agent_id and agent_id in agent_by_name:
+                    return agent_id
+
+        # Fallback: prefix-based heuristic for tools not yet in registry
         if normalized_tool_id in {str(item).strip().lower() for item in weather_tool_ids}:
             return "väder"
         if normalized_tool_id in {str(item).strip().lower() for item in trafik_tool_ids}:
@@ -1775,10 +1808,10 @@ async def create_supervisor_agent(
 
     def _intent_from_route(route_value: str | None) -> dict[str, Any]:
         normalized = _normalize_route_hint_value(route_value)
-        intent_id = route_to_intent_id.get(normalized, "kunskap")
+        intent_id = route_to_intent_id.get(normalized, normalized or "kunskap")
         return {
             "intent_id": intent_id,
-            "route": normalized or "kunskap",
+            "route": normalized or intent_id,
             "reason": "Fallback baserad pa route_hint.",
             "confidence": 0.5,
         }
@@ -1821,49 +1854,31 @@ async def create_supervisor_agent(
         if normalized_route in {"jämförelse", "compare", "mixed"}:
             return resolved
 
-        override_route: str | None = None
-        override_reason = ""
-        # Weather, traffic, filesystem, marketplace, map overrides
-        # (agent-level routing picks the right specialist agent)
-        if _has_weather_intent(query):
-            override_route = "kunskap"
-            override_reason = (
-                "Heuristisk override: vaderfraga ska routas till kunskap/vader."
-            )
-        elif _has_strict_trafik_intent(query):
-            override_route = "kunskap"
-            override_reason = (
-                "Heuristisk override: trafikfraga ska routas till kunskap/trafik."
-            )
-        elif sandbox_enabled and _has_filesystem_intent(query):
+        # Previously, hardcoded heuristic overrides forced weather/traffic/
+        # marketplace/map/filesystem queries back to "kunskap" or "skapande",
+        # undoing the dynamic domain-level resolution from the registry.
+        # Now we trust the DB-driven intent resolution.  The agent-level
+        # routing (_route_default_agent_for_intent) still picks the correct
+        # specialist agent (väder, trafik, marknad, kod, kartor) based on
+        # query content, so the right tools are invoked regardless.
+        #
+        # Only filesystem/sandbox override is kept because it crosses the
+        # route boundary (kunskap → skapande) which affects tool availability.
+        if sandbox_enabled and _has_filesystem_intent(query):
             override_route = "skapande"
             override_reason = (
                 "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
             )
-        elif _has_marketplace_intent(query):
-            override_route = "kunskap"
-            override_reason = (
-                "Heuristisk override: marknadsplatsfraga ska routas till kunskap/marketplace."
-            )
-        elif _has_map_intent(query):
-            override_route = "skapande"
-            override_reason = (
-                "Heuristisk override: kart/rutt-fraga ska routas till skapande."
-            )
-        if not override_route:
-            return resolved
-        if normalized_route == override_route and str(
-            resolved.get("intent_id") or ""
-        ).strip():
-            return resolved
-
-        resolved["intent_id"] = route_to_intent_id.get(override_route, override_route)
-        resolved["route"] = override_route
-        resolved["reason"] = override_reason
-        resolved["confidence"] = max(
-            _coerce_confidence(resolved.get("confidence"), 0.5),
-            0.9,
-        )
+            if normalized_route != override_route or not str(
+                resolved.get("intent_id") or ""
+            ).strip():
+                resolved["intent_id"] = route_to_intent_id.get(override_route, override_route)
+                resolved["route"] = override_route
+                resolved["reason"] = override_reason
+                resolved["confidence"] = max(
+                    _coerce_confidence(resolved.get("confidence"), 0.5),
+                    0.9,
+                )
         return resolved
 
     def _classify_graph_complexity(

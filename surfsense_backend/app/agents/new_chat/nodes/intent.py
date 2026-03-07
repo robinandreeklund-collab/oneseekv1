@@ -309,9 +309,12 @@ def build_intent_resolver_node(
 
         resolved = intent_from_route_fn(route_hint)
         should_resolve_with_llm = bool(latest_user_query)
-        if route_hint and route_hint in route_to_intent_id:
+        if route_hint and route_hint in route_to_intent_id and not registry_candidates:
             # Route has already been resolved upstream; skip an extra control-plane
             # LLM pass and trust route_hint unless we have no candidates at all.
+            # When registry_candidates exist (DB-driven domains), always let
+            # the LLM pick the best domain-level intent instead of accepting
+            # the broad route_hint (e.g. "kunskap" hiding "väder-och-klimat").
             should_resolve_with_llm = False
         if latest_user_query and should_resolve_with_llm:
             prompt = append_datetime_context_fn(intent_resolver_prompt_template)
@@ -358,7 +361,7 @@ def build_intent_resolver_node(
                                 if str(item.get("intent_id") or "").strip()
                                 == selected_intent
                             ),
-                            route_hint or "knowledge",
+                            route_hint or "",
                         ),
                         "reason": str(parsed.get("reason") or "").strip()
                         or "LLM intent_resolver valde intent.",

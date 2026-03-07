@@ -30,6 +30,7 @@ sys.modules["app.agents.new_chat.intent_router"] = _FAKE_INTENT_ROUTER
 
 _FAKE_INTENT_DEFINITION_SERVICE = types.ModuleType("app.services.intent_definition_service")
 _FAKE_INTENT_DEFINITION_SERVICE.get_default_intent_definitions = lambda: {}
+_FAKE_INTENT_DEFINITION_SERVICE.domains_to_intent_definitions = lambda domains: []
 sys.modules["app.services.intent_definition_service"] = _FAKE_INTENT_DEFINITION_SERVICE
 
 _spec = importlib.util.spec_from_file_location(

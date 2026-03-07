@@ -52,13 +52,12 @@ def _normalize_route(value: str) -> Route | None:
     for route in Route:
         if route.value in lowered:
             return route
-    # Backward compat / aliases
+    # Backward compat / aliases — only for English→Swedish translation.
+    # Domain-specific identifiers are no longer collapsed to KUNSKAP.
     _ALIASES: dict[str, Route] = {
         "knowledge": Route.KUNSKAP,
         "action": Route.SKAPANDE,
         "smalltalk": Route.KONVERSATION,
-        "statistics": Route.KUNSKAP,
-        "statistik": Route.KUNSKAP,
         "compare": Route.JAMFORELSE,
     }
     for alias, route in _ALIASES.items():
@@ -74,7 +73,7 @@ def _infer_rule_based_route(text: str) -> Route | None:
     if _COMPARE_COMMAND_RE.match(value):
         return Route.JAMFORELSE
     if _MARKETPLACE_ROUTE_RE.search(value):
-        return Route.KUNSKAP  # Marketplace = information retrieval
+        return None  # Let intent resolver pick the right domain (handel-och-marknad)
     greeting_match = _GREETING_REGEX.match(value)
     if greeting_match:
         trailing_text = value[greeting_match.end() :].strip(" \t\r\n,.;:!?-")
@@ -157,13 +156,10 @@ async def dispatch_route_with_trace(
             "candidates": [],
         }
 
-    if has_attachments or has_mentions:
-        return Route.KUNSKAP, {
-            "source": "attachment_or_mention",
-            "confidence": 0.98,
-            "reason": "attachments_or_mentions_force_knowledge",
-            "candidates": [],
-        }
+    # Attachments / mentions no longer force Route.KUNSKAP — let the intent
+    # resolver pick the right domain.  The presence of attachments is a
+    # signal, not a route lock.
+    # (Removed hardcoded Route.KUNSKAP override for attachments/mentions.)
 
     safe_history = [
         {
@@ -229,12 +225,16 @@ async def dispatch_route_with_trace(
         if previous_route and previous_route not in {Route.KONVERSATION}:
             # Allow compare followups to preserve compare context
             if previous_route == Route.JAMFORELSE:
-                return Route.KUNSKAP
+                # Fall through to intent retrieval for the right domain
+                candidate_route = _first_non_compare_route(candidates)
+                if candidate_route:
+                    return candidate_route
+                return route
             return previous_route
         candidate_route = _first_non_compare_route(candidates)
         if candidate_route:
             return candidate_route
-        return Route.KUNSKAP
+        return route
 
     retrieval_decision = resolve_route_from_intents(
         query=text,

@@ -80,27 +80,37 @@ def _route_allowed_agents(route_hint: str | None) -> set[str]:
 
 def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
     route = _normalize_route_hint_value(route_hint)
+    # Minimal defaults for the 4 broad routes + backward compat aliases.
+    # Domain-specific agent selection is handled by the registry-aware
+    # ``resolve_default_agent_with_registry()`` — this function is only
+    # the final fallback when no registry is available.
     defaults = {
-        # New Swedish route values
-        "kunskap": "kunskap",
         "skapande": "åtgärd",
         "jämförelse": "syntes",
-        "konversation": "kunskap",
+        "konversation": "konversation",
         # Backward compat
         "action": "åtgärd",
-        "knowledge": "kunskap",
-        "statistics": "statistik",
         "compare": "syntes",
+        "smalltalk": "konversation",
+        # Domain-specific routes that already have a matching agent name
         "trafik": "trafik",
-        "mixed": "kunskap",
+        "statistik": "statistik",
+        "väder": "väder",
+        "marknad": "marknad",
+        "bolag": "bolag",
+        "riksdagen": "riksdagen",
+        "kartor": "kartor",
+        "media": "media",
+        "kod": "kod",
+        "webb": "webb",
     }
-    preferred = defaults.get(route, "kunskap")
+    # If the route/domain itself is a valid agent name, use it directly
+    preferred = defaults.get(route, route if route else "kunskap")
     if allowed:
         if preferred in allowed:
             return preferred
-        for name in ("statistik", "syntes", "kunskap", "åtgärd", "trafik"):
-            if name in allowed:
-                return name
+        for name in allowed:
+            return name
     return preferred
 
 

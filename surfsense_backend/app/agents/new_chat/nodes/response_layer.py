@@ -96,6 +96,10 @@ def _select_response_mode(
     if route == "mixed" or len(sub_intents) > 1 or execution_strategy == "parallel":
         return "syntes"
 
+    # Default: use the route_hint as response mode if it's a valid mode,
+    # otherwise fall back to "kunskap" (factual answer).
+    if route in _VALID_MODES:
+        return route
     return "kunskap"
 
 
@@ -326,7 +330,8 @@ def build_response_layer_node(
     ) -> dict[str, Any]:
         final_response = str(state.get("final_response") or "").strip()
         if not final_response:
-            return {"response_mode": "kunskap"}
+            route_hint_early = str(state.get("route_hint") or "kunskap").strip().lower()
+            return {"response_mode": route_hint_early if route_hint_early in _VALID_MODES else "kunskap"}
 
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         route_hint = str(state.get("route_hint") or "").strip().lower()
