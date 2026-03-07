@@ -82,8 +82,12 @@ async def nexus_llm_call(prompt: str) -> str:
     if _api_key:
         kwargs["api_key"] = _api_key
     if _api_base:
-        # Strip trailing /v1 — LiteLLM adds it for Anthropic, causing /v1/v1
-        kwargs["api_base"] = _api_base.rstrip("/").removesuffix("/v1")
+        from app.services.llm_service import _sanitize_api_base_for_provider
+
+        _provider = (_llm_config or {}).get("provider", "")
+        sanitized = _sanitize_api_base_for_provider(_api_base, _provider)
+        if sanitized:
+            kwargs["api_base"] = sanitized
 
     # Add litellm_params (temperature, max_tokens, etc.)
     for key, value in _litellm_params.items():
