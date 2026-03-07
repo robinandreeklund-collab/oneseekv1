@@ -111,10 +111,19 @@ def _build_nexus_agents_from_seeds() -> tuple[NexusAgent, ...]:
         domain_id = agent_def.get("domain_id", "kunskap")
         keywords = agent_def.get("keywords", [])
         ns_raw = agent_def.get("primary_namespaces", [])
-        ns_tuple = tuple(
-            "/".join(ns) if isinstance(ns, list) else str(ns)
-            for ns in ns_raw
-        )
+        # Normalize to 2-level prefixes (e.g. "tools/weather") to match
+        # _resolve_namespaces_from_flow_tools() which also uses 2-level.
+        prefixes: list[str] = []
+        for ns in ns_raw:
+            if isinstance(ns, list) and len(ns) >= 2:
+                prefix = f"{ns[0]}/{ns[1]}"
+            elif isinstance(ns, list) and len(ns) == 1:
+                prefix = ns[0]
+            else:
+                prefix = str(ns)
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+        ns_tuple = tuple(prefixes)
         agents.append(
             NexusAgent(
                 name=agent_id,
@@ -153,6 +162,7 @@ def _resolve_namespaces_from_flow_tools(
     """
     try:
         from app.nexus.platform_bridge import get_platform_tools
+
         tools_by_id = {t.tool_id: t for t in get_platform_tools()}
     except Exception:
         return ()
@@ -376,6 +386,7 @@ SWEDISH_NORMALIZATION_BANK: dict[str, str] = {
     "cph": "Köpenhamn",
 }
 
+
 def _build_domain_hints_from_seeds() -> dict[str, list[str]]:
     """Build DOMAIN_HINTS dynamically from seed domain data.
 
@@ -406,6 +417,7 @@ DOMAIN_HINTS: dict[str, list[str]] = _build_domain_hints_from_seeds()
 # routing.  DOMAIN_HINTS resolves only to zone; CATEGORY_HINTS resolves to
 # the agent *within* that zone so the AgentResolver can boost the right one.
 # ---------------------------------------------------------------------------
+
 
 def _build_category_hints_from_seeds() -> dict[str, list[str]]:
     """Build CATEGORY_HINTS from seed agent definitions."""

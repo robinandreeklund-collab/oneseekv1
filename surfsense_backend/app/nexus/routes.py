@@ -18,11 +18,13 @@ from app.nexus.models import NexusAutoLoopRun, NexusDarkMatterQuery
 from app.nexus.schemas import (
     AnalyzeQueryRequest,
     AutoLoopRunResponse,
+    CalibrationFitResponse,
     CalibrationParamsResponse,
     ConfusionPair,
     DarkMatterCluster,
     ECEReport,
     ForgeGenerateRequest,
+    ForgeRunResult,
     GateStatus,
     HubnessReport,
     IntentLayerApplyRequest,
@@ -32,8 +34,10 @@ from app.nexus.schemas import (
     NexusConfigResponse,
     NexusHealthResponse,
     OptimizerApplyRequest,
+    OptimizerApplyResponse,
     OptimizerGenerateRequest,
     OptimizerResultResponse,
+    OverviewMetricsResponse,
     PipelineMetricsSummary,
     PromotionResult,
     QueryAnalysis,
@@ -94,7 +98,7 @@ async def get_nexus_config(
     return await service.get_config(session)
 
 
-@nexus_router.get("/overview/metrics")
+@nexus_router.get("/overview/metrics", response_model=OverviewMetricsResponse)
 async def get_overview_metrics(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
@@ -269,15 +273,17 @@ async def get_domain_metadata(
     intents = await get_effective_intents_from_db(session)
     domains = []
     for intent in intents:
-        domains.append({
-            "domain_id": intent.get("intent_id", ""),
-            "label": intent.get("label", ""),
-            "description": intent.get("description", ""),
-            "keywords": intent.get("keywords", []),
-            "fallback_route": intent.get("route", "kunskap"),
-            "enabled": intent.get("enabled", True),
-            "priority": intent.get("priority", 500),
-        })
+        domains.append(
+            {
+                "domain_id": intent.get("intent_id", ""),
+                "label": intent.get("label", ""),
+                "description": intent.get("description", ""),
+                "keywords": intent.get("keywords", []),
+                "fallback_route": intent.get("route", "kunskap"),
+                "enabled": intent.get("enabled", True),
+                "priority": intent.get("priority", 500),
+            }
+        )
     return {"domains": domains}
 
 
@@ -295,13 +301,17 @@ async def get_agent_metadata_endpoint(
     metadata = await get_effective_agent_metadata(session)
     agents = []
     for m in metadata:
-        agents.append({
-            "agent_id": m.get("agent_id", ""),
-            "label": m.get("label", ""),
-            "description": m.get("description", ""),
-            "domain_id": m.get("routes", ["kunskap"])[0] if m.get("routes") else "kunskap",
-            "keywords": m.get("keywords", []),
-        })
+        agents.append(
+            {
+                "agent_id": m.get("agent_id", ""),
+                "label": m.get("label", ""),
+                "description": m.get("description", ""),
+                "domain_id": m.get("routes", ["kunskap"])[0]
+                if m.get("routes")
+                else "kunskap",
+                "keywords": m.get("keywords", []),
+            }
+        )
     return {"agents": agents}
 
 
@@ -333,11 +343,13 @@ async def get_category_metadata(
     }
     categories = []
     for cat_id in sorted(by_cat.keys()):
-        categories.append({
-            "category_id": cat_id,
-            "label": _LABEL_OVERRIDES.get(cat_id, cat_id.replace("_", " ").title()),
-            "tool_count": len(by_cat[cat_id]),
-        })
+        categories.append(
+            {
+                "category_id": cat_id,
+                "label": _LABEL_OVERRIDES.get(cat_id, cat_id.replace("_", " ").title()),
+                "tool_count": len(by_cat[cat_id]),
+            }
+        )
     return {"categories": categories}
 
 
@@ -520,7 +532,7 @@ async def get_zone_metrics(
 # ------------------------------------------------------------------
 
 
-@nexus_router.post("/forge/generate")
+@nexus_router.post("/forge/generate", response_model=ForgeRunResult)
 async def forge_generate(
     request: ForgeGenerateRequest,
     session: AsyncSession = Depends(get_async_session),
@@ -802,9 +814,7 @@ async def approve_loop_run(
         memory_overrides: dict[str, dict] = {}
         for ns in namespaces:
             try:
-                result = await optimizer.generate_suggestions(
-                    session, namespace=ns
-                )
+                result = await optimizer.generate_suggestions(session, namespace=ns)
                 if result.suggestions and not result.error:
                     suggestions_dicts = [
                         {
@@ -823,7 +833,9 @@ async def approve_loop_run(
                         applied += apply_result.get("applied", 0)
                         # Collect overrides for in-memory patching
                         for s in result.suggestions:
-                            if s.tool_id in affected_tool_ids and s.suggested.get("description"):
+                            if s.tool_id in affected_tool_ids and s.suggested.get(
+                                "description"
+                            ):
                                 memory_overrides[s.tool_id] = s.suggested
             except Exception as exc:
                 import logging
@@ -838,6 +850,7 @@ async def approve_loop_run(
             apply_overrides_to_cache(memory_overrides)
             try:
                 from app.nexus.embeddings import nexus_clear_embed_cache
+
                 nexus_clear_embed_cache()
             except ImportError:
                 pass
@@ -1047,7 +1060,7 @@ class CalibrationFitRequest(BaseModel):
     category: str | None = None
 
 
-@nexus_router.post("/calibration/fit")
+@nexus_router.post("/calibration/fit", response_model=CalibrationFitResponse)
 async def fit_calibration(
     request: CalibrationFitRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
@@ -1141,7 +1154,7 @@ async def optimizer_generate(
     )
 
 
-@nexus_router.post("/optimizer/apply")
+@nexus_router.post("/optimizer/apply", response_model=OptimizerApplyResponse)
 async def optimizer_apply(
     request: OptimizerApplyRequest,
     session: AsyncSession = Depends(get_async_session),
@@ -1172,6 +1185,7 @@ async def optimizer_apply(
         apply_overrides_to_cache(memory_overrides)
         try:
             from app.nexus.embeddings import nexus_clear_embed_cache
+
             nexus_clear_embed_cache()
         except ImportError:
             pass

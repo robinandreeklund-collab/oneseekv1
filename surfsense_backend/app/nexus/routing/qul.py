@@ -181,19 +181,29 @@ class QueryUnderstandingLayer:
 
         # 4. Domain hint scoring (use dynamic hints from DB if provided)
         domain_hints = self._score_domain_hints(
-            normalized, entities,
+            normalized,
+            entities,
             domain_hints_map=domain_hints_map,
             category_hints_map=category_hints_map,
         )
 
         # 5. Zone candidate scoring
         zone_candidates = self._resolve_zones(
-            domain_hints, entities,
+            domain_hints,
+            entities,
             domain_hints_map=domain_hints_map,
         )
 
         # 6. Complexity classification
         complexity = self._classify_complexity(normalized, is_multi, entities)
+
+        # 7. OOD risk estimation — no matching domains = likely out-of-domain
+        if not domain_hints:
+            ood_risk = 0.8
+        elif len(domain_hints) == 1:
+            ood_risk = 0.1
+        else:
+            ood_risk = 0.0
 
         return QueryAnalysisResult(
             original_query=query,
@@ -204,6 +214,7 @@ class QueryUnderstandingLayer:
             zone_candidates=zone_candidates,
             complexity=complexity,
             is_multi_intent=is_multi,
+            ood_risk=ood_risk,
         )
 
     def should_decompose(self, top_score: float, second_score: float) -> bool:
@@ -306,8 +317,12 @@ class QueryUnderstandingLayer:
             domain_hints_map: Dynamic zone→keywords map from DB. Falls back to static config.
             category_hints_map: Dynamic agent→keywords map from DB. Falls back to static config.
         """
-        _domain_hints = domain_hints_map if domain_hints_map is not None else DOMAIN_HINTS
-        _category_hints = category_hints_map if category_hints_map is not None else CATEGORY_HINTS
+        _domain_hints = (
+            domain_hints_map if domain_hints_map is not None else DOMAIN_HINTS
+        )
+        _category_hints = (
+            category_hints_map if category_hints_map is not None else CATEGORY_HINTS
+        )
 
         lower = query.lower()
         hints: list[str] = []
@@ -367,9 +382,7 @@ class QueryUnderstandingLayer:
         # If no hints at all, return the first few available domain zones
         # (NOT hardcoded to old legacy zones)
         if not zones:
-            all_domain_keys = list(
-                (domain_hints_map or DOMAIN_HINTS).keys()
-            )
+            all_domain_keys = list((domain_hints_map or DOMAIN_HINTS).keys())
             # Use first domain as general fallback
             zones = all_domain_keys[:1] if all_domain_keys else ["kunskap"]
 

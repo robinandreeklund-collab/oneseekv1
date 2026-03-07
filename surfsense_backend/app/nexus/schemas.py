@@ -184,7 +184,9 @@ class SpaceHealthReport(BaseModel):
 
 class SpaceSnapshot(BaseModel):
     snapshot_at: datetime
-    points: list[dict] = Field(default_factory=list)  # {tool_id, x, y, zone, namespace, cluster}
+    points: list[dict] = Field(
+        default_factory=list
+    )  # {tool_id, x, y, zone, namespace, cluster}
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +426,54 @@ class IntentLayerApplyRequest(BaseModel):
         ...,
         description="List of domain/agent dicts with item_id, item_type, + fields",
     )
+
+
+# ---------------------------------------------------------------------------
+# Overview Metrics
+# ---------------------------------------------------------------------------
+
+
+class OverviewMetricsResponse(BaseModel):
+    band0_rate: float = 0.0
+    ece_global: float | None = None
+    ood_rate: float = 0.0
+    namespace_purity: float = 0.0
+    platt_calibrated: bool = False
+    platt_zones_fitted: int = 0
+    total_events: int = 0
+    total_tools: int = 0
+    total_hard_negatives: int = 0
+    band_distribution: dict[str, int] = Field(default_factory=dict)
+    band_percentages: dict[str, float] = Field(default_factory=dict)
+    multi_intent_rate: float | None = None
+    schema_match_rate: float = 0.0
+    reranker_delta: float | None = None
+    silhouette_global: float | None = None
+    inter_zone_distance: float | None = None
+    hubness_rate: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Calibration Fit
+# ---------------------------------------------------------------------------
+
+
+class CalibrationFitResponse(BaseModel):
+    status: str  # "completed" | "insufficient_data" | "degenerate"
+    zone: str | None = None
+    message: str | None = None
+    fitted_on_samples: int | None = None
+    param_a: float | None = None
+    param_b: float | None = None
+    ece_score: float | None = None
+    zones_updated: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Optimizer Apply
+# ---------------------------------------------------------------------------
+
+
+class OptimizerApplyResponse(BaseModel):
+    applied: int = 0
+    skipped: int = 0

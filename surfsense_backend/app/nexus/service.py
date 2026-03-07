@@ -80,6 +80,36 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _compute_ece(
+    calibrated_scores: list[float],
+    labels: list[float],
+    n_bins: int = 10,
+) -> float:
+    """Compute Expected Calibration Error (ECE).
+
+    Bins calibrated probabilities and measures average |confidence - accuracy|
+    weighted by bin population.
+    """
+    if not calibrated_scores or not labels:
+        return 0.0
+    n = len(calibrated_scores)
+    bin_boundaries = [i / n_bins for i in range(n_bins + 1)]
+    ece = 0.0
+    for i in range(n_bins):
+        lo, hi = bin_boundaries[i], bin_boundaries[i + 1]
+        in_bin = [
+            (conf, lab)
+            for conf, lab in zip(calibrated_scores, labels, strict=False)
+            if lo <= conf < hi or (i == n_bins - 1 and conf == hi)
+        ]
+        if not in_bin:
+            continue
+        avg_conf = sum(conf for conf, _ in in_bin) / len(in_bin)
+        avg_acc = sum(lab for _, lab in in_bin) / len(in_bin)
+        ece += (len(in_bin) / n) * abs(avg_conf - avg_acc)
+    return round(ece, 6)
+
+
 def _zone_from_namespace_str(namespace: str) -> str:
     """Derive the real zone domain_id from a namespace string.
 
@@ -598,7 +628,9 @@ class NexusService:
                         continue
                     if pt.category == "external_model":
                         continue
-                    ns_str = "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+                    ns_str = (
+                        "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+                    )
                     if any(ns_str.startswith(prefix) for prefix in agent_namespaces):
                         judge_candidates.append(
                             {
@@ -817,7 +849,9 @@ class NexusService:
                     "x": cx + random.uniform(-0.8, 0.8),
                     "y": cy + random.uniform(-0.8, 0.8),
                     "zone": pt.zone,
-                    "namespace": "/".join(pt.namespace) if isinstance(pt.namespace, (list, tuple)) else pt.namespace,
+                    "namespace": "/".join(pt.namespace)
+                    if isinstance(pt.namespace, (list, tuple))
+                    else pt.namespace,
                     "cluster": cluster,
                 }
             )
@@ -856,7 +890,9 @@ class NexusService:
                         tool_id=pt.tool_id,
                         zone=pt.zone,
                         embedding=emb.tolist(),
-                        namespace="/".join(pt.namespace) if isinstance(pt.namespace, (list, tuple)) else pt.namespace,
+                        namespace="/".join(pt.namespace)
+                        if isinstance(pt.namespace, (list, tuple))
+                        else pt.namespace,
                     )
                 )
 
@@ -1282,9 +1318,14 @@ class NexusService:
         if not event:
             return False
 
+        valid_implicit = {"reformulation", "follow_up"}
         if implicit is not None:
+            if implicit not in valid_implicit:
+                return False
             event.implicit_feedback = implicit
         if explicit is not None:
+            if explicit not in (-1, 0, 1):
+                return False
             event.explicit_feedback = explicit
 
         await session.flush()
@@ -1935,9 +1976,7 @@ class NexusService:
         if category and not target_zone:
             from app.nexus.platform_bridge import get_platform_tools
 
-            cat_tools = [
-                t for t in get_platform_tools() if t.category == category
-            ]
+            cat_tools = [t for t in get_platform_tools() if t.category == category]
             if cat_tools:
                 target_zone = cat_tools[0].zone
 
@@ -1965,9 +2004,17 @@ class NexusService:
                 "zone": target_zone,
             }
 
-        # Build training data: raw_score → binary label (band 0/1 = correct)
+        # Build training data: raw_score → binary label
+        # User feedback overrides band-based labels when available
         scores = [ev.raw_reranker_score for ev in events]
-        labels = [1.0 if ev.band <= 1 else 0.0 for ev in events]
+        labels = []
+        for ev in events:
+            if ev.explicit_feedback == 1:
+                labels.append(1.0)
+            elif ev.explicit_feedback == -1:
+                labels.append(0.0)
+            else:
+                labels.append(1.0 if ev.band <= 1 else 0.0)
 
         # Fit Platt scaler
         scaler = PlattCalibratedReranker()
@@ -1979,6 +2026,10 @@ class NexusService:
                 "message": "Platt fit rejected as degenerate",
                 "zone": target_zone,
             }
+
+        # Compute ECE (Expected Calibration Error) from fitted data
+        calibrated_scores = scaler.calibrate_batch(scores)
+        ece = _compute_ece(calibrated_scores, labels)
 
         # Determine which zones to write
         if target_zone:
@@ -2005,7 +2056,7 @@ class NexusService:
                 param_a=params.a,
                 param_b=params.b,
                 temperature=1.0,
-                ece_score=None,
+                ece_score=ece,
                 fitted_on_samples=len(scores),
                 fitted_at=datetime.now(tz=UTC),
                 is_active=True,
@@ -2027,6 +2078,7 @@ class NexusService:
             "fitted_on_samples": len(scores),
             "param_a": params.a,
             "param_b": params.b,
+            "ece_score": ece,
             "zones_updated": fitted_count,
         }
 
@@ -2113,7 +2165,9 @@ class NexusService:
                 all_prefixes = get_all_zone_prefixes()
                 zone_row = NexusZoneConfig(
                     zone=zone_name,
-                    prefix_token=all_prefixes.get(zone_name, f"[{zone_name[:5].upper()}] "),
+                    prefix_token=all_prefixes.get(
+                        zone_name, f"[{zone_name[:5].upper()}] "
+                    ),
                 )
                 session.add(zone_row)
             zone_row.band0_rate = round(band0_rate, 4)
@@ -2381,15 +2435,16 @@ class NexusService:
 
             # Find the NEXUS rank of the chosen tool
             nexus_rank = -1
-            candidate_ids = [
-                c.get("tool_id", c.get("name", "")) for c in shortlist
-            ]
+            candidate_ids = [c.get("tool_id", c.get("name", "")) for c in shortlist]
             if chosen_tool and chosen_tool in candidate_ids:
                 nexus_rank = candidate_ids.index(chosen_tool) + 1
             elif chosen_tool:
                 # Fuzzy match — LLM might return slightly different name
                 for idx, cid in enumerate(candidate_ids):
-                    if chosen_tool.lower() in cid.lower() or cid.lower() in chosen_tool.lower():
+                    if (
+                        chosen_tool.lower() in cid.lower()
+                        or cid.lower() in chosen_tool.lower()
+                    ):
                         chosen_tool = cid  # Normalize to actual tool_id
                         nexus_rank = idx + 1
                         break
@@ -2609,9 +2664,7 @@ class NexusService:
                     candidate_ids = [c.tool_id for c in decision.candidates]
                     # Capture raw top-1 score for Platt calibration fitting
                     raw_top1 = (
-                        decision.candidates[0].raw_score
-                        if decision.candidates
-                        else 0.0
+                        decision.candidates[0].raw_score if decision.candidates else 0.0
                     )
 
                     platform_result = await self.shadow_observer.run_platform_retrieval(
@@ -2633,7 +2686,10 @@ class NexusService:
                             for c in decision.candidates
                         ]
                         # Add remaining namespace tools not in NEXUS results
-                        if decision.agent_resolution and decision.agent_resolution.tool_namespaces:
+                        if (
+                            decision.agent_resolution
+                            and decision.agent_resolution.tool_namespaces
+                        ):
                             nexus_ids = {c.tool_id for c in decision.candidates}
                             for tid, desc in _tool_desc_map.items():
                                 if tid not in nexus_ids:
@@ -2669,7 +2725,9 @@ class NexusService:
                     "confidence": round(decision.calibrated_confidence, 3),
                     "llm_judge": llm_judge_result,
                     "raw_top1": raw_top1,
-                    "sub_queries": decision.query_analysis.sub_queries if decision.query_analysis else [],
+                    "sub_queries": decision.query_analysis.sub_queries
+                    if decision.query_analysis
+                    else [],
                 }
 
             # Process in batches — each batch runs concurrently via forge pool
@@ -2744,7 +2802,10 @@ class NexusService:
                         llm_chosen = llm_judge["chosen_tool"]
                         if llm_chosen == nexus_tool:
                             llm_judge_agreements += 1
-                        if case_obj.expected_tool and llm_chosen == case_obj.expected_tool:
+                        if (
+                            case_obj.expected_tool
+                            and llm_chosen == case_obj.expected_tool
+                        ):
                             llm_judge_correct += 1
 
                         # Dual-sided accuracy: who was right?
@@ -2770,15 +2831,20 @@ class NexusService:
                                     winner = "llm"
                                 else:
                                     winner = "neither"
-                            llm_judge_disagreements.append({
-                                "query": case_obj.question,
-                                "nexus_tool": nexus_tool or "(none)",
-                                "llm_tool": llm_chosen,
-                                "expected_tool": case_obj.expected_tool or "(unknown)",
-                                "reasoning": llm_judge.get("reasoning", ""),
-                                "nexus_rank_of_chosen": llm_judge.get("nexus_rank_of_chosen", -1),
-                                "winner": winner,
-                            })
+                            llm_judge_disagreements.append(
+                                {
+                                    "query": case_obj.question,
+                                    "nexus_tool": nexus_tool or "(none)",
+                                    "llm_tool": llm_chosen,
+                                    "expected_tool": case_obj.expected_tool
+                                    or "(unknown)",
+                                    "reasoning": llm_judge.get("reasoning", ""),
+                                    "nexus_rank_of_chosen": llm_judge.get(
+                                        "nexus_rank_of_chosen", -1
+                                    ),
+                                    "winner": winner,
+                                }
+                            )
 
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
                         failures += 1
@@ -2795,14 +2861,10 @@ class NexusService:
                                 "confidence": br["confidence"],
                                 "difficulty": getattr(case_obj, "difficulty", ""),
                                 "llm_judge_tool": (
-                                    llm_judge.get("chosen_tool")
-                                    if llm_judge
-                                    else None
+                                    llm_judge.get("chosen_tool") if llm_judge else None
                                 ),
                                 "llm_judge_reasoning": (
-                                    llm_judge.get("reasoning", "")
-                                    if llm_judge
-                                    else ""
+                                    llm_judge.get("reasoning", "") if llm_judge else ""
                                 ),
                                 "sub_queries": br.get("sub_queries", []),
                             }
@@ -2818,14 +2880,10 @@ class NexusService:
             )
 
             llm_judge_agreement_rate = (
-                llm_judge_agreements / llm_judge_total
-                if llm_judge_total > 0
-                else None
+                llm_judge_agreements / llm_judge_total if llm_judge_total > 0 else None
             )
             llm_judge_accuracy = (
-                llm_judge_correct / llm_judge_total
-                if llm_judge_total > 0
-                else None
+                llm_judge_correct / llm_judge_total if llm_judge_total > 0 else None
             )
 
             iter_result = {
@@ -2859,7 +2917,9 @@ class NexusService:
                 "intent_correct": intent_correct,
                 "intent_total": intent_total,
                 "intent_accuracy": (
-                    round(intent_correct / intent_total, 3) if intent_total > 0 else None
+                    round(intent_correct / intent_total, 3)
+                    if intent_total > 0
+                    else None
                 ),
                 "agent_correct": agent_correct,
                 "agent_total": agent_total,
@@ -2928,13 +2988,43 @@ class NexusService:
             # The first pass gives us (raw_score, correct/incorrect) pairs —
             # exactly what Platt sigmoid needs.  Fitting once makes band
             # thresholds meaningful for subsequent iterations.
-            if iteration == 1 and not self._platt_global.is_fitted and len(platt_raw_scores) >= 10:
+            if (
+                iteration == 1
+                and not self._platt_global.is_fitted
+                and len(platt_raw_scores) >= 10
+            ):
                 try:
                     self._platt_global.fit(platt_raw_scores, platt_labels)
                     logger.info(
                         "Auto-loop #%d: Auto-fitted global Platt from %d samples",
-                        loop_number, len(platt_raw_scores),
+                        loop_number,
+                        len(platt_raw_scores),
                     )
+                    # Persist to DB so calibration survives restarts
+                    if self._platt_global.is_fitted:
+                        old = await session.execute(
+                            select(NexusCalibrationParam).where(
+                                NexusCalibrationParam.zone == "__global__",
+                                NexusCalibrationParam.is_active.is_(True),
+                            )
+                        )
+                        for old_row in old.scalars().all():
+                            old_row.is_active = False
+                        session.add(
+                            NexusCalibrationParam(
+                                zone="__global__",
+                                calibration_method="platt",
+                                param_a=self._platt_global.params.a,
+                                param_b=self._platt_global.params.b,
+                                temperature=1.0,
+                                ece_score=None,
+                                fitted_on_samples=len(platt_raw_scores),
+                                fitted_at=datetime.now(tz=UTC),
+                                is_active=True,
+                            )
+                        )
+                        await session.commit()
+                        logger.info("Auto-loop: Platt params persisted to DB")
                 except Exception as e:
                     logger.warning("Auto-loop Platt fitting failed: %s", e)
 
@@ -2974,7 +3064,8 @@ class NexusService:
                 for ns in ns_set:
                     try:
                         opt_result = await optimizer.generate_suggestions(
-                            session, namespace=ns,
+                            session,
+                            namespace=ns,
                             llm_config_id=-1,  # Use local model in loop (cost control)
                         )
                         if opt_result.suggestions:
@@ -2988,9 +3079,7 @@ class NexusService:
                                 if s.suggested.get("description")
                             ]
                             if apply_list:
-                                await optimizer.apply_suggestions(
-                                    session, apply_list
-                                )
+                                await optimizer.apply_suggestions(session, apply_list)
                                 await session.commit()
 
                             # Collect overrides + update proposed_value on proposals
@@ -3018,9 +3107,7 @@ class NexusService:
                     # Re-precompute embeddings for updated tools — match the
                     # exact text format used by _build_tool_entries_from_platform
                     updated_tools = [
-                        pt
-                        for pt in _get_pt()
-                        if pt.tool_id in applied_tool_ids
+                        pt for pt in _get_pt() if pt.tool_id in applied_tool_ids
                     ]
                     recompute_texts = []
                     for pt in updated_tools:
@@ -3047,9 +3134,7 @@ class NexusService:
                         len(applied_tool_ids),
                     )
             except Exception as e:
-                logger.warning(
-                    "Auto-loop inter-iteration optimizer failed: %s", e
-                )
+                logger.warning("Auto-loop inter-iteration optimizer failed: %s", e)
 
         # Use last iteration's values for final metrics
         last_iter = all_iteration_results[-1]
@@ -3261,15 +3346,23 @@ class NexusService:
             all_disagreements.extend(ir.get("llm_judge_disagreements", []))
         if total_llm_total > 0:
             # Aggregate quadrants from all iterations
-            total_both_correct = sum(ir.get("both_correct", 0) for ir in all_iteration_results)
-            total_nexus_only = sum(ir.get("nexus_only_correct", 0) for ir in all_iteration_results)
-            total_llm_only = sum(ir.get("llm_only_correct", 0) for ir in all_iteration_results)
-            total_both_wrong = sum(ir.get("both_wrong", 0) for ir in all_iteration_results)
-            nexus_accuracy = (
-                round((total_both_correct + total_nexus_only) / total_llm_total, 3)
+            total_both_correct = sum(
+                ir.get("both_correct", 0) for ir in all_iteration_results
             )
-            llm_accuracy = (
-                round((total_both_correct + total_llm_only) / total_llm_total, 3)
+            total_nexus_only = sum(
+                ir.get("nexus_only_correct", 0) for ir in all_iteration_results
+            )
+            total_llm_only = sum(
+                ir.get("llm_only_correct", 0) for ir in all_iteration_results
+            )
+            total_both_wrong = sum(
+                ir.get("both_wrong", 0) for ir in all_iteration_results
+            )
+            nexus_accuracy = round(
+                (total_both_correct + total_nexus_only) / total_llm_total, 3
+            )
+            llm_accuracy = round(
+                (total_both_correct + total_llm_only) / total_llm_total, 3
             )
             llm_judge_summary = {
                 "total": total_llm_total,
@@ -3469,9 +3562,7 @@ class NexusService:
             if pt.category != "external_model"
         }
         _tools_by_id = {
-            pt.tool_id: pt
-            for pt in _pt_tools
-            if pt.category != "external_model"
+            pt.tool_id: pt for pt in _pt_tools if pt.category != "external_model"
         }
 
         async def _eval_one_case(case_obj):
@@ -3480,9 +3571,7 @@ class NexusService:
                 nexus_tool = decision.selected_tool
                 candidate_ids = [c.tool_id for c in decision.candidates]
                 raw_top1 = (
-                    decision.candidates[0].raw_score
-                    if decision.candidates
-                    else 0.0
+                    decision.candidates[0].raw_score if decision.candidates else 0.0
                 )
                 platform_result = await self.shadow_observer.run_platform_retrieval(
                     case_obj.question, session=case_session
@@ -3502,7 +3591,10 @@ class NexusService:
                         for c in decision.candidates
                     ]
                     # Add remaining namespace tools not in NEXUS results
-                    if decision.agent_resolution and decision.agent_resolution.tool_namespaces:
+                    if (
+                        decision.agent_resolution
+                        and decision.agent_resolution.tool_namespaces
+                    ):
                         nexus_ids = {c.tool_id for c in decision.candidates}
                         for tid, desc in _tool_desc_map.items():
                             if tid not in nexus_ids:
@@ -3537,7 +3629,9 @@ class NexusService:
                 "confidence": round(decision.calibrated_confidence, 3),
                 "llm_judge": llm_judge_result,
                 "raw_top1": raw_top1,
-                "sub_queries": decision.query_analysis.sub_queries if decision.query_analysis else [],
+                "sub_queries": decision.query_analysis.sub_queries
+                if decision.query_analysis
+                else [],
             }
 
         for iteration in range(1, max_iterations + 1):
@@ -3583,9 +3677,7 @@ class NexusService:
             agent_total = 0
 
             num_batches = (len(cases) + batch_size - 1) // batch_size
-            for batch_idx, batch_start in enumerate(
-                range(0, len(cases), batch_size)
-            ):
+            for batch_idx, batch_start in enumerate(range(0, len(cases), batch_size)):
                 batch = cases[batch_start : batch_start + batch_size]
 
                 yield {
@@ -3638,7 +3730,10 @@ class NexusService:
                         llm_chosen = llm_judge["chosen_tool"]
                         if llm_chosen == nexus_tool:
                             llm_judge_agreements += 1
-                        if case_obj.expected_tool and llm_chosen == case_obj.expected_tool:
+                        if (
+                            case_obj.expected_tool
+                            and llm_chosen == case_obj.expected_tool
+                        ):
                             llm_judge_correct += 1
 
                         # Dual-sided accuracy: who was right?
@@ -3664,15 +3759,20 @@ class NexusService:
                                     winner = "llm"
                                 else:
                                     winner = "neither"
-                            llm_judge_disagreements.append({
-                                "query": case_obj.question,
-                                "nexus_tool": nexus_tool or "(none)",
-                                "llm_tool": llm_chosen,
-                                "expected_tool": case_obj.expected_tool or "(unknown)",
-                                "reasoning": llm_judge.get("reasoning", ""),
-                                "nexus_rank_of_chosen": llm_judge.get("nexus_rank_of_chosen", -1),
-                                "winner": winner,
-                            })
+                            llm_judge_disagreements.append(
+                                {
+                                    "query": case_obj.question,
+                                    "nexus_tool": nexus_tool or "(none)",
+                                    "llm_tool": llm_chosen,
+                                    "expected_tool": case_obj.expected_tool
+                                    or "(unknown)",
+                                    "reasoning": llm_judge.get("reasoning", ""),
+                                    "nexus_rank_of_chosen": llm_judge.get(
+                                        "nexus_rank_of_chosen", -1
+                                    ),
+                                    "winner": winner,
+                                }
+                            )
 
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
                         failures += 1
@@ -3689,14 +3789,10 @@ class NexusService:
                                 "confidence": br["confidence"],
                                 "difficulty": getattr(case_obj, "difficulty", ""),
                                 "llm_judge_tool": (
-                                    llm_judge.get("chosen_tool")
-                                    if llm_judge
-                                    else None
+                                    llm_judge.get("chosen_tool") if llm_judge else None
                                 ),
                                 "llm_judge_reasoning": (
-                                    llm_judge.get("reasoning", "")
-                                    if llm_judge
-                                    else ""
+                                    llm_judge.get("reasoning", "") if llm_judge else ""
                                 ),
                                 "sub_queries": br.get("sub_queries", []),
                             }
@@ -3711,14 +3807,10 @@ class NexusService:
             )
 
             llm_judge_agreement_rate = (
-                llm_judge_agreements / llm_judge_total
-                if llm_judge_total > 0
-                else None
+                llm_judge_agreements / llm_judge_total if llm_judge_total > 0 else None
             )
             llm_judge_accuracy = (
-                llm_judge_correct / llm_judge_total
-                if llm_judge_total > 0
-                else None
+                llm_judge_correct / llm_judge_total if llm_judge_total > 0 else None
             )
 
             iter_result = {
@@ -3752,7 +3844,9 @@ class NexusService:
                 "intent_correct": intent_correct,
                 "intent_total": intent_total,
                 "intent_accuracy": (
-                    round(intent_correct / intent_total, 3) if intent_total > 0 else None
+                    round(intent_correct / intent_total, 3)
+                    if intent_total > 0
+                    else None
                 ),
                 "agent_correct": agent_correct,
                 "agent_total": agent_total,
@@ -3768,8 +3862,16 @@ class NexusService:
                 "detail": (
                     f"Iteration {iteration} klar — {failures}/{total_tests} fel, "
                     f"P@1={p_at_1:.1%}"
-                    + (f", Intent={intent_correct}/{intent_total}" if intent_total > 0 else "")
-                    + (f", Agent={agent_correct}/{agent_total}" if agent_total > 0 else "")
+                    + (
+                        f", Intent={intent_correct}/{intent_total}"
+                        if intent_total > 0
+                        else ""
+                    )
+                    + (
+                        f", Agent={agent_correct}/{agent_total}"
+                        if agent_total > 0
+                        else ""
+                    )
                 ),
                 "iteration": iteration,
                 "total_iterations": max_iterations,
@@ -3778,7 +3880,9 @@ class NexusService:
                 "precision_at_1": round(p_at_1, 3),
                 "mrr": round(mrr, 3),
                 "intent_accuracy": (
-                    round(intent_correct / intent_total, 3) if intent_total > 0 else None
+                    round(intent_correct / intent_total, 3)
+                    if intent_total > 0
+                    else None
                 ),
                 "agent_accuracy": (
                     round(agent_correct / agent_total, 3) if agent_total > 0 else None
@@ -3833,9 +3937,7 @@ class NexusService:
                         f"Analysera varför dessa frågor routades fel.\n"
                         f"Förväntade verktyg: {', '.join(cluster_obj.tool_ids)}\n"
                         f"Exempelfrågor:\n"
-                        + "\n".join(
-                            f"- {q}" for q in cluster_obj.sample_queries[:3]
-                        )
+                        + "\n".join(f"- {q}" for q in cluster_obj.sample_queries[:3])
                         + "\n\nSvara med EN mening som förklarar rotorsaken."
                     )
                     try:
@@ -3872,9 +3974,37 @@ class NexusService:
                 break
 
             # ── Auto-fit global Platt calibration after first iteration ─────
-            if iteration == 1 and not self._platt_global.is_fitted and len(platt_raw_scores) >= 10:
+            if (
+                iteration == 1
+                and not self._platt_global.is_fitted
+                and len(platt_raw_scores) >= 10
+            ):
                 try:
                     self._platt_global.fit(platt_raw_scores, platt_labels)
+                    # Persist to DB so calibration survives restarts
+                    if self._platt_global.is_fitted:
+                        old = await session.execute(
+                            select(NexusCalibrationParam).where(
+                                NexusCalibrationParam.zone == "__global__",
+                                NexusCalibrationParam.is_active.is_(True),
+                            )
+                        )
+                        for old_row in old.scalars().all():
+                            old_row.is_active = False
+                        session.add(
+                            NexusCalibrationParam(
+                                zone="__global__",
+                                calibration_method="platt",
+                                param_a=self._platt_global.params.a,
+                                param_b=self._platt_global.params.b,
+                                temperature=1.0,
+                                ece_score=None,
+                                fitted_on_samples=len(platt_raw_scores),
+                                fitted_at=datetime.now(tz=UTC),
+                                is_active=True,
+                            )
+                        )
+                        await session.commit()
                     yield {
                         "type": "progress",
                         "step": "platt_fitted",
@@ -3917,7 +4047,8 @@ class NexusService:
                 for ns in ns_set:
                     try:
                         opt_result = await optimizer.generate_suggestions(
-                            session, namespace=ns,
+                            session,
+                            namespace=ns,
                             llm_config_id=-1,  # Use local model in loop (cost control)
                         )
                         if opt_result.suggestions:
@@ -3930,9 +4061,7 @@ class NexusService:
                                 if s.suggested.get("description")
                             ]
                             if apply_list:
-                                await optimizer.apply_suggestions(
-                                    session, apply_list
-                                )
+                                await optimizer.apply_suggestions(session, apply_list)
                                 await session.commit()
 
                             # Collect overrides + update proposed_value on proposals
@@ -3950,7 +4079,8 @@ class NexusService:
                     except Exception as e:
                         logger.warning(
                             "Auto-loop stream optimizer failed for ns=%s: %s",
-                            ns, e,
+                            ns,
+                            e,
                         )
 
                 if applied_tool_ids:
@@ -4068,10 +4198,7 @@ class NexusService:
 
         if final_total_tests >= 3:
             reranker_delta = (
-                (
-                    final_platform_agreements / final_platform_comparisons
-                    - final_p_at_1
-                )
+                (final_platform_agreements / final_platform_comparisons - final_p_at_1)
                 if final_platform_comparisons > 0
                 else None
             )
@@ -4168,15 +4295,23 @@ class NexusService:
             all_disagreements.extend(ir.get("llm_judge_disagreements", []))
         if total_llm_total > 0:
             # Aggregate quadrants from all iterations
-            total_both_correct = sum(ir.get("both_correct", 0) for ir in all_iteration_results)
-            total_nexus_only = sum(ir.get("nexus_only_correct", 0) for ir in all_iteration_results)
-            total_llm_only = sum(ir.get("llm_only_correct", 0) for ir in all_iteration_results)
-            total_both_wrong = sum(ir.get("both_wrong", 0) for ir in all_iteration_results)
-            nexus_accuracy = (
-                round((total_both_correct + total_nexus_only) / total_llm_total, 3)
+            total_both_correct = sum(
+                ir.get("both_correct", 0) for ir in all_iteration_results
             )
-            llm_accuracy = (
-                round((total_both_correct + total_llm_only) / total_llm_total, 3)
+            total_nexus_only = sum(
+                ir.get("nexus_only_correct", 0) for ir in all_iteration_results
+            )
+            total_llm_only = sum(
+                ir.get("llm_only_correct", 0) for ir in all_iteration_results
+            )
+            total_both_wrong = sum(
+                ir.get("both_wrong", 0) for ir in all_iteration_results
+            )
+            nexus_accuracy = round(
+                (total_both_correct + total_nexus_only) / total_llm_total, 3
+            )
+            llm_accuracy = round(
+                (total_both_correct + total_llm_only) / total_llm_total, 3
             )
             llm_judge_summary = {
                 "total": total_llm_total,
