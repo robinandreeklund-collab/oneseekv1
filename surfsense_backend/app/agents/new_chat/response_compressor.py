@@ -26,22 +26,26 @@ def extract_key_data(response_text: str, agent_name: str) -> str | None:
         data = json.loads(response_text)
     except (json.JSONDecodeError, TypeError):
         return None
-    
+
     if not isinstance(data, dict):
         return None
-    
+
     if agent_name == "statistics":
         compact = {
             "status": data.get("status"),
             "table": data.get("table_title") or data.get("title"),
-            "rows": len(data.get("data", [])) if isinstance(data.get("data"), list) else None,
+            "rows": len(data.get("data", []))
+            if isinstance(data.get("data"), list)
+            else None,
             "warnings": data.get("warnings"),
         }
         values = data.get("data")
         if isinstance(values, list):
             compact["sample"] = values[:10]
-        return json.dumps({k: v for k, v in compact.items() if v is not None}, ensure_ascii=False)
-    
+        return json.dumps(
+            {k: v for k, v in compact.items() if v is not None}, ensure_ascii=False
+        )
+
     if agent_name == "bolag":
         inner = data.get("data", {})
         if isinstance(inner, dict):
@@ -57,20 +61,26 @@ def extract_key_data(response_text: str, agent_name: str) -> str | None:
                     break
                 if k not in compact:
                     compact[k] = v if not isinstance(v, (list, dict)) else str(v)[:200]
-            return json.dumps({k: v for k, v in compact.items() if v is not None}, ensure_ascii=False)
+            return json.dumps(
+                {k: v for k, v in compact.items() if v is not None}, ensure_ascii=False
+            )
         return None
-    
-    if agent_name == "trafik":
+
+    if agent_name and agent_name.startswith("trafik-"):
         compact = {
             "status": data.get("status"),
             "objecttype": data.get("objecttype"),
-            "count": len(data.get("data", [])) if isinstance(data.get("data"), list) else None,
+            "count": len(data.get("data", []))
+            if isinstance(data.get("data"), list)
+            else None,
         }
         values = data.get("data")
         if isinstance(values, list):
             compact["sample"] = values[:5]
-        return json.dumps({k: v for k, v in compact.items() if v is not None}, ensure_ascii=False)
-    
+        return json.dumps(
+            {k: v for k, v in compact.items() if v is not None}, ensure_ascii=False
+        )
+
     # Generic: keep status + truncate
     if "status" in data:
         compact = {"status": data["status"]}
@@ -85,7 +95,7 @@ def extract_key_data(response_text: str, agent_name: str) -> str | None:
                     compact[key] = val
                 break
         return json.dumps(compact, ensure_ascii=False)
-    
+
     return None
 
 
@@ -97,16 +107,16 @@ def truncate_response(text: str, max_chars: int = 3000) -> str:
     # Try to cut at sentence boundary
     last_period = truncated.rfind(".")
     if last_period > max_chars * SENTENCE_BOUNDARY_THRESHOLD:
-        truncated = truncated[:last_period + 1]
+        truncated = truncated[: last_period + 1]
     return truncated + "\n[response truncated]"
 
 
 def compress_response(response_text: str, agent_name: str) -> str:
     """Compress a worker response for Supervisor context.
-    
+
     The full response is already persisted via ConnectorService.ingest_tool_output,
     so we can safely compress here without data loss.
-    
+
     Strategy:
     1. Under threshold → keep as-is
     2. JSON responses → extract key data
@@ -114,16 +124,16 @@ def compress_response(response_text: str, agent_name: str) -> str:
     """
     if not response_text:
         return response_text
-    
+
     tokens = estimate_tokens_from_text(response_text)
-    
+
     if tokens <= MAX_RESPONSE_TOKENS:
         return response_text
-    
+
     # Try structured extraction
     key_data = extract_key_data(response_text, agent_name)
     if key_data and estimate_tokens_from_text(key_data) <= MAX_RESPONSE_TOKENS:
         return key_data
-    
+
     # Fallback: truncate
     return truncate_response(response_text, max_chars=MAX_RESPONSE_TOKENS * 4)

@@ -2364,8 +2364,12 @@ class NexusService:
             "total_events": total,
             "total_tools": tool_count,
             "total_hard_negatives": hn_count,
-            "band_distribution": band_dist["distribution"],
-            "band_percentages": band_dist["percentages"],
+            "band_distribution": {
+                f"band_{i}": v for i, v in enumerate(band_dist["distribution"])
+            },
+            "band_percentages": {
+                f"band_{i}": v for i, v in enumerate(band_dist["percentages"])
+            },
             "multi_intent_rate": round(multi_intent_rate, 4)
             if multi_intent_rate is not None
             else None,

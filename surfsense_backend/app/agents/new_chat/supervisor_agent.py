@@ -253,8 +253,9 @@ _MAX_CONSECUTIVE_SAME_TOOL = 2
 _MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "2"))
 
 
-
-_HITL_APPROVE_RE = re.compile(r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE)
+_HITL_APPROVE_RE = re.compile(
+    r"\b(ja|yes|ok|okej|kor|kör|go|fortsatt|fortsätt)\b", re.IGNORECASE
+)
 _HITL_REJECT_RE = re.compile(r"\b(nej|no|stopp|avbryt|stop|inte)\b", re.IGNORECASE)
 
 # Import extracted helper functions (Sprint 2 refactor)
@@ -513,6 +514,7 @@ async def create_supervisor_agent(
         DEFAULT_COMPARE_MINI_PLANNER_PROMPT,
         DEFAULT_COMPARE_RESEARCH_PROMPT,
     )
+
     compare_domain_planner_prompt = resolve_prompt(
         prompt_overrides,
         "compare.domain_planner.system",
@@ -570,6 +572,7 @@ async def create_supervisor_agent(
         DEFAULT_DEBATE_CONVERGENCE_PROMPT,
         DEFAULT_DEBATE_MINI_CRITIC_PROMPT,
     )
+
     debate_synthesizer_prompt_template = inject_core_prompt(
         _core,
         resolve_prompt(
@@ -944,22 +947,57 @@ async def create_supervisor_agent(
             prompt_key="bolag",
         ),
         AgentDefinition(
-            name="trafik",
-            description="Trafikverket realtidsdata (väg, tåg, kameror)",
+            name="trafik-tag",
+            description="Tågtrafik – förseningar, tidtabeller, stationer, resplanering",
+            keywords=[
+                "tåg",
+                "tag",
+                "järnväg",
+                "jarnvag",
+                "tidtabell",
+                "avgång",
+                "ankomst",
+                "station",
+                "resplanering",
+                "kollektivtrafik",
+                "sj",
+            ],
+            namespace=("agents", "trafik", "tag"),
+            prompt_key="trafik",
+        ),
+        AgentDefinition(
+            name="trafik-vag",
+            description="Vägtrafik – störningar, olyckor, köer, kameror, vägstatus",
             keywords=[
                 "trafikverket",
                 "trafik",
                 "väg",
                 "vag",
-                "tåg",
-                "tag",
                 "störning",
                 "olycka",
                 "kö",
                 "ko",
                 "kamera",
+                "vägarbete",
+                "hastighet",
             ],
-            namespace=("agents", "trafik"),
+            namespace=("agents", "trafik", "vag"),
+            prompt_key="trafik",
+        ),
+        AgentDefinition(
+            name="trafik-vagvader",
+            description="Vägväder – halka, isrisk, vind, temperatur vid vägnätet",
+            keywords=[
+                "vägväder",
+                "väglag",
+                "halka",
+                "isrisk",
+                "vind",
+                "temperatur",
+                "väderstation",
+                "bro",
+            ],
+            namespace=("agents", "trafik", "vagvader"),
             prompt_key="trafik",
         ),
         AgentDefinition(
@@ -1143,9 +1181,14 @@ async def create_supervisor_agent(
             # Retrieval ranking should continue even when persistence is unavailable.
             retrieval_feedback_db_enabled = False
 
-    live_phase = _normalize_live_routing_phase(persisted_tuning.get("live_routing_phase"))
+    live_phase = _normalize_live_routing_phase(
+        persisted_tuning.get("live_routing_phase")
+    )
     live_routing_enabled = bool(persisted_tuning.get("live_routing_enabled"))
-    if isinstance(runtime_hitl_cfg, dict) and "live_routing_enabled" in runtime_hitl_cfg:
+    if (
+        isinstance(runtime_hitl_cfg, dict)
+        and "live_routing_enabled" in runtime_hitl_cfg
+    ):
         live_routing_enabled = _coerce_bool(
             runtime_hitl_cfg.get("live_routing_enabled"),
             default=live_routing_enabled,
@@ -1189,12 +1232,9 @@ async def create_supervisor_agent(
         runtime_hitl_cfg.get("subagent_enabled"),
         default=True,
     )
-    subagent_isolation_enabled = (
-        subagent_enabled
-        and _coerce_bool(
-            runtime_hitl_cfg.get("subagent_isolation_enabled"),
-            default=False,
-        )
+    subagent_isolation_enabled = subagent_enabled and _coerce_bool(
+        runtime_hitl_cfg.get("subagent_isolation_enabled"),
+        default=False,
     )
     subagent_context_max_chars = _coerce_int_range(
         runtime_hitl_cfg.get("subagent_context_max_chars"),
@@ -1238,10 +1278,14 @@ async def create_supervisor_agent(
         min_value=8,
         max_value=120,
     )
-    artifact_offload_storage_mode = str(
-        runtime_hitl_cfg.get("artifact_offload_storage_mode")
-        or _ARTIFACT_DEFAULT_STORAGE_MODE
-    ).strip().lower()
+    artifact_offload_storage_mode = (
+        str(
+            runtime_hitl_cfg.get("artifact_offload_storage_mode")
+            or _ARTIFACT_DEFAULT_STORAGE_MODE
+        )
+        .strip()
+        .lower()
+    )
     if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
         artifact_offload_storage_mode = _ARTIFACT_DEFAULT_STORAGE_MODE
     context_compaction_enabled = _coerce_bool(
@@ -1277,7 +1321,11 @@ async def create_supervisor_agent(
         max_value=4_000,
     )
     cross_session_memory_entries: list[dict[str, Any]] = []
-    if cross_session_memory_enabled and isinstance(db_session, AsyncSession) and user_id:
+    if (
+        cross_session_memory_enabled
+        and isinstance(db_session, AsyncSession)
+        and user_id
+    ):
         try:
             user_uuid = UUID(str(user_id))
             stmt = (
@@ -1319,7 +1367,9 @@ async def create_supervisor_agent(
     )
     if model_name_for_compaction:
         try:
-            context_token_budget = TokenBudget(model_name=str(model_name_for_compaction))
+            context_token_budget = TokenBudget(
+                model_name=str(model_name_for_compaction)
+            )
             context_budget_available_tokens = max(
                 1, int(context_token_budget.available_for_messages)
             )
@@ -1327,7 +1377,9 @@ async def create_supervisor_agent(
             context_token_budget = None
             context_budget_available_tokens = 0
 
-    async def _record_retrieval_feedback(tool_id: str, query: str, success: bool) -> None:
+    async def _record_retrieval_feedback(
+        tool_id: str, query: str, success: bool
+    ) -> None:
         normalized_tool_id = str(tool_id or "").strip()
         normalized_query = str(query or "").strip()
         retrieval_feedback_store.record(
@@ -1395,7 +1447,9 @@ async def create_supervisor_agent(
         quality = (successes - failures) / total
         delta = max(
             0.0,
-            min(1.0, float(live_routing_config.get("adaptive_threshold_delta") or 0.08)),
+            min(
+                1.0, float(live_routing_config.get("adaptive_threshold_delta") or 0.08)
+            ),
         )
         if quality <= 0.0:
             return min(5.0, base_threshold + delta)
@@ -1439,9 +1493,7 @@ async def create_supervisor_agent(
             tuning=persisted_tuning,
         )
         candidate_ids = [
-            str(tool_id).strip()
-            for tool_id in ranked_ids
-            if str(tool_id).strip()
+            str(tool_id).strip() for tool_id in ranked_ids if str(tool_id).strip()
         ][:tool_top_k]
         top1 = candidate_ids[0] if candidate_ids else None
         top2 = candidate_ids[1] if len(candidate_ids) > 1 else None
@@ -1456,7 +1508,9 @@ async def create_supervisor_agent(
         top1_score = score_by_id.get(top1 or "", 0.0)
         top2_score = score_by_id.get(top2 or "", 0.0)
         margin = (top1_score - top2_score) if top1 and top2 else None
-        base_threshold = float(live_routing_config.get("tool_auto_margin_threshold") or 0.25)
+        base_threshold = float(
+            live_routing_config.get("tool_auto_margin_threshold") or 0.25
+        )
         dynamic_threshold = (
             _adaptive_tool_margin_threshold(top1 or "", base_threshold)
             if top1
@@ -1478,7 +1532,11 @@ async def create_supervisor_agent(
             mode = "auto_select" if should_auto else "candidate_shortlist"
         else:
             selected_tool_ids = fallback_ids
-            mode = "shadow" if _live_phase_enabled(live_routing_config, "shadow") else "profile"
+            mode = (
+                "shadow"
+                if _live_phase_enabled(live_routing_config, "shadow")
+                else "profile"
+            )
         return {
             "selected_tool_ids": selected_tool_ids,
             "mode": mode,
@@ -1516,7 +1574,9 @@ async def create_supervisor_agent(
         for domain in graph_registry.domains:
             domain_id = str(domain.get("domain_id") or "").strip().lower()
             if domain_id and domain.get("enabled", True):
-                fallback_route = str(domain.get("fallback_route") or domain_id).strip().lower()
+                fallback_route = (
+                    str(domain.get("fallback_route") or domain_id).strip().lower()
+                )
                 route_to_intent_id[domain_id] = domain_id
                 # Also register by fallback_route if not already taken by a more
                 # specific domain.
@@ -1542,7 +1602,9 @@ async def create_supervisor_agent(
         "kunskap": ["search_knowledge_base", "search_surfsense_docs", "search_tavily"],
         "åtgärd": list(dict.fromkeys(weather_tool_ids[:2] + trafik_tool_ids[:2])),
         "väder": weather_tool_ids[:6],
-        "trafik": trafik_tool_ids[:6],
+        "trafik-tag": trafik_tool_ids[:6],
+        "trafik-vag": trafik_tool_ids[:6],
+        "trafik-vagvader": trafik_tool_ids[:6],
         "statistik": [
             str(definition.tool_id).strip()
             for definition in SCB_TOOL_DEFINITIONS[:6]
@@ -1579,9 +1641,13 @@ async def create_supervisor_agent(
                     return agent_id
 
         # Fallback: prefix-based heuristic for tools not yet in registry
-        if normalized_tool_id in {str(item).strip().lower() for item in weather_tool_ids}:
+        if normalized_tool_id in {
+            str(item).strip().lower() for item in weather_tool_ids
+        }:
             return "väder"
-        if normalized_tool_id in {str(item).strip().lower() for item in trafik_tool_ids}:
+        if normalized_tool_id in {
+            str(item).strip().lower() for item in trafik_tool_ids
+        }:
             return "trafik"
         if normalized_tool_id.startswith(("scb_", "kolada_", "skolverket_")):
             return "statistik"
@@ -1775,9 +1841,7 @@ async def create_supervisor_agent(
             final_requested=False,
         )
         status = str(result_contract.get("status") or "").strip().lower()
-        speculative_status = (
-            status if status in {"success", "partial"} else "failed"
-        )
+        speculative_status = status if status in {"success", "partial"} else "failed"
         if speculative_status in {"success", "partial"} and response_text:
             episodic_store.put(
                 tool_id=tool_id,
@@ -1866,13 +1930,14 @@ async def create_supervisor_agent(
         # route boundary (kunskap → skapande) which affects tool availability.
         if sandbox_enabled and _has_filesystem_intent(query):
             override_route = "skapande"
-            override_reason = (
-                "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
-            )
-            if normalized_route != override_route or not str(
-                resolved.get("intent_id") or ""
-            ).strip():
-                resolved["intent_id"] = route_to_intent_id.get(override_route, override_route)
+            override_reason = "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
+            if (
+                normalized_route != override_route
+                or not str(resolved.get("intent_id") or "").strip()
+            ):
+                resolved["intent_id"] = route_to_intent_id.get(
+                    override_route, override_route
+                )
                 resolved["route"] = override_route
                 resolved["reason"] = override_reason
                 resolved["confidence"] = max(
@@ -1977,7 +2042,11 @@ async def create_supervisor_agent(
                     candidate = str(item.get("name") or "").strip().lower()
                 else:
                     candidate = str(item or "").strip().lower()
-                if candidate and candidate in agent_by_name and candidate not in selected_agent_names:
+                if (
+                    candidate
+                    and candidate in agent_by_name
+                    and candidate not in selected_agent_names
+                ):
                     selected_agent_names.append(candidate)
         selected_agent_set = set(selected_agent_names)
 
@@ -1991,7 +2060,11 @@ async def create_supervisor_agent(
             return None
 
         # Soft preference for weather-capable agents on weather tasks
-        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and weather_task and not strict_trafik_task:
+        if (
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
+            and weather_task
+            and not strict_trafik_task
+        ):
             if requested_raw in agent_by_name and requested_raw != "väder":
                 # Check if requested agent has SMHI tools via its WorkerConfig
                 requested_worker = worker_configs.get(requested_raw)
@@ -2005,9 +2078,15 @@ async def create_supervisor_agent(
                     )
                 if not has_weather_tools:
                     return "väder", f"weather_soft_lock:{requested_raw}->väder"
-        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and strict_trafik_task:
+        if (
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
+            and strict_trafik_task
+        ):
             allowed_for_strict = {"trafik", "kartor", "åtgärd"}
-            if requested_raw in agent_by_name and requested_raw not in allowed_for_strict:
+            if (
+                requested_raw in agent_by_name
+                and requested_raw not in allowed_for_strict
+            ):
                 return "trafik", f"strict_trafik_lock:{requested_raw}->trafik"
         # For explicit marketplace tasks, keep execution on marketplace to avoid
         # drifting into browser/web-search aliases mid-plan.
@@ -2046,7 +2125,10 @@ async def create_supervisor_agent(
                     return fallback, f"selected_agents_lock:{requested_raw}->{fallback}"
             if route_allowed and requested_raw not in route_allowed:
                 if default_for_route in agent_by_name:
-                    return default_for_route, f"route_policy:{requested_raw}->{default_for_route}"
+                    return (
+                        default_for_route,
+                        f"route_policy:{requested_raw}->{default_for_route}",
+                    )
             return requested_raw, None
 
         alias_guess = _guess_agent_from_alias(requested_raw)
@@ -2056,10 +2138,16 @@ async def create_supervisor_agent(
                     "marknad" if marketplace_task else default_for_route
                 )
                 if fallback and fallback in agent_by_name:
-                    return fallback, f"selected_agents_lock_alias:{requested_raw}->{fallback}"
+                    return (
+                        fallback,
+                        f"selected_agents_lock_alias:{requested_raw}->{fallback}",
+                    )
             if route_allowed and alias_guess not in route_allowed:
                 if default_for_route in agent_by_name:
-                    return default_for_route, f"route_policy_alias:{requested_raw}->{default_for_route}"
+                    return (
+                        default_for_route,
+                        f"route_policy_alias:{requested_raw}->{default_for_route}",
+                    )
             return alias_guess, f"alias:{requested_raw}->{alias_guess}"
 
         recent_agents: list[str] = []
@@ -2088,7 +2176,9 @@ async def create_supervisor_agent(
         if route_allowed:
             retrieved = [agent for agent in retrieved if agent.name in route_allowed]
         if selected_agent_set:
-            retrieved = [agent for agent in retrieved if agent.name in selected_agent_set]
+            retrieved = [
+                agent for agent in retrieved if agent.name in selected_agent_set
+            ]
         if route_hint:
             preferred = {
                 "kunskap": ["kunskap", "webb"],
@@ -2109,7 +2199,11 @@ async def create_supervisor_agent(
                     preferred.insert(0, "marknad")
                 if _has_map_intent(task) and "kartor" not in preferred:
                     preferred.insert(0, "kartor")
-                if _has_trafik_intent(task) and not weather_task and "trafik" not in preferred:
+                if (
+                    _has_trafik_intent(task)
+                    and not weather_task
+                    and "trafik" not in preferred
+                ):
                     preferred.insert(0, "trafik")
             if route_allowed:
                 preferred = [name for name in preferred if name in route_allowed]
@@ -2117,7 +2211,10 @@ async def create_supervisor_agent(
                 preferred = [name for name in preferred if name in selected_agent_set]
             for preferred_name in preferred:
                 if any(agent.name == preferred_name for agent in retrieved):
-                    return preferred_name, f"route_pref:{requested_raw}->{preferred_name}"
+                    return (
+                        preferred_name,
+                        f"route_pref:{requested_raw}->{preferred_name}",
+                    )
         if retrieved:
             return retrieved[0].name, f"retrieval:{requested_raw}->{retrieved[0].name}"
         if selected_agent_names:
@@ -2127,7 +2224,10 @@ async def create_supervisor_agent(
             if fallback and fallback in agent_by_name:
                 return fallback, f"selected_agents_fallback:{requested_raw}->{fallback}"
         if route_allowed and default_for_route in agent_by_name:
-            return default_for_route, f"route_default:{requested_raw}->{default_for_route}"
+            return (
+                default_for_route,
+                f"route_default:{requested_raw}->{default_for_route}",
+            )
         return None, f"unresolved:{requested_raw}"
 
     def _build_compare_external_tool(spec):
@@ -2158,9 +2258,7 @@ async def create_supervisor_agent(
                             str(chunk.id) for chunk in document.chunks
                         ]
                 except Exception as exc:
-                    print(
-                        f"[compare] Failed to ingest {spec.tool_name}: {exc!s}"
-                    )
+                    print(f"[compare] Failed to ingest {spec.tool_name}: {exc!s}")
             return result
 
         return tool(
@@ -2199,9 +2297,7 @@ async def create_supervisor_agent(
         if state:
             recent_calls = state.get("recent_agent_calls") or []
             recent_agents = [
-                str(call.get("agent"))
-                for call in recent_calls
-                if call.get("agent")
+                str(call.get("agent")) for call in recent_calls if call.get("agent")
             ]
             route_hint = _normalize_route_hint_value(state.get("route_hint"))
             latest_user_query = _latest_user_query(state.get("messages") or [])
@@ -2227,7 +2323,10 @@ async def create_supervisor_agent(
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         # Weather limit removed: should be controlled by graph_complexity like other routes
-        if route_hint in {"statistik", "statistics"}:  # Statistics agents chosen by agent_resolver, not route
+        if route_hint in {
+            "statistik",
+            "statistics",
+        }:  # Statistics agents chosen by agent_resolver, not route
             limit = 1
 
         # Extract sub_intents from state for multi-domain cache key
@@ -2249,18 +2348,12 @@ async def create_supervisor_agent(
             cached_agents = None
         if cached_agents and has_trafik_intent and "trafik" not in cached_agents:
             cached_agents = None
-        if (
-            cached_agents
-            and has_marketplace_intent
-            and "marknad" not in cached_agents
-        ):
+        if cached_agents and has_marketplace_intent and "marknad" not in cached_agents:
             cached_agents = None
 
         if cached_agents:
             selected = [
-                agent_by_name[name]
-                for name in cached_agents
-                if name in agent_by_name
+                agent_by_name[name] for name in cached_agents if name in agent_by_name
             ]
         else:
             selected = _smart_retrieve_agents(
@@ -2318,13 +2411,18 @@ async def create_supervisor_agent(
             if (
                 has_trafik_intent
                 and not has_weather_intent
-                and route_hint in {"kunskap", "skapande", "action", "knowledge", "trafik"}
+                and route_hint
+                in {"kunskap", "skapande", "action", "knowledge", "trafik"}
             ):
                 trafik_agent = agent_by_name.get("trafik")
                 if trafik_agent and trafik_agent not in selected:
                     selected.insert(0, trafik_agent)
                     selected = selected[:limit]
-            if route_hint in {"kunskap", "skapande", "action", "knowledge"} and sandbox_enabled and has_filesystem_intent:
+            if (
+                route_hint in {"kunskap", "skapande", "action", "knowledge"}
+                and sandbox_enabled
+                and has_filesystem_intent
+            ):
                 code_agent = agent_by_name.get("kod")
                 if code_agent:
                     if code_agent in selected:
@@ -2366,11 +2464,18 @@ async def create_supervisor_agent(
         ):
             marketplace_order = ["marknad"]
             marketplace_selected = [
-                agent_by_name[name] for name in marketplace_order if name in agent_by_name
+                agent_by_name[name]
+                for name in marketplace_order
+                if name in agent_by_name
             ]
-            selected = marketplace_selected[:limit] if marketplace_selected else selected
+            selected = (
+                marketplace_selected[:limit] if marketplace_selected else selected
+            )
         # Weather order removed: selection should be based on retrieval and LLM classification
-        if route_hint in {"kunskap", "skapande", "action", "knowledge"} and has_strict_trafik_intent:
+        if (
+            route_hint in {"kunskap", "skapande", "action", "knowledge"}
+            and has_strict_trafik_intent
+        ):
             strict_order = ["trafik"]
             if has_map_intent:
                 strict_order.append("kartor")
@@ -2380,8 +2485,7 @@ async def create_supervisor_agent(
             ]
             selected = strict_selected[:limit] if strict_selected else selected
         payload = [
-            {"name": agent.name, "description": agent.description}
-            for agent in selected
+            {"name": agent.name, "description": agent.description} for agent in selected
         ]
         return json.dumps(
             {
@@ -2468,7 +2572,9 @@ async def create_supervisor_agent(
             status = str(payload.get("status") or "").strip().lower()
             if status not in accepted_statuses:
                 return "", [], []
-            response_text = _strip_critic_json(str(payload.get("response") or "").strip())
+            response_text = _strip_critic_json(
+                str(payload.get("response") or "").strip()
+            )
             if response_text:
                 raw_responses.append(response_text)
             used_tools.append(str(tool_id).strip())
@@ -2522,7 +2628,9 @@ async def create_supervisor_agent(
             for item in (focused_tools if isinstance(focused_tools, list) else [])
             if str(item).strip()
         )
-        task_body = _truncate_for_prompt(str(task or "").strip(), int(subagent_context_max_chars))
+        task_body = _truncate_for_prompt(
+            str(task or "").strip(), int(subagent_context_max_chars)
+        )
         context_lines = [f"subagent_id={subagent_id}"]
         if route_hint:
             context_lines.append(f"route_hint={route_hint}")
@@ -2567,10 +2675,10 @@ async def create_supervisor_agent(
         return state_payload
 
     def _is_filesystem_task(agent_name: str, task: str) -> bool:
-        return (
-            str(agent_name or "").strip().lower() in {"kod", "code"}
-            and _has_filesystem_intent(task)
-        )
+        return str(agent_name or "").strip().lower() in {
+            "kod",
+            "code",
+        } and _has_filesystem_intent(task)
 
     def _is_filesystem_sandbox_task(agent_name: str, task: str) -> bool:
         return bool(sandbox_enabled) and _is_filesystem_task(agent_name, task)
@@ -2639,7 +2747,10 @@ async def create_supervisor_agent(
             if isinstance(message, ToolMessage):
                 normalized_messages.append(message)
                 continue
-            if isinstance(message, dict) and str(message.get("type") or "").strip().lower() == "tool":
+            if (
+                isinstance(message, dict)
+                and str(message.get("type") or "").strip().lower() == "tool"
+            ):
                 normalized_messages.append(
                     ToolMessage(
                         content=message.get("content") or "",
@@ -2669,7 +2780,10 @@ async def create_supervisor_agent(
                 tool_call_index=tool_call_index,
             )
             normalized_tool_name = str(tool_name or "").strip().lower()
-            if not normalized_tool_name or normalized_tool_name in _ARTIFACT_INTERNAL_TOOL_NAMES:
+            if (
+                not normalized_tool_name
+                or normalized_tool_name in _ARTIFACT_INTERNAL_TOOL_NAMES
+            ):
                 continue
             payload = _safe_json(getattr(message, "content", ""))
             if not payload:
@@ -2694,9 +2808,12 @@ async def create_supervisor_agent(
                     content_sha1[:16],
                 ]
             )
-            artifact_id = "art-" + hashlib.sha1(
-                artifact_seed.encode("utf-8", errors="ignore")
-            ).hexdigest()[:16]
+            artifact_id = (
+                "art-"
+                + hashlib.sha1(
+                    artifact_seed.encode("utf-8", errors="ignore")
+                ).hexdigest()[:16]
+            )
             artifact_uri, artifact_path, storage_backend = _persist_artifact_content(
                 artifact_id=artifact_id,
                 content=serialized_payload,
@@ -2749,7 +2866,9 @@ async def create_supervisor_agent(
         current_turn_id = str(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
-        execution_strategy = str(injected_state.get("execution_strategy") or "").strip().lower()
+        execution_strategy = (
+            str(injected_state.get("execution_strategy") or "").strip().lower()
+        )
         subagent_isolated = _subagent_isolation_active(execution_strategy)
         turn_key = _current_turn_key(injected_state)
         base_thread_id = str(dependencies.get("thread_id") or "thread")
@@ -2890,13 +3009,15 @@ async def create_supervisor_agent(
         if name in {"väder", "weather"}:
             if live_tool_gate_active:
                 selected_tool_ids = [
-                    tool_id for tool_id in selected_tool_ids if tool_id in weather_tool_ids
+                    tool_id
+                    for tool_id in selected_tool_ids
+                    if tool_id in weather_tool_ids
                 ]
                 if not selected_tool_ids:
                     selected_tool_ids = list(weather_tool_ids)
             else:
                 selected_tool_ids = list(weather_tool_ids)
-        if name == "trafik":
+        if name.startswith("trafik-"):
             selected_tool_ids = [
                 tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
             ]
@@ -2911,7 +3032,7 @@ async def create_supervisor_agent(
         fallback_tool_ids: list[str] = []
         if name in {"väder", "weather"}:
             fallback_tool_ids = list(weather_tool_ids)
-        elif name == "trafik":
+        elif name.startswith("trafik-"):
             fallback_tool_ids = list(trafik_tool_ids)
         selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
             worker,
@@ -2931,12 +3052,9 @@ async def create_supervisor_agent(
                 ",".join(selected_tool_ids[:5]),
             )
         filesystem_sandbox_task = _is_filesystem_sandbox_task(name, task)
-        explicit_file_read_requested = (
-            filesystem_sandbox_task
-            and (
-                _requires_explicit_file_read(task)
-                or _requires_explicit_file_read(latest_turn_query)
-            )
+        explicit_file_read_requested = filesystem_sandbox_task and (
+            _requires_explicit_file_read(task)
+            or _requires_explicit_file_read(latest_turn_query)
         )
         speculative_response, speculative_tools, speculative_payloads = (
             ("", [], [])
@@ -3036,7 +3154,9 @@ async def create_supervisor_agent(
                     )
                 output_response = cached_response
                 if not final:
-                    output_response = compress_response(output_response, agent_name=name)
+                    output_response = compress_response(
+                        output_response, agent_name=name
+                    )
                 if subagent_isolated:
                     output_response = _truncate_for_prompt(
                         output_response,
@@ -3084,7 +3204,11 @@ async def create_supervisor_agent(
             prompt_template=scoped_tool_prompt_template,
         )
         if scoped_prompt:
-            prompt = f"{prompt.rstrip()}\n\n{scoped_prompt}".strip() if prompt else scoped_prompt
+            prompt = (
+                f"{prompt.rstrip()}\n\n{scoped_prompt}".strip()
+                if prompt
+                else scoped_prompt
+            )
         tool_prompt_block = _build_tool_prompt_block(
             selected_tool_ids,
             tool_prompt_overrides,
@@ -3140,7 +3264,9 @@ async def create_supervisor_agent(
                     f"{worker_checkpoint_ns}:subagent:{name}:{subagent_id}"
                 )
             else:
-                worker_configurable["checkpoint_ns"] = f"{worker_checkpoint_ns}:worker:{name}"
+                worker_configurable["checkpoint_ns"] = (
+                    f"{worker_checkpoint_ns}:worker:{name}"
+                )
         config = {
             "configurable": worker_configurable,
             "recursion_limit": 12,
@@ -3260,9 +3386,10 @@ async def create_supervisor_agent(
                             break
             initial_tool_names = _tool_names_from_messages(messages_out)
             enforcement_message: str | None = None
-            if name == "trafik":
+            if name.startswith("trafik-"):
                 used_trafik_tool = any(
                     tool_name.startswith("trafikverket_")
+                    or tool_name.startswith("trafiklab_")
                     for tool_name in initial_tool_names
                 )
                 if not used_trafik_tool:
@@ -3387,7 +3514,10 @@ async def create_supervisor_agent(
         critic_input = f"Uppgift: {task}\nSvar: {response_text}"
         try:
             critic_msg = await llm.ainvoke(
-                [SystemMessage(content=str(critic_prompt or "")), HumanMessage(content=str(critic_input or ""))]
+                [
+                    SystemMessage(content=str(critic_prompt or "")),
+                    HumanMessage(content=str(critic_input or "")),
+                ]
             )
             critic_text = str(getattr(critic_msg, "content", "") or "").strip()
             critic_payload = _safe_json(critic_text)
@@ -3452,10 +3582,11 @@ async def create_supervisor_agent(
             )
         if (
             not filesystem_sandbox_task
-            and str(result_contract.get("status") or "").strip().lower() in {
-            "success",
-            "partial",
-        }
+            and str(result_contract.get("status") or "").strip().lower()
+            in {
+                "success",
+                "partial",
+            }
             and str(response_text).strip()
         ):
             episodic_store.put(
@@ -3516,7 +3647,9 @@ async def create_supervisor_agent(
         if not final:
             response_text = compress_response(response_text, agent_name=name)
         if subagent_isolated:
-            response_text = _truncate_for_prompt(response_text, subagent_result_max_chars)
+            response_text = _truncate_for_prompt(
+                response_text, subagent_result_max_chars
+            )
 
         return json.dumps(
             {
@@ -3554,9 +3687,13 @@ async def create_supervisor_agent(
         current_turn_id = str(
             injected_state.get("active_turn_id") or injected_state.get("turn_id") or ""
         ).strip()
-        requested_strategy = str(injected_state.get("execution_strategy") or "").strip().lower()
-        allow_parallel = compare_mode or requested_strategy == "parallel" or (
-            requested_strategy == "subagent" and subagent_enabled
+        requested_strategy = (
+            str(injected_state.get("execution_strategy") or "").strip().lower()
+        )
+        allow_parallel = (
+            compare_mode
+            or requested_strategy == "parallel"
+            or (requested_strategy == "subagent" and subagent_enabled)
         )
         subagent_isolation_for_parallel = _subagent_isolation_active(requested_strategy)
         serialized_mode = not allow_parallel
@@ -3677,9 +3814,9 @@ async def create_supervisor_agent(
                 selected_tool_ids: list[str] = []
                 tool_selection_meta: dict[str, Any] = {}
                 if isinstance(resolved_tools_map, dict):
-                    candidate_tools = resolved_tools_map.get(agent_name) or resolved_tools_map.get(
-                        requested_agent_name
-                    )
+                    candidate_tools = resolved_tools_map.get(
+                        agent_name
+                    ) or resolved_tools_map.get(requested_agent_name)
                     if isinstance(candidate_tools, list):
                         selected_tool_ids = [
                             str(tool_id).strip()
@@ -3694,7 +3831,9 @@ async def create_supervisor_agent(
                     )
                     selected_tool_ids = [
                         str(tool_id).strip()
-                        for tool_id in list(tool_selection_meta.get("selected_tool_ids") or [])
+                        for tool_id in list(
+                            tool_selection_meta.get("selected_tool_ids") or []
+                        )
                         if str(tool_id).strip()
                     ][:8]
                 if not selected_tool_ids:
@@ -3703,19 +3842,25 @@ async def create_supervisor_agent(
                         task,
                         limit=6,
                     )
-                live_tool_gate_active = _live_phase_enabled(live_routing_config, "tool_gate")
+                live_tool_gate_active = _live_phase_enabled(
+                    live_routing_config, "tool_gate"
+                )
                 if agent_name in {"väder", "weather"}:
                     if live_tool_gate_active:
                         selected_tool_ids = [
-                            tool_id for tool_id in selected_tool_ids if tool_id in weather_tool_ids
+                            tool_id
+                            for tool_id in selected_tool_ids
+                            if tool_id in weather_tool_ids
                         ]
                         if not selected_tool_ids:
                             selected_tool_ids = list(weather_tool_ids)
                     else:
                         selected_tool_ids = list(weather_tool_ids)
-                if agent_name == "trafik":
+                if agent_name.startswith("trafik-"):
                     selected_tool_ids = [
-                        tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
+                        tool_id
+                        for tool_id in selected_tool_ids
+                        if tool_id in trafik_tool_ids
                     ]
                     if not selected_tool_ids:
                         selected_tool_ids = list(trafik_tool_ids)
@@ -3728,7 +3873,7 @@ async def create_supervisor_agent(
                 fallback_tool_ids: list[str] = []
                 if agent_name in {"väder", "weather"}:
                     fallback_tool_ids = list(weather_tool_ids)
-                elif agent_name == "trafik":
+                elif agent_name.startswith("trafik-"):
                     fallback_tool_ids = list(trafik_tool_ids)
                 selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
                     worker,
@@ -3747,9 +3892,7 @@ async def create_supervisor_agent(
                         tool_selection_meta.get("margin"),
                         ",".join(selected_tool_ids[:5]),
                     )
-                filesystem_sandbox_task = _is_filesystem_sandbox_task(
-                    agent_name, task
-                )
+                filesystem_sandbox_task = _is_filesystem_sandbox_task(agent_name, task)
                 (
                     speculative_response,
                     speculative_tools,
@@ -3928,7 +4071,9 @@ async def create_supervisor_agent(
                     isolated=subagent_isolation_for_parallel,
                     subagent_id=subagent_id,
                 )
-                worker_checkpoint_ns = str(dependencies.get("checkpoint_ns") or "").strip()
+                worker_checkpoint_ns = str(
+                    dependencies.get("checkpoint_ns") or ""
+                ).strip()
                 worker_thread_id = f"{base_thread_id}:{agent_name}:{turn_key}"
                 if subagent_isolation_for_parallel and subagent_id:
                     worker_thread_id = f"{worker_thread_id}:{subagent_id}"
@@ -4041,9 +4186,10 @@ async def create_supervisor_agent(
                     )
                 if (
                     not filesystem_sandbox_task
-                    and str(result_contract.get("status") or "").strip().lower() in {
-                    "success",
-                    "partial",
+                    and str(result_contract.get("status") or "").strip().lower()
+                    in {
+                        "success",
+                        "partial",
                     }
                     and str(response_text).strip()
                 ):
@@ -4095,14 +4241,14 @@ async def create_supervisor_agent(
                     "used_tools": used_tool_names,
                     "result_contract": result_contract,
                     "turn_id": current_turn_id,
-                        "execution_strategy": requested_strategy or "inline",
-                        "from_speculative_cache": False,
-                        "from_episodic_cache": False,
-                        "subagent_isolated": bool(subagent_isolation_for_parallel),
-                        "subagent_id": subagent_id,
-                        "subagent_handoff": subagent_handoff,
-                        "artifacts": subagent_artifacts,
-                    }
+                    "execution_strategy": requested_strategy or "inline",
+                    "from_speculative_cache": False,
+                    "from_episodic_cache": False,
+                    "subagent_isolated": bool(subagent_isolation_for_parallel),
+                    "subagent_id": subagent_id,
+                    "subagent_handoff": subagent_handoff,
+                    "artifacts": subagent_artifacts,
+                }
             except Exception as exc:
                 error_message = str(exc)
                 result_contract = _build_agent_result_contract(
@@ -4154,14 +4300,14 @@ async def create_supervisor_agent(
             ],
             return_exceptions=True,
         )
-        
+
         processed = []
         for r in results:
             if isinstance(r, Exception):
                 processed.append({"error": str(r)})
             else:
                 processed.append(r)
-        
+
         return json.dumps(
             {
                 "results": processed,
@@ -4466,9 +4612,7 @@ async def create_supervisor_agent(
             raw_content = str(getattr(message, "content", "") or "")
             # Strip any <think>…</think> that the model may produce despite
             # instructions — smalltalk must never expose internal reasoning.
-            response_text = re.sub(
-                r"<think>[\s\S]*?</think>", "", raw_content
-            ).strip()
+            response_text = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
             # Also strip bare opening <think> with no closing tag (truncated)
             response_text = re.sub(r"<think>[\s\S]*$", "", response_text).strip()
             response_text = _strip_critic_json(response_text).strip()
@@ -4555,9 +4699,7 @@ async def create_supervisor_agent(
                     payload_artifacts = payload.get("artifacts")
                     if isinstance(payload_artifacts, list):
                         artifact_updates.extend(
-                            item
-                            for item in payload_artifacts
-                            if isinstance(item, dict)
+                            item for item in payload_artifacts if isinstance(item, dict)
                         )
                     pending_followup_steps = _projected_followup_plan_steps(
                         state=state,
@@ -4569,14 +4711,17 @@ async def create_supervisor_agent(
                         cleaned_response = _strip_critic_json(
                             str(payload.get("response") or "").strip()
                         )
-                        if _should_finalize_from_contract(
-                            contract=payload_contract,
-                            response_text=cleaned_response,
-                            route_hint=route_hint,
-                            agent_name=str(payload.get("agent") or ""),
-                            latest_user_query=latest_user_query,
-                            agent_hops=int(state.get("agent_hops") or 0),
-                        ) and not pending_followup_steps:
+                        if (
+                            _should_finalize_from_contract(
+                                contract=payload_contract,
+                                response_text=cleaned_response,
+                                route_hint=route_hint,
+                                agent_name=str(payload.get("agent") or ""),
+                                latest_user_query=latest_user_query,
+                                agent_hops=int(state.get("agent_hops") or 0),
+                            )
+                            and not pending_followup_steps
+                        ):
                             updates["final_agent_response"] = cleaned_response
                             updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
@@ -4586,14 +4731,17 @@ async def create_supervisor_agent(
                             str(payload.get("response") or "").strip()
                         )
                         selected_agent = str(payload.get("agent") or "").strip().lower()
-                        if _should_finalize_from_contract(
-                            contract=payload_contract,
-                            response_text=cleaned_response,
-                            route_hint=route_hint,
-                            agent_name=selected_agent,
-                            latest_user_query=latest_user_query,
-                            agent_hops=int(state.get("agent_hops") or 0),
-                        ) and not pending_followup_steps:
+                        if (
+                            _should_finalize_from_contract(
+                                contract=payload_contract,
+                                response_text=cleaned_response,
+                                route_hint=route_hint,
+                                agent_name=selected_agent,
+                                latest_user_query=latest_user_query,
+                                agent_hops=int(state.get("agent_hops") or 0),
+                            )
+                            and not pending_followup_steps
+                        ):
                             updates["final_agent_response"] = cleaned_response
                             updates["final_response"] = cleaned_response
                             updates["final_agent_name"] = payload.get("agent")
@@ -4716,7 +4864,10 @@ async def create_supervisor_agent(
                 tool_call_index=tool_call_index,
             )
             normalized_tool_name = str(tool_name or "").strip().lower()
-            if not normalized_tool_name or normalized_tool_name in _ARTIFACT_INTERNAL_TOOL_NAMES:
+            if (
+                not normalized_tool_name
+                or normalized_tool_name in _ARTIFACT_INTERNAL_TOOL_NAMES
+            ):
                 continue
             payload = _safe_json(getattr(message, "content", ""))
             if not payload:
@@ -4741,9 +4892,12 @@ async def create_supervisor_agent(
                     content_sha1[:16],
                 ]
             )
-            artifact_id = "art-" + hashlib.sha1(
-                artifact_seed.encode("utf-8", errors="ignore")
-            ).hexdigest()[:16]
+            artifact_id = (
+                "art-"
+                + hashlib.sha1(
+                    artifact_seed.encode("utf-8", errors="ignore")
+                ).hexdigest()[:16]
+            )
             artifact_uri, artifact_path, storage_backend = _persist_artifact_content(
                 artifact_id=artifact_id,
                 content=serialized_payload,
@@ -4806,32 +4960,44 @@ async def create_supervisor_agent(
         if context_token_budget is not None and context_budget_available_tokens > 0:
             try:
                 used_tokens = context_token_budget.estimate_messages_tokens(messages)
-                usage_ratio = float(used_tokens) / float(context_budget_available_tokens)
+                usage_ratio = float(used_tokens) / float(
+                    context_budget_available_tokens
+                )
             except Exception:
                 usage_ratio = 0.0
         else:
             # Conservative fallback when model context metadata is unavailable.
             approx_chars = sum(
-                len(str(getattr(message, "content", "") or ""))
-                for message in messages
+                len(str(getattr(message, "content", "") or "")) for message in messages
             )
             usage_ratio = min(1.0, float(max(0, approx_chars)) / 24_000.0)
-        if usage_ratio < float(context_compaction_trigger_ratio) and len(messages) < MESSAGE_PRUNING_THRESHOLD:
+        if (
+            usage_ratio < float(context_compaction_trigger_ratio)
+            and len(messages) < MESSAGE_PRUNING_THRESHOLD
+        ):
             return {}
 
         summary = _build_rolling_context_summary(
             latest_user_query=_latest_user_query(messages),
             active_plan=[
-                item for item in (state.get("active_plan") or []) if isinstance(item, dict)
+                item
+                for item in (state.get("active_plan") or [])
+                if isinstance(item, dict)
             ],
             step_results=[
-                item for item in (state.get("step_results") or []) if isinstance(item, dict)
+                item
+                for item in (state.get("step_results") or [])
+                if isinstance(item, dict)
             ],
             subagent_handoffs=[
-                item for item in (state.get("subagent_handoffs") or []) if isinstance(item, dict)
+                item
+                for item in (state.get("subagent_handoffs") or [])
+                if isinstance(item, dict)
             ],
             artifact_manifest=[
-                item for item in (state.get("artifact_manifest") or []) if isinstance(item, dict)
+                item
+                for item in (state.get("artifact_manifest") or [])
+                if isinstance(item, dict)
             ],
             targeted_missing_info=[
                 str(item).strip()
@@ -4850,17 +5016,27 @@ async def create_supervisor_agent(
             item for item in (state.get("step_results") or []) if isinstance(item, dict)
         ]
         if len(compacted_steps) > _CONTEXT_COMPACTION_DEFAULT_STEP_KEEP:
-            updates["step_results"] = compacted_steps[-_CONTEXT_COMPACTION_DEFAULT_STEP_KEEP:]
+            updates["step_results"] = compacted_steps[
+                -_CONTEXT_COMPACTION_DEFAULT_STEP_KEEP:
+            ]
         compacted_handoffs = [
-            item for item in (state.get("subagent_handoffs") or []) if isinstance(item, dict)
+            item
+            for item in (state.get("subagent_handoffs") or [])
+            if isinstance(item, dict)
         ]
         if len(compacted_handoffs) > _SUBAGENT_MAX_HANDOFFS_IN_PROMPT:
-            updates["subagent_handoffs"] = compacted_handoffs[-_SUBAGENT_MAX_HANDOFFS_IN_PROMPT:]
+            updates["subagent_handoffs"] = compacted_handoffs[
+                -_SUBAGENT_MAX_HANDOFFS_IN_PROMPT:
+            ]
         compacted_artifacts = [
-            item for item in (state.get("artifact_manifest") or []) if isinstance(item, dict)
+            item
+            for item in (state.get("artifact_manifest") or [])
+            if isinstance(item, dict)
         ]
         if len(compacted_artifacts) > int(artifact_offload_max_entries):
-            updates["artifact_manifest"] = compacted_artifacts[-int(artifact_offload_max_entries):]
+            updates["artifact_manifest"] = compacted_artifacts[
+                -int(artifact_offload_max_entries) :
+            ]
         return updates
 
     async def orchestration_guard(
@@ -4885,7 +5061,9 @@ async def create_supervisor_agent(
         )
         if not parallel_preview and call_entries:
             for item in reversed(call_entries):
-                response_text = _strip_critic_json(str(item.get("response") or "").strip())
+                response_text = _strip_critic_json(
+                    str(item.get("response") or "").strip()
+                )
                 if not response_text:
                     continue
                 agent_name = str(item.get("agent") or "agent").strip() or "agent"
@@ -4985,10 +5163,7 @@ async def create_supervisor_agent(
                 updates["orchestration_phase"] = "finalize"
                 updates["guard_finalized"] = True
 
-        if (
-            "final_agent_response" not in updates
-            and no_progress_runs >= 2
-        ):
+        if "final_agent_response" not in updates and no_progress_runs >= 2:
             best = _best_actionable_entry(call_entries)
             if best:
                 updates["final_agent_response"] = best[0]
@@ -5035,7 +5210,11 @@ async def create_supervisor_agent(
                         parsed = _safe_json(content)
                         if isinstance(parsed, dict):
                             last_tool_response = _strip_critic_json(
-                                str(parsed.get("summary") or parsed.get("response") or content)
+                                str(
+                                    parsed.get("summary")
+                                    or parsed.get("response")
+                                    or content
+                                )
                             ).strip()
                         else:
                             last_tool_response = _strip_critic_json(content).strip()
@@ -5079,7 +5258,10 @@ async def create_supervisor_agent(
                 updates["orchestration_phase"] = "finalize"
                 updates["guard_finalized"] = True
 
-        if "final_agent_response" not in updates and agent_hops >= _MAX_AGENT_HOPS_PER_TURN:
+        if (
+            "final_agent_response" not in updates
+            and agent_hops >= _MAX_AGENT_HOPS_PER_TURN
+        ):
             best = _best_actionable_entry(call_entries)
             if best:
                 updates["final_agent_response"] = best[0]
@@ -5126,14 +5308,18 @@ async def create_supervisor_agent(
 
         # Progressive message pruning when messages get long
         if len(messages) > MESSAGE_PRUNING_THRESHOLD:
-            tool_msgs = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
+            tool_msgs = [
+                i for i, m in enumerate(messages) if isinstance(m, ToolMessage)
+            ]
             if len(tool_msgs) > TOOL_MSG_THRESHOLD:
                 keep_from = tool_msgs[-KEEP_TOOL_MSG_COUNT]
                 keep_start = max(0, keep_from - 1)
                 dropped_count = keep_start
                 if dropped_count > 0:
                     pruned = messages[keep_start:]
-                    rolling_summary = str(state.get("rolling_context_summary") or "").strip()
+                    rolling_summary = str(
+                        state.get("rolling_context_summary") or ""
+                    ).strip()
                     summary_content = (
                         "<rolling_context_summary>\n"
                         + _truncate_for_prompt(
@@ -5144,10 +5330,10 @@ async def create_supervisor_agent(
                         if rolling_summary
                         else f"[{dropped_count} earlier messages (including tool calls) condensed. Recent context retained.]"
                     )
-                    summary_msg = SystemMessage(
-                        content=summary_content
-                    )
-                    leading_system = [m for m in messages[:keep_start] if isinstance(m, SystemMessage)]
+                    summary_msg = SystemMessage(content=summary_content)
+                    leading_system = [
+                        m for m in messages[:keep_start] if isinstance(m, SystemMessage)
+                    ]
                     updates["messages"] = leading_system + [summary_msg] + pruned
 
         updates["guard_parallel_preview"] = []
@@ -5167,14 +5353,20 @@ async def create_supervisor_agent(
             return END
         resolved_intent = state.get("resolved_intent") or {}
         resolved_route = _normalize_route_hint_value(
-            (resolved_intent.get("route") if isinstance(resolved_intent, dict) else None)
+            (
+                resolved_intent.get("route")
+                if isinstance(resolved_intent, dict)
+                else None
+            )
             or state.get("route_hint")
         )
         if resolved_route in {"konversation", "smalltalk"}:
             return "smalltalk"
         phase = str(state.get("orchestration_phase") or "").strip().lower()
         has_final = bool(
-            str(state.get("final_response") or state.get("final_agent_response") or "").strip()
+            str(
+                state.get("final_response") or state.get("final_agent_response") or ""
+            ).strip()
         )
         if phase == "finalize" and has_final:
             return "synthesis_hitl"
@@ -5215,7 +5407,10 @@ async def create_supervisor_agent(
         if not messages:
             return "critic"
         last_message = messages[-1]
-        if not (isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None)):
+        if not (
+            isinstance(last_message, AIMessage)
+            and getattr(last_message, "tool_calls", None)
+        ):
             return "critic"
 
         # --- Loop guard: detect repeated calls to the same direct tool ---
@@ -5231,7 +5426,12 @@ async def create_supervisor_agent(
             if not isinstance(msg, ToolMessage):
                 continue
             name = _resolve_tool_message_name(msg, tool_call_index=tool_call_index)
-            if not name or name in {"call_agent", "retrieve_agents", "reflect_on_progress", "write_todos"}:
+            if not name or name in {
+                "call_agent",
+                "retrieve_agents",
+                "reflect_on_progress",
+                "write_todos",
+            }:
                 break
             if not last_tool_name:
                 last_tool_name = name
@@ -5289,8 +5489,10 @@ async def create_supervisor_agent(
             graph_builder = StateGraph(SupervisorState)
     else:
         graph_builder = StateGraph(SupervisorState)
-    graph_builder.add_node("resolve_intent", RunnableCallable(None, resolve_intent_node))
-    
+    graph_builder.add_node(
+        "resolve_intent", RunnableCallable(None, resolve_intent_node)
+    )
+
     # Conditional graph structure based on compare_mode
     if compare_mode:
         # Compare Supervisor v2: unified P4 architecture
@@ -5331,7 +5533,9 @@ async def create_supervisor_agent(
                 if tavily_connector:
                     _tavily_api_key = tavily_connector.config.get("TAVILY_API_KEY")
             except Exception as exc:
-                logger.warning("compare mode: failed to fetch Tavily API key from DB: %s", exc)
+                logger.warning(
+                    "compare mode: failed to fetch Tavily API key from DB: %s", exc
+                )
 
         # Fallback: use global PUBLIC_TAVILY_API_KEY from environment
         if not _tavily_api_key:
@@ -5347,11 +5551,14 @@ async def create_supervisor_agent(
         if _tavily_api_key:
             _cached_key = _tavily_api_key  # capture in closure
 
-            async def _compare_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
+            async def _compare_tavily_search_fn(
+                query: str, max_results: int
+            ) -> list[dict[str, Any]]:
                 """Call Tavily API directly with pre-fetched API key."""
                 logger.info(
                     "compare_tavily_search_fn: searching query=%r, max_results=%d",
-                    query[:80], max_results,
+                    query[:80],
+                    max_results,
                 )
                 try:
                     from tavily import TavilyClient
@@ -5369,30 +5576,37 @@ async def create_supervisor_agent(
 
                     results: list[dict[str, Any]] = []
                     for item in response.get("results", []):
-                        results.append({
-                            "url": item.get("url", ""),
-                            "title": item.get("title", ""),
-                            "content": item.get("content", "")[:500],
-                        })
+                        results.append(
+                            {
+                                "url": item.get("url", ""),
+                                "title": item.get("title", ""),
+                                "content": item.get("content", "")[:500],
+                            }
+                        )
 
                     # Include Tavily's own answer if available
                     tavily_answer = response.get("answer", "")
                     if tavily_answer and not results:
-                        results.append({
-                            "url": "",
-                            "title": "Tavily AI Answer",
-                            "content": str(tavily_answer)[:500],
-                        })
+                        results.append(
+                            {
+                                "url": "",
+                                "title": "Tavily AI Answer",
+                                "content": str(tavily_answer)[:500],
+                            }
+                        )
 
                     logger.info(
                         "compare_tavily_search_fn: got %d results for query=%r",
-                        len(results), query[:80],
+                        len(results),
+                        query[:80],
                     )
                     return results
 
                 except Exception as exc:
                     logger.warning(
-                        "compare_tavily_search_fn: error: %s", exc, exc_info=True,
+                        "compare_tavily_search_fn: error: %s",
+                        exc,
+                        exc_info=True,
                     )
                     return []
 
@@ -5404,7 +5618,9 @@ async def create_supervisor_agent(
                 "compare mode: tavily_search_fn is None! "
                 "(connector_service=%s, search_space_id=%s, key_found=%s) "
                 "— research agent will NOT perform web searches",
-                connector_service, search_space_id, bool(_tavily_api_key),
+                connector_service,
+                search_space_id,
+                bool(_tavily_api_key),
             )
 
         # Build compare subagent spawner (P4 pattern with specialized workers)
@@ -5415,7 +5631,9 @@ async def create_supervisor_agent(
         # Ensure Redis URL is available for sandbox state store.
         # sandbox_runtime checks: sandbox_state_redis_url → redis_url → REDIS_URL env.
         # Fall back to CELERY_BROKER_URL / REDIS_APP_URL if REDIS_URL is not set.
-        if not _compare_hitl.get("sandbox_state_redis_url") and not _compare_hitl.get("redis_url"):
+        if not _compare_hitl.get("sandbox_state_redis_url") and not _compare_hitl.get(
+            "redis_url"
+        ):
             import os as _os
 
             _redis_url = (
@@ -5453,10 +5671,19 @@ async def create_supervisor_agent(
         )
 
         # Add nodes
-        graph_builder.add_node("compare_domain_planner", RunnableCallable(None, compare_domain_planner_node))
-        graph_builder.add_node("compare_subagent_spawner", RunnableCallable(None, compare_spawner_node))
-        graph_builder.add_node("compare_convergence", RunnableCallable(None, compare_convergence_node_fn))
-        graph_builder.add_node("compare_synthesizer", RunnableCallable(None, compare_synth_node))
+        graph_builder.add_node(
+            "compare_domain_planner",
+            RunnableCallable(None, compare_domain_planner_node),
+        )
+        graph_builder.add_node(
+            "compare_subagent_spawner", RunnableCallable(None, compare_spawner_node)
+        )
+        graph_builder.add_node(
+            "compare_convergence", RunnableCallable(None, compare_convergence_node_fn)
+        )
+        graph_builder.add_node(
+            "compare_synthesizer", RunnableCallable(None, compare_synth_node)
+        )
 
         # Graph routing: resolve_intent → domain_planner → spawner → convergence → synthesizer → END
         graph_builder.set_entry_point("resolve_intent")
@@ -5503,7 +5730,9 @@ async def create_supervisor_agent(
         if _debate_tavily_key:
             _cached_debate_key = _debate_tavily_key
 
-            async def _debate_tavily_search_fn(query: str, max_results: int) -> list[dict[str, Any]]:
+            async def _debate_tavily_search_fn(
+                query: str, max_results: int
+            ) -> list[dict[str, Any]]:
                 """Call Tavily API for debate mode OneSeek research."""
                 try:
                     from tavily import TavilyClient
@@ -5521,11 +5750,13 @@ async def create_supervisor_agent(
 
                     results: list[dict[str, Any]] = []
                     for item in response.get("results", []):
-                        results.append({
-                            "url": item.get("url", ""),
-                            "title": item.get("title", ""),
-                            "content": item.get("content", "")[:500],
-                        })
+                        results.append(
+                            {
+                                "url": item.get("url", ""),
+                                "title": item.get("title", ""),
+                                "content": item.get("content", "")[:500],
+                            }
+                        )
                     return results
                 except Exception as exc:
                     logger.warning("debate_tavily_search_fn: error: %s", exc)
@@ -5554,10 +5785,18 @@ async def create_supervisor_agent(
         )
 
         # Add nodes
-        graph_builder.add_node("debate_domain_planner", RunnableCallable(None, debate_domain_planner_node))
-        graph_builder.add_node("debate_round_executor", RunnableCallable(None, debate_round_executor_node))
-        graph_builder.add_node("debate_convergence", RunnableCallable(None, debate_convergence_node_fn))
-        graph_builder.add_node("debate_synthesizer", RunnableCallable(None, debate_synth_node))
+        graph_builder.add_node(
+            "debate_domain_planner", RunnableCallable(None, debate_domain_planner_node)
+        )
+        graph_builder.add_node(
+            "debate_round_executor", RunnableCallable(None, debate_round_executor_node)
+        )
+        graph_builder.add_node(
+            "debate_convergence", RunnableCallable(None, debate_convergence_node_fn)
+        )
+        graph_builder.add_node(
+            "debate_synthesizer", RunnableCallable(None, debate_synth_node)
+        )
 
         # Graph routing: resolve_intent → planner → rounds → convergence → synthesizer → END
         graph_builder.set_entry_point("resolve_intent")
@@ -5569,8 +5808,12 @@ async def create_supervisor_agent(
     else:
         # Normal mode: use standard supervisor pipeline
         if hybrid_mode and not compare_mode and speculative_enabled:
-            graph_builder.add_node("speculative", RunnableCallable(None, speculative_node))
-        graph_builder.add_node("memory_context", RunnableCallable(None, memory_context_node))
+            graph_builder.add_node(
+                "speculative", RunnableCallable(None, speculative_node)
+            )
+        graph_builder.add_node(
+            "memory_context", RunnableCallable(None, memory_context_node)
+        )
         graph_builder.add_node("smalltalk", RunnableCallable(None, smalltalk_node))
         # P3: multi_query_decomposer for complex queries (hybrid_mode only)
         if hybrid_mode and not compare_mode:
@@ -5578,13 +5821,17 @@ async def create_supervisor_agent(
                 "multi_query_decomposer",
                 RunnableCallable(None, decomposer_node),
             )
-        graph_builder.add_node("agent_resolver", RunnableCallable(None, resolve_agents_node))
+        graph_builder.add_node(
+            "agent_resolver", RunnableCallable(None, resolve_agents_node)
+        )
         graph_builder.add_node("planner", RunnableCallable(None, planner_node))
         graph_builder.add_node(
             "planner_hitl_gate",
             RunnableCallable(None, planner_hitl_gate_node),
         )
-        graph_builder.add_node("tool_resolver", RunnableCallable(None, tool_resolver_node))
+        graph_builder.add_node(
+            "tool_resolver", RunnableCallable(None, tool_resolver_node)
+        )
         if hybrid_mode and not compare_mode and speculative_enabled:
             graph_builder.add_node(
                 "speculative_merge",
@@ -5628,9 +5875,15 @@ async def create_supervisor_agent(
                 RunnableCallable(None, progressive_synthesizer_node),
             )
         graph_builder.add_node("synthesizer", RunnableCallable(None, synthesizer_node))
-        graph_builder.add_node("domain_planner", RunnableCallable(None, domain_planner_node))
-        graph_builder.add_node("response_layer_router", RunnableCallable(None, response_layer_router_node))
-        graph_builder.add_node("response_layer", RunnableCallable(None, response_layer_node))
+        graph_builder.add_node(
+            "domain_planner", RunnableCallable(None, domain_planner_node)
+        )
+        graph_builder.add_node(
+            "response_layer_router", RunnableCallable(None, response_layer_router_node)
+        )
+        graph_builder.add_node(
+            "response_layer", RunnableCallable(None, response_layer_node)
+        )
         graph_builder.set_entry_point("resolve_intent")
         resolve_intent_paths = [
             "smalltalk",

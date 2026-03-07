@@ -13,7 +13,8 @@ def build_tool_resolver_node(
     resolve_tool_selection_for_agent_fn: Callable[..., dict[str, Any]] | None = None,
     weather_tool_ids: list[str],
     trafik_tool_ids: list[str],
-    namespace_tool_ids_fn: Callable[[str, str], tuple[list[str], dict[str, Any]] | None] | None = None,
+    namespace_tool_ids_fn: Callable[[str, str], tuple[list[str], dict[str, Any]] | None]
+    | None = None,
 ):
     async def tool_resolver_node(
         state: dict[str, Any],
@@ -34,7 +35,9 @@ def build_tool_resolver_node(
                 selected_agent_names = [fallback_agent]
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         step = next_plan_step_fn(state)
-        step_text = str(step.get("content") or "").strip() if isinstance(step, dict) else ""
+        step_text = (
+            str(step.get("content") or "").strip() if isinstance(step, dict) else ""
+        )
         targeted_missing_info_raw = state.get("targeted_missing_info")
         targeted_missing_info = (
             [
@@ -93,24 +96,36 @@ def build_tool_resolver_node(
                     ns_ids, ns_hints = namespace_result
                     focused_ids = list(ns_ids)
                     resolution_payload["namespace_hints"] = ns_hints
-                    resolution_payload["mode"] = resolution_payload.get("mode") or "namespace_full"
+                    resolution_payload["mode"] = (
+                        resolution_payload.get("mode") or "namespace_full"
+                    )
                 else:
-                    focused_ids = focused_tool_ids_for_agent_fn(agent_name, resolver_query)
-            live_gate_mode = str(resolution_payload.get("mode") or "").strip().lower() in {
+                    focused_ids = focused_tool_ids_for_agent_fn(
+                        agent_name, resolver_query
+                    )
+            live_gate_mode = str(
+                resolution_payload.get("mode") or ""
+            ).strip().lower() in {
                 "auto_select",
                 "candidate_shortlist",
             }
             if agent_name in {"väder", "weather"}:
                 if live_gate_mode:
-                    focused_ids = [tool_id for tool_id in focused_ids if tool_id in weather_tool_ids]
+                    focused_ids = [
+                        tool_id
+                        for tool_id in focused_ids
+                        if tool_id in weather_tool_ids
+                    ]
                     if not focused_ids:
                         focused_ids = list(weather_tool_ids)
                 elif namespace_result is None:
                     # Legacy fallback when namespace exposure is not available
                     focused_ids = list(weather_tool_ids)
-            elif agent_name == "trafik" and namespace_result is None:
+            elif agent_name.startswith("trafik-") and namespace_result is None:
                 # Legacy fallback when namespace exposure is not available
-                focused_ids = [tool_id for tool_id in focused_ids if tool_id in trafik_tool_ids]
+                focused_ids = [
+                    tool_id for tool_id in focused_ids if tool_id in trafik_tool_ids
+                ]
                 if not focused_ids:
                     focused_ids = list(trafik_tool_ids)
             deduped_ids: list[str] = []

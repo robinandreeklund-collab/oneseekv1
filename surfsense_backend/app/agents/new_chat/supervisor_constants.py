@@ -1,4 +1,5 @@
 """Constants and configuration for the supervisor agent."""
+
 from __future__ import annotations
 
 import os
@@ -22,13 +23,17 @@ _AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
 # These should NOT be overridden by route_policy if explicitly selected
 # This scales to 100s of APIs without needing regex patterns for each one
 _SPECIALIZED_AGENTS = {
-    "marknad",      # Blocket/Tradera tools
-    "statistik",    # SCB/Kolada tools
-    "riksdagen",    # Parliament data tools
-    "bolag",        # Company registry tools
-    "trafik",       # Traffic/transport tools
-    "väder",        # Weather-specific tools
-    "kartor",       # Map generation tools
+    "marknad",  # Blocket/Tradera tools
+    "statistik",  # SCB/Kolada tools
+    "riksdagen",  # Parliament data tools
+    "bolag",  # Company registry tools
+    "trafik-tag",  # Train/rail + route planning tools
+    "trafik-vag",  # Road traffic/incidents/cameras tools
+    "trafik-vagvader",  # Road weather tools
+    "väder",  # Weather forecast/observation tools
+    "väder-vatten",  # Hydrology/oceanography tools
+    "väder-risk",  # Fire risk/solar radiation tools
+    "kartor",  # Map generation tools
 }
 # Backward compat: accept old English agent names
 _COMPAT_AGENT_NAMES: dict[str, str] = {
@@ -41,7 +46,9 @@ _COMPAT_AGENT_NAMES: dict[str, str] = {
     "marketplace": "marknad",
     "synthesis": "syntes",
 }
-_COMPAT_AGENT_NAMES_REVERSE: dict[str, str] = {v: k for k, v in _COMPAT_AGENT_NAMES.items()}
+_COMPAT_AGENT_NAMES_REVERSE: dict[str, str] = {
+    v: k for k, v in _COMPAT_AGENT_NAMES.items()
+}
 
 _AGENT_STOPWORDS = {
     "hur",
@@ -116,9 +123,9 @@ def _live_phase_enabled(config: dict[str, Any], minimum_phase: str) -> bool:
     if not enabled:
         return False
     current_phase = _normalize_live_routing_phase(config.get("phase"))
-    return _LIVE_ROUTING_PHASE_ORDER.get(current_phase, 0) >= _LIVE_ROUTING_PHASE_ORDER.get(
-        minimum_phase, 0
-    )
+    return _LIVE_ROUTING_PHASE_ORDER.get(
+        current_phase, 0
+    ) >= _LIVE_ROUTING_PHASE_ORDER.get(minimum_phase, 0)
 
 
 @dataclass(frozen=True)
@@ -132,28 +139,65 @@ class AgentToolProfile:
 def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
     profiles: dict[str, list[AgentToolProfile]] = {
         "väder": [],
-        "trafik": [],
+        "väder-vatten": [],
+        "väder-risk": [],
+        "trafik-tag": [],
+        "trafik-vag": [],
+        "trafik-vagvader": [],
         "statistik": [],
         "riksdagen": [],
         "bolag": [],
         "marknad": [],
     }
+    # SMHI: split by category → sub-agent
+    _smhi_agent_by_category = {
+        "smhi_vaderprognoser": "väder",
+        "smhi_vaderanalyser": "väder",
+        "smhi_vaderobservationer": "väder",
+        "smhi_hydrologi": "väder-vatten",
+        "smhi_oceanografi": "väder-vatten",
+        "smhi_brandrisk": "väder-risk",
+        "smhi_solstralning": "väder-risk",
+    }
     for definition in SMHI_TOOL_DEFINITIONS:
-        profiles["väder"].append(
+        category = str(getattr(definition, "category", ""))
+        sub_agent = _smhi_agent_by_category.get(category, "väder")
+        profiles[sub_agent].append(
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "väder")),
+                category=category,
                 description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
             )
         )
+    # Trafikverket: split by category → sub-agent
+    _trafik_agent_by_category = {
+        "trafikverket_tag": "trafik-tag",
+        "trafikverket_trafikinfo": "trafik-vag",
+        "trafikverket_vag": "trafik-vag",
+        "trafikverket_kameror": "trafik-vag",
+        "trafikverket_prognos": "trafik-vag",
+        "trafikverket_vader": "trafik-vagvader",
+    }
+    _trafik_tool_override = {
+        "trafikverket_prognos_tag": "trafik-tag",
+    }
     for definition in TRAFIKVERKET_TOOL_DEFINITIONS:
-        profiles["trafik"].append(
+        tool_id = str(getattr(definition, "tool_id", ""))
+        category = str(getattr(definition, "category", ""))
+        sub_agent = _trafik_tool_override.get(
+            tool_id, _trafik_agent_by_category.get(category, "trafik-vag")
+        )
+        profiles[sub_agent].append(
             AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "trafik")),
+                tool_id=tool_id,
+                category=category,
                 description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
             )
         )
     for definition in SCB_TOOL_DEFINITIONS:
@@ -162,7 +206,9 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "base_path", "statistik")),
                 description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
             )
         )
     for definition in RIKSDAGEN_TOOL_DEFINITIONS:
@@ -171,7 +217,9 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "category", "riksdagen")),
                 description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
             )
         )
     for definition in BOLAGSVERKET_TOOL_DEFINITIONS:
@@ -180,7 +228,9 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "category", "bolag")),
                 description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
             )
         )
     for definition in MARKETPLACE_TOOL_DEFINITIONS:
@@ -189,7 +239,9 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 tool_id=str(getattr(definition, "tool_id", "")),
                 category=str(getattr(definition, "category", "marknad")),
                 description=str(getattr(definition, "description", "")),
-                keywords=tuple(str(item) for item in list(getattr(definition, "keywords", []))),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
             )
         )
     return profiles
@@ -253,14 +305,18 @@ _AGENT_NAME_ALIAS_MAP = {
     "smhi": "väder",
     "smhi_agent": "väder",
     "vader": "väder",
-    # Traffic
-    "traffic_information": "trafik",
-    "traffic_info": "trafik",
-    "traffic_agent": "trafik",
-    "road_works_planner": "trafik",
-    "roadworks_planner": "trafik",
-    "road_work_planner": "trafik",
-    "roadworks": "trafik",
+    # Traffic → trafik sub-agents
+    "traffic_information": "trafik-vag",
+    "traffic_info": "trafik-vag",
+    "traffic_agent": "trafik-vag",
+    "road_works_planner": "trafik-vag",
+    "roadworks_planner": "trafik-vag",
+    "road_work_planner": "trafik-vag",
+    "roadworks": "trafik-vag",
+    "trafik": "trafik-vag",
+    "train": "trafik-tag",
+    "train_agent": "trafik-tag",
+    "rail": "trafik-tag",
     # Statistics → statistik
     "municipality_agent": "statistik",
     "statistic_agent": "statistik",

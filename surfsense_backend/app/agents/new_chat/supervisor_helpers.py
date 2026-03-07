@@ -838,7 +838,7 @@ def _should_finalize_from_contract(
     normalized_agent = str(agent_name or "").strip().lower()
     if (
         str(route_hint or "").strip().lower() in {"action", "skapande"}
-        and normalized_agent == "trafik"
+        and normalized_agent.startswith("trafik-")
         and _has_strict_trafik_intent(latest_user_query)
         and actionable
         and status in {"success", "partial"}
