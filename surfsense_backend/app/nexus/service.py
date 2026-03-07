@@ -438,7 +438,9 @@ class NexusService:
 
         # Auto-build tool_entries from platform registry if not provided
         if tool_entries is None:
-            tool_entries = self._build_tool_entries_from_platform(analysis)
+            tool_entries = self._build_tool_entries_from_platform(
+                analysis, agent_namespaces=agent_namespaces
+            )
 
         candidates: list[RoutingCandidate] = []
         selected_tool: str | None = None
@@ -542,13 +544,19 @@ class NexusService:
             raw_margin=raw_margin,
         )
 
-        # Optional: LLM Tool Judge
+        # Optional: LLM Tool Judge — sees ALL tools in resolved agent
+        # namespaces (not just top-5 NEXUS candidates) so it can find
+        # the correct tool even when embedding ranking missed it.
         llm_judge_result = None
         if run_llm_judge and candidates:
             from app.nexus.platform_bridge import get_platform_tools as _gpt
             from app.nexus.schemas import LlmJudgeResult
 
-            _desc_map = {t.tool_id: t.description for t in _gpt()}
+            platform_tools = _gpt()
+            _desc_map = {t.tool_id: t.description for t in platform_tools}
+
+            # Build full tool list from agent's namespace
+            nexus_tool_ids = {c.tool_id for c in candidates}
             judge_candidates = [
                 {
                     "tool_id": c.tool_id,
@@ -556,8 +564,25 @@ class NexusService:
                     "description": _desc_map.get(c.tool_id, ""),
                     "score": c.calibrated_score,
                 }
-                for c in candidates[:5]
+                for c in candidates
             ]
+            # Add namespace tools that NEXUS didn't rank (score=0)
+            if agent_namespaces:
+                for pt in platform_tools:
+                    if pt.tool_id in nexus_tool_ids:
+                        continue
+                    if pt.category == "external_model":
+                        continue
+                    ns_str = "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+                    if any(ns_str.startswith(prefix) for prefix in agent_namespaces):
+                        judge_candidates.append(
+                            {
+                                "tool_id": pt.tool_id,
+                                "name": pt.tool_id,
+                                "description": pt.description,
+                                "score": 0.0,
+                            }
+                        )
             try:
                 judge_raw = await self.llm_judge_tools(query, judge_candidates)
                 llm_judge_result = LlmJudgeResult(
@@ -1335,7 +1360,12 @@ class NexusService:
     # Tool Entry Builder
     # ------------------------------------------------------------------
 
-    def _build_tool_entries_from_platform(self, analysis: QueryAnalysis) -> list[dict]:
+    def _build_tool_entries_from_platform(
+        self,
+        analysis: QueryAnalysis,
+        *,
+        agent_namespaces: list[str] | None = None,
+    ) -> list[dict]:
         """Build tool_entries from the platform registry with embedding-first scoring.
 
         Scoring strategy (aligned with vision):
@@ -1447,6 +1477,18 @@ class NexusService:
         # Sort by score descending, take top 20
         raw_entries.sort(key=lambda e: e[1], reverse=True)
         top_entries = raw_entries[:20]
+
+        # Ensure ALL tools in resolved agent namespaces are included,
+        # even if they scored below the top-20 cutoff.  This prevents
+        # the eval loop and LLM judge from missing relevant tools.
+        if agent_namespaces:
+            top_ids = {e[0]["tool_id"] for e in top_entries}
+            for entry_dict, score in raw_entries[20:]:
+                ns = entry_dict.get("namespace", "")
+                if any(ns.startswith(prefix) for prefix in agent_namespaces):
+                    if entry_dict["tool_id"] not in top_ids:
+                        top_entries.append((entry_dict, score))
+                        top_ids.add(entry_dict["tool_id"])
 
         # NO normalization — scores are already in [0, 1] from cosine similarity.
         # Band thresholds (0.95/0.80/0.60/0.40) are designed for this scale.
@@ -2190,21 +2232,24 @@ class NexusService:
         query: str,
         candidates: list[dict],
         *,
-        top_k: int = 5,
+        top_k: int | None = None,
     ) -> dict:
-        """Ask an LLM to choose the best tool from NEXUS-ranked candidates.
+        """Ask an LLM to choose the best tool from candidates.
+
+        When top_k is None (default), ALL candidates are presented to the LLM
+        so it can evaluate the full agent namespace. Set top_k to limit.
 
         Args:
             query: The user query.
-            candidates: NEXUS-ranked tool dicts with tool_id, name, description, score.
-            top_k: How many top candidates to present to the LLM.
+            candidates: Tool dicts with tool_id, name, description, score.
+            top_k: Max candidates to show LLM. None = all.
 
         Returns:
             Dict with chosen_tool, reasoning, nexus_rank_of_chosen, agreement.
         """
         from app.nexus.llm import nexus_llm_call
 
-        shortlist = candidates[:top_k]
+        shortlist = candidates[:top_k] if top_k else candidates
         if not shortlist:
             return {
                 "chosen_tool": None,
@@ -2288,6 +2333,7 @@ class NexusService:
         namespace: str | None = None,
         batch_size: int = 200,
         max_iterations: int = 1,
+        run_llm_judge: bool = False,
     ) -> dict:
         """Run a complete auto-loop iteration inline.
 
@@ -2451,9 +2497,14 @@ class NexusService:
             from app.agents.new_chat.forge_pool import forge_pool
             from app.db import async_session_maker
 
-            # Build tool description lookup for LLM judge
+            # Build tool lookups for LLM judge (full namespace)
             _tool_desc_map: dict[str, str] = {
                 pt.tool_id: pt.description
+                for pt in platform_tools
+                if pt.category != "external_model"
+            }
+            _tools_by_id = {
+                pt.tool_id: pt
                 for pt in platform_tools
                 if pt.category != "external_model"
             }
@@ -2476,9 +2527,10 @@ class NexusService:
                     )
                     platform_tool = platform_result.get("top1")
 
-                    # LLM judge: let LLM pick from NEXUS candidates
+                    # LLM judge: let LLM pick from ALL agent namespace tools
                     llm_judge_result = None
-                    if decision.candidates:
+                    if run_llm_judge and decision.candidates:
+                        # Start with all NEXUS candidates
                         judge_candidates = [
                             {
                                 "tool_id": c.tool_id,
@@ -2486,10 +2538,30 @@ class NexusService:
                                 "description": _tool_desc_map.get(c.tool_id, ""),
                                 "score": c.calibrated_score,
                             }
-                            for c in decision.candidates[:5]
+                            for c in decision.candidates
                         ]
+                        # Add remaining namespace tools not in NEXUS results
+                        if decision.agent_resolution and decision.agent_resolution.tool_namespaces:
+                            nexus_ids = {c.tool_id for c in decision.candidates}
+                            for tid, desc in _tool_desc_map.items():
+                                if tid not in nexus_ids:
+                                    pt = _tools_by_id.get(tid)
+                                    if pt and len(pt.namespace) >= 2:
+                                        ns_str = f"{pt.namespace[0]}/{pt.namespace[1]}"
+                                        if any(
+                                            ns_str.startswith(prefix)
+                                            for prefix in decision.agent_resolution.tool_namespaces
+                                        ):
+                                            judge_candidates.append(
+                                                {
+                                                    "tool_id": tid,
+                                                    "name": tid,
+                                                    "description": desc,
+                                                    "score": 0.0,
+                                                }
+                                            )
                         llm_judge_result = await self.llm_judge_tools(
-                            case_obj.question, judge_candidates, top_k=5
+                            case_obj.question, judge_candidates
                         )
 
                     await case_session.commit()
@@ -3174,6 +3246,7 @@ class NexusService:
         namespace: str | None = None,
         batch_size: int = 200,
         max_iterations: int = 1,
+        run_llm_judge: bool = False,
     ):
         """Run auto-loop with SSE progress events.
 
@@ -3296,10 +3369,15 @@ class NexusService:
         cumulative_proposals = []
         cumulative_root_causes: list[str] = []
 
-        # Tool description lookup for LLM judge — mutable dict so it can be
+        # Tool lookups for LLM judge — mutable so they can be
         # refreshed between iterations when the optimizer patches tools.
         _tool_desc_map: dict[str, str] = {
             pt.tool_id: pt.description
+            for pt in _pt_tools
+            if pt.category != "external_model"
+        }
+        _tools_by_id = {
+            pt.tool_id: pt
             for pt in _pt_tools
             if pt.category != "external_model"
         }
@@ -3319,9 +3397,9 @@ class NexusService:
                 )
                 platform_tool = platform_result.get("top1")
 
-                # LLM judge: let LLM pick from NEXUS candidates
+                # LLM judge: ALL agent namespace tools (not just top-5)
                 llm_judge_result = None
-                if decision.candidates:
+                if run_llm_judge and decision.candidates:
                     judge_candidates = [
                         {
                             "tool_id": c.tool_id,
@@ -3329,10 +3407,30 @@ class NexusService:
                             "description": _tool_desc_map.get(c.tool_id, ""),
                             "score": c.calibrated_score,
                         }
-                        for c in decision.candidates[:5]
+                        for c in decision.candidates
                     ]
+                    # Add remaining namespace tools not in NEXUS results
+                    if decision.agent_resolution and decision.agent_resolution.tool_namespaces:
+                        nexus_ids = {c.tool_id for c in decision.candidates}
+                        for tid, desc in _tool_desc_map.items():
+                            if tid not in nexus_ids:
+                                pt = _tools_by_id.get(tid)
+                                if pt and len(pt.namespace) >= 2:
+                                    ns_str = f"{pt.namespace[0]}/{pt.namespace[1]}"
+                                    if any(
+                                        ns_str.startswith(prefix)
+                                        for prefix in decision.agent_resolution.tool_namespaces
+                                    ):
+                                        judge_candidates.append(
+                                            {
+                                                "tool_id": tid,
+                                                "name": tid,
+                                                "description": desc,
+                                                "score": 0.0,
+                                            }
+                                        )
                     llm_judge_result = await self.llm_judge_tools(
-                        case_obj.question, judge_candidates, top_k=5
+                        case_obj.question, judge_candidates
                     )
 
                 await case_session.commit()
@@ -3351,13 +3449,12 @@ class NexusService:
             }
 
         for iteration in range(1, max_iterations + 1):
-            # Refresh tool description map (picks up optimizer patches)
+            # Refresh tool lookups (picks up optimizer patches)
+            _refreshed = [pt for pt in _get_pt() if pt.category != "external_model"]
             _tool_desc_map.clear()
-            _tool_desc_map.update({
-                pt.tool_id: pt.description
-                for pt in _get_pt()
-                if pt.category != "external_model"
-            })
+            _tool_desc_map.update({pt.tool_id: pt.description for pt in _refreshed})
+            _tools_by_id.clear()
+            _tools_by_id.update({pt.tool_id: pt for pt in _refreshed})
             yield {
                 "type": "progress",
                 "step": "eval_start",

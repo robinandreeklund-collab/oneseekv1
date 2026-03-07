@@ -593,6 +593,7 @@ class LoopStartRequest(BaseModel):
     namespace: str | None = None
     batch_size: int = 200
     max_iterations: int = 1
+    run_llm_judge: bool = False
 
 
 @nexus_router.post("/loop/start")
@@ -617,6 +618,7 @@ async def loop_start(
     ns = request.namespace if request else None
     bs = request.batch_size if request else 200
     mi = request.max_iterations if request else 1
+    llm_judge = request.run_llm_judge if request else False
     return await service.run_auto_loop(
         session,
         category=cat,
@@ -624,6 +626,7 @@ async def loop_start(
         namespace=ns,
         batch_size=max(10, min(bs, 2000)),
         max_iterations=max(1, min(mi, 10)),
+        run_llm_judge=llm_judge,
     )
 
 
@@ -648,6 +651,7 @@ async def loop_start_stream(
     ns = request.namespace if request else None
     bs = request.batch_size if request else 200
     mi = request.max_iterations if request else 1
+    llm_judge = request.run_llm_judge if request else False
 
     async def _event_stream():
         try:
@@ -658,6 +662,7 @@ async def loop_start_stream(
                 namespace=ns,
                 batch_size=max(10, min(bs, 2000)),
                 max_iterations=max(1, min(mi, 10)),
+                run_llm_judge=llm_judge,
             ):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except Exception as exc:

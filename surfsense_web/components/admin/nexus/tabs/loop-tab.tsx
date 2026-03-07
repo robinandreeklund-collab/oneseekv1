@@ -271,6 +271,7 @@ export function LoopTab() {
 	// New: configurable parameters + live progress
 	const [maxIterations, setMaxIterations] = useState(1);
 	const [batchSize, setBatchSize] = useState(200);
+	const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
 	const [streamEvents, setStreamEvents] = useState<LoopStreamEvent[]>([]);
 	const [liveProgress, setLiveProgress] = useState<LoopStreamEvent | null>(null);
 
@@ -324,6 +325,7 @@ export function LoopTab() {
 			namespace?: string;
 			batch_size?: number;
 			max_iterations?: number;
+			run_llm_judge?: boolean;
 		} = {};
 		if (filterMode === "category" && selectedCategory) {
 			request = { category: selectedCategory };
@@ -334,6 +336,7 @@ export function LoopTab() {
 		}
 		request.batch_size = batchSize;
 		request.max_iterations = maxIterations;
+		request.run_llm_judge = llmJudgeEnabled;
 
 		nexusApiService
 			.startLoopStream(request, (event) => {
@@ -564,6 +567,22 @@ export function LoopTab() {
 							<p className="text-xs text-muted-foreground">
 								Antal testfall per batch. Hogre = snabbare men mer minne.
 							</p>
+						</div>
+
+						<div className="pt-2">
+							<label className="flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									checked={llmJudgeEnabled}
+									onChange={(e) => setLlmJudgeEnabled(e.target.checked)}
+									disabled={starting}
+									className="rounded"
+								/>
+								<span className="text-sm font-medium">LLM Judge</span>
+								<span className="text-xs text-muted-foreground">
+									LLM valjer verktyg fran hela agentens namespace (langsammare)
+								</span>
+							</label>
 						</div>
 					</div>
 				</CardContent>
