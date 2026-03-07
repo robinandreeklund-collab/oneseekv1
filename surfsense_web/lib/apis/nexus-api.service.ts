@@ -659,6 +659,9 @@ class NexusApiService {
 
 	getSpaceSnapshot = () => fetchNexus<SpaceSnapshot>("/space/snapshot");
 
+	refreshSpaceSnapshot = () =>
+		fetchNexus<{ refreshed: number }>("/space/refresh", { method: "POST" });
+
 	getConfusion = () => fetchNexus<ConfusionPair[]>("/space/confusion");
 
 	getHubness = () => fetchNexus<HubnessReport[]>("/space/hubness");

@@ -465,6 +465,17 @@ async def get_space_snapshot(
     return await service.get_space_snapshot(session)
 
 
+@nexus_router.post("/space/refresh")
+async def refresh_space_snapshot(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Recompute space snapshot from current tool embeddings."""
+    count = await service.refresh_space_snapshot(session)
+    return {"refreshed": count}
+
+
 @nexus_router.get("/space/confusion", response_model=list[ConfusionPair])
 async def get_confusion_pairs(
     session: AsyncSession = Depends(get_async_session),
@@ -1149,6 +1160,13 @@ async def optimizer_apply(
             nexus_clear_embed_cache()
         except ImportError:
             pass
+
+        # Refresh space snapshot so Space tab shows updated embeddings
+        try:
+            service = _get_service()
+            await service.refresh_space_snapshot(session)
+        except Exception:
+            pass  # Non-critical — space tab will refresh on next manual trigger
 
     return result
 

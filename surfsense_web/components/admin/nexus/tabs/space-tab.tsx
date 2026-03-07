@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Filter, Loader2, Orbit } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Filter, Loader2, Orbit, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,8 +21,10 @@ export function SpaceTab() {
 	const [error, setError] = useState<string | null>(null);
 	const [selectedNamespace, setSelectedNamespace] = useState<string>("all");
 	const [selectedZone, setSelectedZone] = useState<string>("all");
+	const [refreshing, setRefreshing] = useState(false);
 
-	useEffect(() => {
+	const loadData = useCallback(() => {
+		setLoading(true);
 		Promise.all([
 			nexusApiService.getSpaceHealth(),
 			nexusApiService.getSpaceSnapshot(),
@@ -34,6 +36,22 @@ export function SpaceTab() {
 			.catch((err) => setError(err.message))
 			.finally(() => setLoading(false));
 	}, []);
+
+	useEffect(() => {
+		loadData();
+	}, [loadData]);
+
+	const handleRefresh = async () => {
+		setRefreshing(true);
+		try {
+			await nexusApiService.refreshSpaceSnapshot();
+			loadData();
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Refresh failed");
+		} finally {
+			setRefreshing(false);
+		}
+	};
 
 	// Derive unique namespaces and zones from snapshot points
 	const { namespaces, zones } = useMemo(() => {
@@ -100,11 +118,22 @@ export function SpaceTab() {
 						UMAP-visualisering av verktygsemeddningar med zon-klustring
 					</p>
 				</div>
-				{snapshot && (
-					<Badge variant="outline" className="text-xs">
-						{snapshot.points.length} verktyg totalt
-					</Badge>
-				)}
+				<div className="flex items-center gap-2">
+					{snapshot && (
+						<Badge variant="outline" className="text-xs">
+							{snapshot.points.length} verktyg totalt
+						</Badge>
+					)}
+					<button
+						type="button"
+						onClick={handleRefresh}
+						disabled={refreshing}
+						className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border bg-background hover:bg-muted disabled:opacity-50"
+					>
+						<RefreshCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
+						{refreshing ? "Beräknar..." : "Uppdatera embeddings"}
+					</button>
+				</div>
 			</div>
 
 			{/* Health Summary */}

@@ -773,6 +773,74 @@ class NexusService:
             points=points,
         )
 
+    async def refresh_space_snapshot(self, session: AsyncSession) -> int:
+        """Recompute space snapshot from current tool embeddings.
+
+        Embeds all platform tools, runs PCA/UMAP to 2D, and saves the
+        result to NexusSpaceSnapshot so the Space tab shows real positions.
+
+        Returns:
+            Number of tool points saved.
+        """
+        from app.nexus.embeddings import nexus_embed_np
+        from app.nexus.platform_bridge import get_platform_tools
+
+        tools = get_platform_tools()
+        filtered = [t for t in tools if t.category != "external_model"]
+        if not filtered:
+            return 0
+
+        # Build ToolPoints with real embeddings
+        from app.nexus.layers.space_auditor import ToolPoint
+
+        tool_points: list[ToolPoint] = []
+        for pt in filtered:
+            emb = nexus_embed_np(f"{pt.tool_id} {pt.description}")
+            if emb is not None:
+                tool_points.append(
+                    ToolPoint(
+                        tool_id=pt.tool_id,
+                        zone=pt.zone,
+                        embedding=emb.tolist(),
+                        namespace="/".join(pt.namespace) if isinstance(pt.namespace, (list, tuple)) else pt.namespace,
+                    )
+                )
+
+        if len(tool_points) < 3:
+            return 0
+
+        # Compute 2D projection via space auditor
+        import numpy as np
+
+        embeddings = np.array([tp.embedding for tp in tool_points], dtype=np.float32)
+        umap_points = self.space_auditor._compute_umap(embeddings, tool_points)
+
+        # Build namespace lookup from ToolPoints
+        ns_map = {tp.tool_id: tp.namespace for tp in tool_points}
+
+        # Delete old snapshots and insert new ones
+        from sqlalchemy import delete
+
+        await session.execute(delete(NexusSpaceSnapshot))
+
+        now = datetime.now(tz=UTC)
+        for up in umap_points:
+            session.add(
+                NexusSpaceSnapshot(
+                    tool_id=up.tool_id,
+                    namespace=ns_map.get(up.tool_id, up.zone),
+                    embedding_model="refresh",
+                    umap_x=up.x,
+                    umap_y=up.y,
+                    cluster_label=up.cluster_label,
+                    snapshot_at=now,
+                )
+            )
+        await session.commit()
+
+        logger.info("Refreshed space snapshot: %d tool points", len(umap_points))
+        return len(umap_points)
+
     async def get_confusion_pairs(
         self, session: AsyncSession, *, limit: int = 20
     ) -> list[ConfusionPair]:
@@ -2342,6 +2410,9 @@ class NexusService:
             nexus_only_correct = 0
             llm_only_correct = 0
             both_wrong = 0
+            # Platt calibration data — collect raw scores + labels
+            platt_raw_scores: list[float] = []
+            platt_labels: list[int] = []
             # 3-level accuracy: intent, agent, tool
             intent_correct = 0
             intent_total = 0
@@ -2369,6 +2440,12 @@ class NexusService:
                     decision = await self.route_query(case_obj.question, case_session)
                     nexus_tool = decision.selected_tool
                     candidate_ids = [c.tool_id for c in decision.candidates]
+                    # Capture raw top-1 score for Platt calibration fitting
+                    raw_top1 = (
+                        decision.candidates[0].raw_score
+                        if decision.candidates
+                        else 0.0
+                    )
 
                     platform_result = await self.shadow_observer.run_platform_retrieval(
                         case_obj.question, session=case_session
@@ -2403,6 +2480,8 @@ class NexusService:
                     "selected_agent": decision.selected_agent or "",
                     "confidence": round(decision.calibrated_confidence, 3),
                     "llm_judge": llm_judge_result,
+                    "raw_top1": raw_top1,
+                    "sub_queries": decision.query_analysis.sub_queries if decision.query_analysis else [],
                 }
 
             # Process in batches — each batch runs concurrently via forge pool
@@ -2450,8 +2529,12 @@ class NexusService:
 
                     candidate_ids = br["candidate_ids"]
                     if case_obj.expected_tool:
-                        if nexus_tool == case_obj.expected_tool:
+                        is_correct = nexus_tool == case_obj.expected_tool
+                        if is_correct:
                             correct_at_1 += 1
+                        # Collect data for Platt calibration fitting
+                        platt_raw_scores.append(br.get("raw_top1", 0.0))
+                        platt_labels.append(1 if is_correct else 0)
                         if case_obj.expected_tool in candidate_ids[:5]:
                             correct_at_5 += 1
                         if case_obj.expected_tool in candidate_ids:
@@ -2533,6 +2616,7 @@ class NexusService:
                                     if llm_judge
                                     else ""
                                 ),
+                                "sub_queries": br.get("sub_queries", []),
                             }
                         )
 
@@ -2651,6 +2735,20 @@ class NexusService:
             cumulative_failed_queries.extend(failed_queries)
             cumulative_proposals.extend(proposals)
             cumulative_root_causes.extend(root_causes)
+
+            # ── Auto-fit Platt calibration after first iteration ──────────
+            # The first pass gives us (raw_score, correct/incorrect) pairs —
+            # exactly what Platt sigmoid needs.  Fitting once makes band
+            # thresholds meaningful for subsequent iterations.
+            if iteration == 1 and not self.platt_scaler.is_fitted and len(platt_raw_scores) >= 10:
+                try:
+                    self.platt_scaler.fit(platt_raw_scores, platt_labels)
+                    logger.info(
+                        "Auto-loop #%d: Auto-fitted Platt calibration from %d samples",
+                        loop_number, len(platt_raw_scores),
+                    )
+                except Exception as e:
+                    logger.warning("Auto-loop Platt fitting failed: %s", e)
 
             # If no failures or last iteration, stop iterating
             if failures == 0 or iteration == max_iterations:
@@ -3187,6 +3285,11 @@ class NexusService:
                 decision = await self.route_query(case_obj.question, case_session)
                 nexus_tool = decision.selected_tool
                 candidate_ids = [c.tool_id for c in decision.candidates]
+                raw_top1 = (
+                    decision.candidates[0].raw_score
+                    if decision.candidates
+                    else 0.0
+                )
                 platform_result = await self.shadow_observer.run_platform_retrieval(
                     case_obj.question, session=case_session
                 )
@@ -3219,6 +3322,8 @@ class NexusService:
                 "selected_agent": decision.selected_agent or "",
                 "confidence": round(decision.calibrated_confidence, 3),
                 "llm_judge": llm_judge_result,
+                "raw_top1": raw_top1,
+                "sub_queries": decision.query_analysis.sub_queries if decision.query_analysis else [],
             }
 
         for iteration in range(1, max_iterations + 1):
@@ -3255,6 +3360,9 @@ class NexusService:
             nexus_only_correct = 0
             llm_only_correct = 0
             both_wrong = 0
+            # Platt calibration data
+            platt_raw_scores: list[float] = []
+            platt_labels: list[int] = []
             # 3-level accuracy: intent, agent, tool
             intent_correct = 0
             intent_total = 0
@@ -3293,8 +3401,11 @@ class NexusService:
                     band_counts[min(br["band"], 4)] += 1
                     candidate_ids = br["candidate_ids"]
                     if case_obj.expected_tool:
-                        if nexus_tool == case_obj.expected_tool:
+                        is_correct = nexus_tool == case_obj.expected_tool
+                        if is_correct:
                             correct_at_1 += 1
+                        platt_raw_scores.append(br.get("raw_top1", 0.0))
+                        platt_labels.append(1 if is_correct else 0)
                         if case_obj.expected_tool in candidate_ids[:5]:
                             correct_at_5 += 1
                         if case_obj.expected_tool in candidate_ids:
@@ -3374,6 +3485,7 @@ class NexusService:
                                     if llm_judge
                                     else ""
                                 ),
+                                "sub_queries": br.get("sub_queries", []),
                             }
                         )
 
@@ -3545,6 +3657,19 @@ class NexusService:
 
             if failures == 0 or iteration == max_iterations:
                 break
+
+            # ── Auto-fit Platt calibration after first iteration ──────────
+            if iteration == 1 and not self.platt_scaler.is_fitted and len(platt_raw_scores) >= 10:
+                try:
+                    self.platt_scaler.fit(platt_raw_scores, platt_labels)
+                    yield {
+                        "type": "progress",
+                        "step": "platt_fitted",
+                        "detail": f"Platt-kalibrering anpassad från {len(platt_raw_scores)} samples",
+                        "iteration": iteration,
+                    }
+                except Exception as e:
+                    logger.warning("Auto-loop Platt fitting failed: %s", e)
 
             # ── Apply optimizer suggestions between iterations ────────
             yield {
