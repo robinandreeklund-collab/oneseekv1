@@ -2679,7 +2679,8 @@ class NexusService:
                 for ns in ns_set:
                     try:
                         opt_result = await optimizer.generate_suggestions(
-                            session, namespace=ns
+                            session, namespace=ns,
+                            llm_config_id=-1,  # Use local model in loop (cost control)
                         )
                         if opt_result.suggestions:
                             # Apply to DB
@@ -3544,7 +3545,8 @@ class NexusService:
                 for ns in ns_set:
                     try:
                         opt_result = await optimizer.generate_suggestions(
-                            session, namespace=ns
+                            session, namespace=ns,
+                            llm_config_id=-1,  # Use local model in loop (cost control)
                         )
                         if opt_result.suggestions:
                             apply_list = [
