@@ -497,7 +497,11 @@ class NexusService:
                 )
 
             # Re-sort by calibrated score after reranking
-            candidates.sort(key=lambda rc: rc.calibrated_score, reverse=True)
+            # Use raw_score as tiebreaker when calibrated scores are equal
+            # (e.g. when Platt scaler produces degenerate all-zero outputs)
+            candidates.sort(
+                key=lambda rc: (rc.calibrated_score, rc.raw_score), reverse=True
+            )
             for i, rc in enumerate(candidates):
                 rc.rank = i
 
@@ -1250,17 +1254,33 @@ class NexusService:
         )
         row = result.scalars().first()
         if row and row.param_a is not None and row.param_b is not None:
-            self.platt_scaler = PlattCalibratedReranker(
-                PlattParams(
-                    a=row.param_a,
-                    b=row.param_b,
-                    fitted=True,
-                    n_samples=row.fitted_on_samples or 0,
+            # Sanity check: reject degenerate params that crush all outputs
+            import numpy as _np
+
+            _test = _np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+            _out = 1.0 / (1.0 + _np.exp(row.param_a * _test + row.param_b))
+            if _np.max(_out) < 0.01 or _np.min(_out) > 0.99:
+                logger.warning(
+                    "Loaded Platt params degenerate (A=%.4f, B=%.4f → max=%.6f). "
+                    "Using unfitted pass-through instead.",
+                    row.param_a,
+                    row.param_b,
+                    float(_np.max(_out)),
                 )
-            )
-            logger.info(
-                "Loaded Platt calibration: A=%.4f, B=%.4f", row.param_a, row.param_b
-            )
+            else:
+                self.platt_scaler = PlattCalibratedReranker(
+                    PlattParams(
+                        a=row.param_a,
+                        b=row.param_b,
+                        fitted=True,
+                        n_samples=row.fitted_on_samples or 0,
+                    )
+                )
+                logger.info(
+                    "Loaded Platt calibration: A=%.4f, B=%.4f",
+                    row.param_a,
+                    row.param_b,
+                )
 
     # ------------------------------------------------------------------
     # Event Logging

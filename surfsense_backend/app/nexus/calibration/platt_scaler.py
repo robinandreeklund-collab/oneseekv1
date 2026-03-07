@@ -76,9 +76,26 @@ class PlattCalibratedReranker:
             method="L-BFGS-B",
         )
 
+        a_val, b_val = float(result.x[0]), float(result.x[1])
+
+        # Sanity check: if the fitted parameters crush ALL reasonable
+        # inputs to near-zero (or near-one), the fit is degenerate.
+        # Test a spread of typical scores:
+        test_inputs = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+        test_outputs = 1.0 / (1.0 + np.exp(a_val * test_inputs + b_val))
+        if np.max(test_outputs) < 0.01 or np.min(test_outputs) > 0.99:
+            logger.warning(
+                "Platt fit degenerate (A=%.4f, B=%.4f → max_cal=%.6f). "
+                "Keeping unfitted pass-through.",
+                a_val,
+                b_val,
+                float(np.max(test_outputs)),
+            )
+            return self.params  # Keep unfitted defaults
+
         self.params = PlattParams(
-            a=float(result.x[0]),
-            b=float(result.x[1]),
+            a=a_val,
+            b=b_val,
             fitted=True,
             n_samples=len(scores_arr),
         )
@@ -110,6 +127,11 @@ class PlattCalibratedReranker:
         arr = np.array(raw_scores, dtype=np.float64)
         calibrated = 1.0 / (1.0 + np.exp(self.params.a * arr + self.params.b))
         return calibrated.tolist()
+
+    def reset(self) -> None:
+        """Reset to unfitted state (pass-through)."""
+        self.params = PlattParams()
+        logger.info("Platt calibration reset to unfitted pass-through.")
 
     @property
     def is_fitted(self) -> bool:
