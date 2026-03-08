@@ -165,9 +165,11 @@ def _build_routing_labels(decision: RoutingDecision) -> dict[str, str]:
     from app.seeds.intent_domains import get_default_intent_domains
     from app.seeds.tool_definitions import get_default_tool_definitions
 
-    # Master lookups
-    domain_labels = {d["domain_id"]: d["label"] for d in get_default_intent_domains()}
-    agent_labels = {a["agent_id"]: a["label"] for a in get_default_agent_definitions()}
+    # Master lookups — get_default_*() return dict[str, dict] keyed by ID
+    domain_defs = get_default_intent_domains()
+    domain_labels = {did: d["label"] for did, d in domain_defs.items()}
+    agent_defs = get_default_agent_definitions()
+    agent_labels = {aid: a["label"] for aid, a in agent_defs.items()}
     tool_defs = get_default_tool_definitions()
     tool_labels = {tid: t.get("label", tid) for tid, t in tool_defs.items()}
 
