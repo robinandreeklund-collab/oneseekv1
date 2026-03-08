@@ -841,6 +841,164 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "geographic_scope": "",
         "excludes": [],
     },
+    # ── Skolverket sub-agents (split by content type) ──
+    {
+        "agent_id": "skolverket-kursplaner",
+        "domain_id": "utbildning",
+        "label": "Skolverket Kursplaner & Program",
+        "description": (
+            "Hämtar kursplaner, ämnesplaner, läroplaner och programdata "
+            "från Skolverket — ämnen, kurser, program och läroplaner med "
+            "versioner, kunskapskrav och centralt innehåll."
+        ),
+        "keywords": [
+            "ämne",
+            "ämnesplan",
+            "kursplan",
+            "kurs",
+            "program",
+            "läroplan",
+            "syllabus",
+            "kunskapskrav",
+            "centralt innehåll",
+            "examensmål",
+            "syfte",
+            "skolverket",
+            "curriculum",
+            "gymnasieprogram",
+            "vidareutbildning",
+            "studieväg",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "skolverket_prompt",
+        "primary_namespaces": [
+            ["tools", "skolverket", "kursplaner"],
+        ],
+        "fallback_namespaces": [["tools", "skolverket"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "SkolverketKursplanerAgent",
+        "core_activity": "Hämtar kursplaner, ämnesplaner och läroplaner från Skolverket",
+        "unique_scope": "Skolverkets kursplaner, ämnesplaner, program och läroplaner",
+        "geographic_scope": "Sverige",
+        "excludes": ["väder", "trafik", "bolag"],
+    },
+    {
+        "agent_id": "skolverket-skolenheter",
+        "domain_id": "utbildning",
+        "label": "Skolverket Skolenheter",
+        "description": (
+            "Söker och hämtar information om skolenheter från Skolverket — "
+            "skolor, adresser, kontaktuppgifter, status, utbildningstillfällen, "
+            "dokument och statistik per skolenhet."
+        ),
+        "keywords": [
+            "skola",
+            "skolenhet",
+            "skolor",
+            "grundskola",
+            "gymnasium",
+            "friskola",
+            "kommunal skola",
+            "skolinspektionen",
+            "skolenhetsregister",
+            "huvudman",
+            "rektor",
+            "adress",
+            "skolverket",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "skolverket_prompt",
+        "primary_namespaces": [
+            ["tools", "skolverket", "skolenheter"],
+        ],
+        "fallback_namespaces": [["tools", "skolverket"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "SkolverketSkolenheterAgent",
+        "core_activity": "Söker och hämtar information om skolor och skolenheter",
+        "unique_scope": "Skolverkets skolenhetsregister",
+        "geographic_scope": "Sverige",
+        "excludes": ["väder", "trafik", "bolag"],
+    },
+    {
+        "agent_id": "skolverket-vuxenutbildning",
+        "domain_id": "utbildning",
+        "label": "Skolverket Vuxenutbildning & Utbildningstillfällen",
+        "description": (
+            "Söker vuxenutbildningar och utbildningstillfällen från Skolverket — "
+            "komvux, YH, SFI, studietakt, distansutbildning, geografisk "
+            "filtrering, utbildningsområden och inriktningar."
+        ),
+        "keywords": [
+            "vuxenutbildning",
+            "komvux",
+            "yrkeshögskola",
+            "yh",
+            "sfi",
+            "folkhögskola",
+            "distansutbildning",
+            "deltid",
+            "heltid",
+            "studietakt",
+            "utbildningstillfälle",
+            "ansökan",
+            "skolverket",
+            "kommun",
+            "län",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "skolverket_prompt",
+        "primary_namespaces": [
+            ["tools", "skolverket", "vuxenutbildning"],
+        ],
+        "fallback_namespaces": [["tools", "skolverket"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "SkolverketVuxenutbildningAgent",
+        "core_activity": "Söker vuxenutbildningar och utbildningstillfällen",
+        "unique_scope": "Skolverkets vuxenutbildningsregister och planerade utbildningar",
+        "geographic_scope": "Sverige",
+        "excludes": ["väder", "trafik", "bolag"],
+    },
+    {
+        "agent_id": "skolverket-referens",
+        "domain_id": "utbildning",
+        "label": "Skolverket Referensdata & Statistik",
+        "description": (
+            "Hämtar referensdata, koder och statistik från Skolverket — "
+            "skoltyper, ämneskoder, kurskoder, studievägskoder, nationell "
+            "utbildningsstatistik och programstatistik."
+        ),
+        "keywords": [
+            "skoltyp",
+            "skolform",
+            "ämneskod",
+            "kurskod",
+            "studieväg",
+            "referensdata",
+            "utbildningsstatistik",
+            "nationell statistik",
+            "programstatistik",
+            "lärartäthet",
+            "behörighet",
+            "betyg",
+            "skolverket",
+        ],
+        "priority": 100,
+        "enabled": True,
+        "prompt_key": "skolverket_prompt",
+        "primary_namespaces": [
+            ["tools", "skolverket", "referens"],
+        ],
+        "fallback_namespaces": [["tools", "skolverket"]],
+        "worker_config": {"max_concurrency": 4, "timeout_seconds": 120},
+        "main_identifier": "SkolverketReferensAgent",
+        "core_activity": "Hämtar referensdata, koder och utbildningsstatistik",
+        "unique_scope": "Skolverkets referensdata och nationell utbildningsstatistik",
+        "geographic_scope": "Sverige",
+        "excludes": ["väder", "trafik", "bolag"],
+    },
 ]
 
 

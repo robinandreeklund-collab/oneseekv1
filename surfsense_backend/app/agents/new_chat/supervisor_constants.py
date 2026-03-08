@@ -38,6 +38,10 @@ _SPECIALIZED_AGENTS = {
     "väder-vatten",  # Hydrology/oceanography tools
     "väder-risk",  # Fire risk/solar radiation tools
     "kartor",  # Map generation tools
+    "skolverket-kursplaner",  # Skolverket curricula/syllabi
+    "skolverket-skolenheter",  # Skolverket school units
+    "skolverket-vuxenutbildning",  # Skolverket adult education
+    "skolverket-referens",  # Skolverket reference data & statistics
 }
 # Backward compat: accept old English agent names
 _COMPAT_AGENT_NAMES: dict[str, str] = {
@@ -146,6 +150,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
     from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS
     from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
     from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+    from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
     from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
@@ -170,6 +175,10 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "riksdagen": [],
         "bolag": [],
         "marknad": [],
+        "skolverket-kursplaner": [],
+        "skolverket-skolenheter": [],
+        "skolverket-vuxenutbildning": [],
+        "skolverket-referens": [],
     }
     # SMHI: split by category → sub-agent
     _smhi_agent_by_category = {
@@ -332,6 +341,54 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 ),
             )
         )
+    # Skolverket: split by tool_id → sub-agent
+    _skolverket_agent_by_tool = {
+        "search_subjects": "skolverket-kursplaner",
+        "get_subject_details": "skolverket-kursplaner",
+        "get_subject_versions": "skolverket-kursplaner",
+        "search_courses": "skolverket-kursplaner",
+        "get_course_details": "skolverket-kursplaner",
+        "get_course_versions": "skolverket-kursplaner",
+        "search_programs": "skolverket-kursplaner",
+        "get_program_details": "skolverket-kursplaner",
+        "get_program_versions": "skolverket-kursplaner",
+        "get_programs_v4": "skolverket-kursplaner",
+        "search_curriculums": "skolverket-kursplaner",
+        "get_curriculum_details": "skolverket-kursplaner",
+        "get_curriculum_versions": "skolverket-kursplaner",
+        "search_school_units": "skolverket-skolenheter",
+        "search_school_units_v4": "skolverket-skolenheter",
+        "get_school_unit_details": "skolverket-skolenheter",
+        "search_school_units_by_name": "skolverket-skolenheter",
+        "get_school_units_by_status": "skolverket-skolenheter",
+        "get_school_unit_education_events": "skolverket-skolenheter",
+        "get_school_unit_documents": "skolverket-skolenheter",
+        "get_school_unit_statistics": "skolverket-skolenheter",
+        "search_adult_education": "skolverket-vuxenutbildning",
+        "get_adult_education_details": "skolverket-vuxenutbildning",
+        "filter_adult_education_by_distance": "skolverket-vuxenutbildning",
+        "filter_adult_education_by_pace": "skolverket-vuxenutbildning",
+        "count_adult_education_events": "skolverket-vuxenutbildning",
+        "get_adult_education_areas_v4": "skolverket-vuxenutbildning",
+        "search_education_events": "skolverket-vuxenutbildning",
+        "count_education_events": "skolverket-vuxenutbildning",
+        "get_geographical_areas_v4": "skolverket-vuxenutbildning",
+        "get_education_areas": "skolverket-vuxenutbildning",
+        "get_directions": "skolverket-vuxenutbildning",
+    }
+    for definition in SKOLVERKET_TOOL_DEFINITIONS:
+        tool_id = str(getattr(definition, "tool_id", ""))
+        sub_agent = _skolverket_agent_by_tool.get(tool_id, "skolverket-referens")
+        profiles[sub_agent].append(
+            AgentToolProfile(
+                tool_id=tool_id,
+                category=str(getattr(definition, "category", "skolverket")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
+            )
+        )
     return profiles
 
 
@@ -439,6 +496,13 @@ _AGENT_NAME_ALIAS_MAP = {
     # Action → åtgärd (legacy)
     "action": "åtgärd",
     "action_agent": "åtgärd",
+    # Skolverket → sub-agents
+    "skolverket": "skolverket-kursplaner",
+    "skolverket_agent": "skolverket-kursplaner",
+    "skolverket_kursplaner": "skolverket-kursplaner",
+    "skolverket_skolenheter": "skolverket-skolenheter",
+    "skolverket_vuxenutbildning": "skolverket-vuxenutbildning",
+    "skolverket_referens": "skolverket-referens",
 }
 
 _TRAFFIC_INTENT_RE = re.compile(

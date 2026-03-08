@@ -512,4 +512,88 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
     except Exception:
         pass
 
+    # ── Skolverket: split across skolverket-* sub-agents by tool_id ──
+    skolverket_agent_by_tool: dict[str, str] = {
+        # Kursplaner: ämnen, kurser, program, läroplaner
+        "search_subjects": "skolverket-kursplaner",
+        "get_subject_details": "skolverket-kursplaner",
+        "get_subject_versions": "skolverket-kursplaner",
+        "search_courses": "skolverket-kursplaner",
+        "get_course_details": "skolverket-kursplaner",
+        "get_course_versions": "skolverket-kursplaner",
+        "search_programs": "skolverket-kursplaner",
+        "get_program_details": "skolverket-kursplaner",
+        "get_program_versions": "skolverket-kursplaner",
+        "get_programs_v4": "skolverket-kursplaner",
+        "search_curriculums": "skolverket-kursplaner",
+        "get_curriculum_details": "skolverket-kursplaner",
+        "get_curriculum_versions": "skolverket-kursplaner",
+        # Skolenheter
+        "search_school_units": "skolverket-skolenheter",
+        "search_school_units_v4": "skolverket-skolenheter",
+        "get_school_unit_details": "skolverket-skolenheter",
+        "search_school_units_by_name": "skolverket-skolenheter",
+        "get_school_units_by_status": "skolverket-skolenheter",
+        "get_school_unit_education_events": "skolverket-skolenheter",
+        "get_school_unit_documents": "skolverket-skolenheter",
+        "get_school_unit_statistics": "skolverket-skolenheter",
+        # Vuxenutbildning & utbildningstillfällen
+        "search_adult_education": "skolverket-vuxenutbildning",
+        "get_adult_education_details": "skolverket-vuxenutbildning",
+        "filter_adult_education_by_distance": "skolverket-vuxenutbildning",
+        "filter_adult_education_by_pace": "skolverket-vuxenutbildning",
+        "count_adult_education_events": "skolverket-vuxenutbildning",
+        "get_adult_education_areas_v4": "skolverket-vuxenutbildning",
+        "search_education_events": "skolverket-vuxenutbildning",
+        "count_education_events": "skolverket-vuxenutbildning",
+        "get_geographical_areas_v4": "skolverket-vuxenutbildning",
+        "get_education_areas": "skolverket-vuxenutbildning",
+        "get_directions": "skolverket-vuxenutbildning",
+        # Referensdata, statistik & system
+        "get_school_types": "skolverket-referens",
+        "get_school_types_v4": "skolverket-referens",
+        "get_types_of_syllabus": "skolverket-referens",
+        "get_subject_and_course_codes": "skolverket-referens",
+        "get_study_path_codes": "skolverket-referens",
+        "get_national_statistics": "skolverket-referens",
+        "get_program_statistics": "skolverket-referens",
+        "get_api_info": "skolverket-referens",
+        "health_check": "skolverket-referens",
+    }
+    skolverket_ns_by_agent = {
+        "skolverket-kursplaner": ["tools", "skolverket", "kursplaner"],
+        "skolverket-skolenheter": ["tools", "skolverket", "skolenheter"],
+        "skolverket-vuxenutbildning": ["tools", "skolverket", "vuxenutbildning"],
+        "skolverket-referens": ["tools", "skolverket", "referens"],
+    }
+    try:
+        from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
+
+        for definition in SKOLVERKET_TOOL_DEFINITIONS:
+            tool_id = str(getattr(definition, "tool_id", ""))
+            if not tool_id:
+                continue
+            sub_agent = skolverket_agent_by_tool.get(
+                tool_id, "skolverket-referens"
+            )
+            additional.append(
+                {
+                    "tool_id": tool_id,
+                    "agent_id": sub_agent,
+                    "label": str(getattr(definition, "name", tool_id)),
+                    "description": str(getattr(definition, "description", "")),
+                    "keywords": list(getattr(definition, "keywords", [])),
+                    "category": str(getattr(definition, "category", "skolverket")),
+                    "namespace": list(
+                        skolverket_ns_by_agent.get(
+                            sub_agent, ["tools", "skolverket", "referens"]
+                        )
+                    ),
+                    "enabled": True,
+                    "priority": 100,
+                }
+            )
+    except Exception:
+        pass
+
     return additional
