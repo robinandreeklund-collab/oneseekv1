@@ -2594,7 +2594,7 @@ class NexusService:
 
         # Load domains and agents from DB / seeds
         (
-            db_agent_by_name,
+            _,
             db_agents_by_zone,
             _,
             _,
@@ -2871,7 +2871,7 @@ class NexusService:
         return decision
 
     # ------------------------------------------------------------------
-    # Live Pipeline (LLM-only routing + plan + synthesis)
+    # Live Pipeline (LLM-only routing + real tool execution)
     # ------------------------------------------------------------------
 
     async def route_query_live(
@@ -2879,19 +2879,23 @@ class NexusService:
         query: str,
         session: AsyncSession,
     ) -> RoutingDecision:
-        """Run a live pipeline: LLM-based routing + planning + synthesis.
+        """Run the live pipeline mirroring the real LangGraph flow.
 
-        Replicates the real LangGraph pipeline flow but replaces all
-        embedding/reranker steps with pure LLM decisions.  Shows ALL
-        candidates at each level so we can evaluate LLM routing quality.
+        Replicates the complete real pipeline but replaces all
+        embedding/reranker steps with pure LLM decisions.
 
-        Steps:
-        1. LLM picks Intent / Domain (all domains visible)
-        2. LLM picks Agent (all agents for chosen domain visible)
-        3. LLM picks Tool (all tools for chosen agent visible)
-        4. LLM generates an execution plan
-        5. LLM synthesizes a response (simulating tool execution)
+        Flow (mirrors real LangGraph graph):
+        1. resolve_intent  — LLM picks domain + classifies complexity
+        2. agent_resolver  — LLM picks agent within domain
+        3. planner         — LLM generates execution plan (1-4 steps)
+        4. tool_resolver   — LLM picks tool for plan step
+        5. execution_router — classify strategy (inline/parallel/subagent)
+        6. executor+tools  — actually invoke the chosen tool
+        7. critic          — LLM evaluates result quality (loops if needed)
+        8. synthesizer     — LLM generates final answer from real data
         """
+        import json
+        import re
         import time
 
         from app.nexus.llm import nexus_llm_call
@@ -2913,7 +2917,7 @@ class NexusService:
 
         # ── Load seed data ──
         (
-            db_agent_by_name,
+            _,
             db_agents_by_zone,
             _,
             _,
@@ -2926,7 +2930,8 @@ class NexusService:
         all_agents = get_default_agent_definitions()
 
         # ═══════════════════════════════════════════════════════════════
-        # Step 1: LLM picks Intent / Domain
+        # Step 1: resolve_intent — LLM picks Domain + Complexity
+        # (Real pipeline: hybrid lexical+semantic ranking → LLM fallback)
         # ═══════════════════════════════════════════════════════════════
         step1_start = time.monotonic()
 
@@ -2939,24 +2944,31 @@ class NexusService:
 
         intent_prompt = (
             "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
-            "från listan som bäst matchar frågan.\n\n"
+            "från listan som bäst matchar frågan. Klassificera även frågans "
+            "komplexitet.\n\n"
             f"Fråga: {query}\n\n"
             "Domäner:\n" + "\n".join(domain_lines) + "\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
             "DOMÄN: <domain_id>\n"
+            "KOMPLEXITET: <trivial|simple|complex>\n"
             "MOTIVERING: <en mening>\n"
         )
 
+        chosen_domain = ""
+        intent_reasoning = ""
+        complexity = "simple"
         try:
             intent_response = await nexus_llm_call(intent_prompt)
-            chosen_domain = ""
-            intent_reasoning = ""
             for line in intent_response.strip().splitlines():
                 ls = line.strip()
                 if ls.upper().startswith("DOMÄN:") or ls.upper().startswith(
                     "DOMAIN:"
                 ):
                     chosen_domain = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("KOMPLEXITET:"):
+                    raw_compl = ls.split(":", 1)[1].strip().lower()
+                    if raw_compl in ("trivial", "simple", "complex"):
+                        complexity = raw_compl
                 elif ls.upper().startswith("MOTIVERING:"):
                     intent_reasoning = ls.split(":", 1)[1].strip()
             if chosen_domain and chosen_domain not in all_domains:
@@ -2969,11 +2981,14 @@ class NexusService:
             chosen_domain = "kunskap"
             intent_reasoning = f"LLM-anrop misslyckades: {e}"
 
+        if not chosen_domain:
+            chosen_domain = "kunskap"
+
         step1_ms = (time.monotonic() - step1_start) * 1000
         intent_step_live = LivePipelineStepResult(
-            step_name="intent",
+            step_name="resolve_intent",
             chosen=chosen_domain,
-            reasoning=intent_reasoning,
+            reasoning=f"[{complexity}] {intent_reasoning}",
             candidates_shown=len(all_domains),
             latency_ms=step1_ms,
         )
@@ -2984,7 +2999,8 @@ class NexusService:
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Step 2: LLM picks Agent
+        # Step 2: agent_resolver — LLM picks Agent within domain
+        # (Real pipeline: keyword matching + domain filtering)
         # ═══════════════════════════════════════════════════════════════
         step2_start = time.monotonic()
 
@@ -3018,10 +3034,10 @@ class NexusService:
             "MOTIVERING: <en mening>\n"
         )
 
+        chosen_agent = ""
+        agent_reasoning = ""
         try:
             agent_response = await nexus_llm_call(agent_prompt)
-            chosen_agent = ""
-            agent_reasoning = ""
             for line in agent_response.strip().splitlines():
                 ls = line.strip()
                 if ls.upper().startswith("AGENT:"):
@@ -3038,9 +3054,12 @@ class NexusService:
             chosen_agent = next(iter(domain_agents), "kunskap")
             agent_reasoning = f"LLM-anrop misslyckades: {e}"
 
+        if not chosen_agent:
+            chosen_agent = next(iter(domain_agents), "kunskap")
+
         step2_ms = (time.monotonic() - step2_start) * 1000
         agent_step_live = LivePipelineStepResult(
-            step_name="agent",
+            step_name="agent_resolver",
             chosen=chosen_agent,
             reasoning=agent_reasoning,
             candidates_shown=len(domain_agents),
@@ -3053,10 +3072,10 @@ class NexusService:
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Step 3: LLM picks Tool
+        # Step 3: planner — LLM generates execution plan
+        # (Real pipeline: LLM with PlannerResult schema, 1-4 steps)
         # ═══════════════════════════════════════════════════════════════
-        step3_start = time.monotonic()
-
+        # Collect agent's tool descriptions for context
         platform_tools = get_platform_tools()
         agent_def = all_agents.get(chosen_agent, {})
         agent_ns_raw = agent_def.get("primary_namespaces", [])
@@ -3088,6 +3107,44 @@ class NexusService:
                 pt for pt in platform_tools if pt.tool_id in agent_tool_ids
             ]
 
+        tool_summary = "; ".join(
+            f"{pt.tool_id}: {pt.description[:80]}" for pt in agent_tools[:10]
+        )
+
+        plan_prompt = (
+            "Du är en planeringsagent. Givet användarens fråga, den valda agenten, "
+            "och tillgängliga verktyg, skapa en exekveringsplan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n"
+            f"Vald agent: {chosen_agent}\n"
+            f"Tillgängliga verktyg: {tool_summary}\n\n"
+            "Svara med en numrerad lista (1-4 steg). Varje steg ska vara "
+            "en konkret åtgärd. Var kortfattad.\n"
+            "Format:\n"
+            "1. <åtgärd>\n"
+            "2. <åtgärd>\n"
+        )
+
+        plan_text = ""
+        plan_steps: list[dict] = []
+        try:
+            plan_text = await nexus_llm_call(plan_prompt)
+            # Parse numbered steps
+            for line in plan_text.strip().splitlines():
+                m = re.match(r"^\d+\.\s*(.+)$", line.strip())
+                if m:
+                    plan_steps.append(
+                        {"id": f"step-{len(plan_steps)+1}", "content": m.group(1)}
+                    )
+        except Exception as e:
+            plan_text = f"Planering misslyckades: {e}"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 4: tool_resolver — LLM picks Tool for plan
+        # (Real pipeline: bigtool retrieval + namespace filtering + reranker)
+        # ═══════════════════════════════════════════════════════════════
+        step4_start = time.monotonic()
+
         tool_lines = []
         for i, pt in enumerate(agent_tools, 1):
             kw = ", ".join(pt.keywords[:6]) if pt.keywords else ""
@@ -3100,10 +3157,11 @@ class NexusService:
         tool_reasoning = ""
         if tool_lines:
             tool_prompt = (
-                "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
-                "välj EXAKT ETT verktyg från listan som bäst kan besvara frågan.\n\n"
+                "Du är en verktygsväljare (tool_resolver). Givet användarens fråga, "
+                "den valda agenten och planen, välj EXAKT ETT verktyg från listan.\n\n"
                 f"Fråga: {query}\n"
-                f"Vald agent: {chosen_agent}\n\n"
+                f"Vald agent: {chosen_agent}\n"
+                f"Plan: {plan_text[:300]}\n\n"
                 "Verktyg:\n" + "\n".join(tool_lines) + "\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
                 "VERKTYG: <tool_id>\n"
@@ -3134,13 +3192,13 @@ class NexusService:
         else:
             tool_reasoning = "Inga verktyg hittades för vald agent."
 
-        step3_ms = (time.monotonic() - step3_start) * 1000
+        step4_ms = (time.monotonic() - step4_start) * 1000
         tool_step_live = LivePipelineStepResult(
-            step_name="tool",
+            step_name="tool_resolver",
             chosen=chosen_tool or "",
             reasoning=tool_reasoning,
             candidates_shown=len(agent_tools),
-            latency_ms=step3_ms,
+            latency_ms=step4_ms,
         )
         tool_step = LlmGateStepResult(
             chosen=chosen_tool or "",
@@ -3149,44 +3207,191 @@ class NexusService:
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Step 4: LLM generates execution plan
+        # Step 5: execution_router — classify strategy
+        # (Real pipeline: inline/parallel/subagent based on complexity)
         # ═══════════════════════════════════════════════════════════════
+        bulk_pattern = re.compile(
+            r"\b(alla|samtliga|hela\s+listan|bulk|för\s+alla|varje\s+kommun)\b",
+            re.IGNORECASE,
+        )
+        if bulk_pattern.search(query) or len(plan_steps) > 3:
+            execution_strategy = "subagent"
+        elif complexity == "complex":
+            execution_strategy = "parallel"
+        else:
+            execution_strategy = "inline"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 6: executor + tools — actually invoke the chosen tool
+        # (Real pipeline: LLM function calling → tool.ainvoke())
+        # ═══════════════════════════════════════════════════════════════
+        tool_output = ""
+        tool_error = ""
+        tool_executed = False
+        tool_args: dict = {}
         chosen_tool_desc = ""
+
         for pt in agent_tools:
             if pt.tool_id == chosen_tool:
                 chosen_tool_desc = pt.description
                 break
 
-        plan_prompt = (
-            "Du är en planeringsagent. Givet användarens fråga och det valda verktyget, "
-            "skapa en kort exekveringsplan (1-3 steg) för att besvara frågan.\n\n"
-            f"Fråga: {query}\n"
-            f"Vald domän: {chosen_domain}\n"
-            f"Vald agent: {chosen_agent}\n"
-            f"Valt verktyg: {chosen_tool or 'inget'}\n"
-            f"Verktygsbeskrivning: {chosen_tool_desc}\n\n"
-            "Skriv planen som en numrerad lista. Var kortfattad.\n"
-        )
+        if chosen_tool:
+            try:
+                from app.agents.new_chat.tools.registry import get_tool_by_name
 
-        plan_text = ""
-        try:
-            plan_text = await nexus_llm_call(plan_prompt)
-        except Exception as e:
-            plan_text = f"Planering misslyckades: {e}"
+                tool_def = get_tool_by_name(chosen_tool)
+                if tool_def:
+                    # Check if tool can be instantiated without user-specific deps
+                    missing_deps = [
+                        dep
+                        for dep in tool_def.requires
+                        if dep
+                        not in (
+                            "firecrawl_api_key",
+                            "runtime_hitl",
+                            "trace_recorder",
+                            "trace_parent_span_id",
+                        )
+                    ]
+
+                    if not missing_deps:
+                        # Tool needs no user-specific deps — instantiate it
+                        tool_instance = tool_def.factory({})
+
+                        # Ask LLM to generate appropriate arguments
+                        # Get schema from tool
+                        schema_dict = {}
+                        if hasattr(tool_instance, "args_schema"):
+                            import contextlib
+
+                            with contextlib.suppress(Exception):
+                                schema_dict = (
+                                    tool_instance.args_schema.model_json_schema()
+                                )
+                        elif hasattr(tool_instance, "args"):
+                            schema_dict = tool_instance.args
+
+                        args_prompt = (
+                            "Du ska generera JSON-argument för ett verktygsanrop.\n\n"
+                            f"Verktyg: {chosen_tool}\n"
+                            f"Beskrivning: {chosen_tool_desc}\n"
+                            f"Schema: {json.dumps(schema_dict, ensure_ascii=False, default=str)[:1500]}\n\n"
+                            f"Användarens fråga: {query}\n\n"
+                            "Svara med BARA en JSON-objekt (inget annat). "
+                            "Fyll i rimliga värden baserat på frågan.\n"
+                        )
+
+                        try:
+                            args_response = await nexus_llm_call(args_prompt)
+                            # Extract JSON from response
+                            json_match = re.search(
+                                r"\{[^}]+\}", args_response, re.DOTALL
+                            )
+                            if json_match:
+                                tool_args = json.loads(json_match.group())
+                            else:
+                                tool_args = json.loads(args_response.strip())
+                        except (json.JSONDecodeError, Exception) as e:
+                            logger.warning(
+                                "Live pipeline args generation failed: %s", e
+                            )
+                            # Try simple query arg as fallback
+                            tool_args = {"query": query}
+
+                        # Actually invoke the tool
+                        try:
+                            raw_result = await tool_instance.ainvoke(tool_args)
+                            tool_executed = True
+                            if isinstance(raw_result, str):
+                                tool_output = raw_result[:5000]
+                            elif isinstance(raw_result, dict):
+                                tool_output = json.dumps(
+                                    raw_result,
+                                    ensure_ascii=False,
+                                    indent=2,
+                                    default=str,
+                                )[:5000]
+                            else:
+                                tool_output = str(raw_result)[:5000]
+                        except Exception as e:
+                            tool_error = f"Verktygsexekvering misslyckades: {e}"
+                            logger.warning(
+                                "Live pipeline tool execution failed: %s", e
+                            )
+                    else:
+                        tool_error = (
+                            f"Verktyget kräver beroenden som inte finns i "
+                            f"Pipeline Explorer: {', '.join(missing_deps)}"
+                        )
+                else:
+                    tool_error = f"Verktyget '{chosen_tool}' finns inte i registret."
+            except Exception as e:
+                tool_error = f"Kunde inte ladda verktyg: {e}"
+                logger.warning("Live pipeline tool loading failed: %s", e)
 
         # ═══════════════════════════════════════════════════════════════
-        # Step 5: LLM synthesizes a response
+        # Step 7: critic — LLM evaluates result quality
+        # (Real pipeline: guards + LLM critique → ok/needs_more/replan)
         # ═══════════════════════════════════════════════════════════════
-        synthesis_prompt = (
-            "Du är en syntesagent. Givet användarens fråga, det valda verktyget och "
-            "planen, skriv ett kort och informativt svar som visar vad systemet "
-            "SKULLE svara om verktyget kördes.\n\n"
-            f"Fråga: {query}\n"
-            f"Valt verktyg: {chosen_tool or 'inget'} — {chosen_tool_desc}\n"
-            f"Plan:\n{plan_text}\n\n"
-            "Skriv ett kort, naturligt svar på svenska. "
-            "Om verktyget inte kunde köras, förklara vad som skulle hända.\n"
-        )
+        critic_decision = "ok"
+        critic_reasoning = ""
+        critic_loops = 0
+
+        if tool_executed and tool_output:
+            critic_prompt = (
+                "Du är en kvalitetskritiker. Utvärdera om verktygsresultatet "
+                "besvarar användarens fråga tillräckligt bra.\n\n"
+                f"Fråga: {query}\n"
+                f"Verktyg: {chosen_tool}\n"
+                f"Resultat (förkortat): {tool_output[:2000]}\n\n"
+                "Svara EXAKT i detta format:\n"
+                "BESLUT: <ok|needs_more|replan>\n"
+                "MOTIVERING: <en mening>\n"
+            )
+            try:
+                critic_response = await nexus_llm_call(critic_prompt)
+                for line in critic_response.strip().splitlines():
+                    ls = line.strip()
+                    if ls.upper().startswith("BESLUT:"):
+                        raw_decision = ls.split(":", 1)[1].strip().lower()
+                        if raw_decision in ("ok", "needs_more", "replan"):
+                            critic_decision = raw_decision
+                    elif ls.upper().startswith("MOTIVERING:"):
+                        critic_reasoning = ls.split(":", 1)[1].strip()
+                critic_loops = 1
+            except Exception as e:
+                critic_decision = "ok"
+                critic_reasoning = f"Critic misslyckades: {e}"
+        elif tool_error:
+            critic_decision = "ok"
+            critic_reasoning = (
+                "Verktyget kunde inte köras — syntetiserar baserat på tillgänglig info."
+            )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 8: synthesizer — LLM generates final answer
+        # (Real pipeline: progressive_synthesizer → synthesizer)
+        # ═══════════════════════════════════════════════════════════════
+        if tool_executed and tool_output:
+            synthesis_prompt = (
+                "Du är en syntesagent. Givet användarens fråga och det riktiga "
+                "verktygsresultatet, skriv ett kort och informativt svar.\n\n"
+                f"Fråga: {query}\n"
+                f"Verktyg: {chosen_tool}\n"
+                f"Verktygsresultat:\n{tool_output[:3000]}\n\n"
+                "Skriv ett kort, naturligt svar på svenska baserat på den riktiga datan.\n"
+            )
+        else:
+            synthesis_prompt = (
+                "Du är en syntesagent. Verktyget kunde inte köras.\n\n"
+                f"Fråga: {query}\n"
+                f"Valt verktyg: {chosen_tool or 'inget'} — {chosen_tool_desc}\n"
+                f"Fel: {tool_error or 'Inget verktyg valt'}\n"
+                f"Plan:\n{plan_text[:500]}\n\n"
+                "Skriv ett kort svar som förklarar vad som SKULLE hända "
+                "om verktyget kördes, baserat på planen.\n"
+            )
 
         synthesis_text = ""
         try:
@@ -3230,7 +3435,7 @@ class NexusService:
             entities=QueryEntities(),
             domain_hints=[],
             zone_candidates=[chosen_domain],
-            complexity="simple",
+            complexity=complexity,
             is_multi_intent=False,
             ood_risk=0.0,
         )
@@ -3261,7 +3466,17 @@ class NexusService:
                 intent_step=intent_step_live,
                 agent_step=agent_step_live,
                 tool_step=tool_step_live,
+                complexity=complexity,
+                execution_strategy=execution_strategy,
                 plan=plan_text.strip(),
+                plan_steps=plan_steps,
+                tool_args=tool_args,
+                tool_output=tool_output,
+                tool_error=tool_error,
+                tool_executed=tool_executed,
+                critic_decision=critic_decision,
+                critic_reasoning=critic_reasoning,
+                critic_loops=critic_loops,
                 synthesis=synthesis_text.strip(),
                 total_latency_ms=total_ms,
             ),

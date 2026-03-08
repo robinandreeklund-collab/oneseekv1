@@ -168,9 +168,11 @@ export function PipelineExplorerTab() {
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 						<IntentStage result={result} />
 						<AgentStage result={result} />
+						{result.live && <PlannerStage live={result.live} labels={result.labels} />}
 						<ToolStage result={result} />
 						<VerdictStage result={result} />
-						{result.live && <PlanStage live={result.live} labels={result.labels} />}
+						{result.live && <ExecutorStage live={result.live} labels={result.labels} />}
+						{result.live && <CriticStage live={result.live} />}
 						{result.live && <SynthesisStage live={result.live} />}
 					</div>
 				</div>
@@ -277,6 +279,14 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 							<Badge className="bg-rose-100 text-rose-800 border-rose-300 gap-1 text-[10px]">
 								Live Pipeline
 							</Badge>
+							<Badge className={COMPLEXITY_COLORS[result.live.complexity] + " text-[10px]"}>
+								{result.live.complexity}
+							</Badge>
+							{result.live.tool_executed && (
+								<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]">
+									Verktyg kört
+								</Badge>
+							)}
 						</>
 					)}
 					{!result.live && result.llm_gate && (
@@ -330,7 +340,10 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 			<div className="space-y-3 text-sm">
 				<Row label="Normaliserad" value={qa.normalized_query} />
 				<Row label="Komplexitet">
-					<Badge className={COMPLEXITY_COLORS[qa.complexity] ?? ""}>{qa.complexity}</Badge>
+					<Badge className={COMPLEXITY_COLORS[result.live?.complexity ?? qa.complexity] ?? ""}>{result.live?.complexity ?? qa.complexity}</Badge>
+					{result.live?.execution_strategy && (
+						<Badge variant="outline" className="ml-1 text-[10px] py-0">{result.live.execution_strategy}</Badge>
+					)}
 				</Row>
 				<Row label="Zon-kandidater">
 					<div className="flex gap-1 flex-wrap">
@@ -657,49 +670,81 @@ function VerdictStage({ result }: { result: RoutingDecision }) {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 5: Plan (Live mode)
+// Stage 5: Planner (Live mode)
 // ---------------------------------------------------------------------------
 
-function PlanStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
+function PlannerStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
 	return (
-		<StageCard number={5} title="Plan (LLM)" color="bg-violet-500">
+		<StageCard number={5} title="Planner (LLM)" color="bg-violet-500">
 			<div className="space-y-3 text-sm">
-				{live.intent_step && (
-					<Row label="Intent">
-						<div className="flex items-center gap-2">
-							<Badge className="bg-blue-100 text-blue-800 border-blue-300">{lbl(live.intent_step.chosen, labels)}</Badge>
-							<span className="text-muted-foreground text-xs">{live.intent_step.latency_ms.toFixed(0)} ms</span>
-						</div>
-					</Row>
-				)}
-				{live.agent_step && (
-					<Row label="Agent">
-						<div className="flex items-center gap-2">
-							<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">{lbl(live.agent_step.chosen, labels)}</Badge>
-							<span className="text-muted-foreground text-xs">{live.agent_step.latency_ms.toFixed(0)} ms</span>
-						</div>
-					</Row>
-				)}
-				{live.tool_step && (
-					<Row label="Tool">
-						<div className="flex items-center gap-2">
-							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">{lbl(live.tool_step.chosen, labels)}</Badge>
-							<span className="text-muted-foreground text-xs">{live.tool_step.latency_ms.toFixed(0)} ms</span>
-						</div>
-					</Row>
-				)}
-				{live.plan && (
+				<Row label="Strategi">
+					<Badge variant="outline">{live.execution_strategy}</Badge>
+				</Row>
+				{live.plan_steps.length > 0 ? (
+					<div className="space-y-1">
+						<p className="text-xs font-medium text-muted-foreground">Plansteg</p>
+						{live.plan_steps.map((step, i) => (
+							<div key={step.id} className="flex items-start gap-2 text-xs rounded px-2 py-1 bg-muted/50">
+								<span className="text-muted-foreground shrink-0 w-5">{i + 1}.</span>
+								<span>{step.content}</span>
+							</div>
+						))}
+					</div>
+				) : live.plan ? (
 					<div className="rounded-md border bg-muted/30 p-3">
 						<p className="text-xs font-medium text-muted-foreground mb-1">Exekveringsplan</p>
 						<div className="text-xs whitespace-pre-wrap">{live.plan}</div>
 					</div>
+				) : null}
+			</div>
+		</StageCard>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Stage 6: Executor (Live mode — real tool execution)
+// ---------------------------------------------------------------------------
+
+function ExecutorStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
+	return (
+		<StageCard number={6} title="Executor + Tools" color="bg-teal-500">
+			<div className="space-y-3 text-sm">
+				<Row label="Verktyg">
+					<div className="flex items-center gap-2">
+						{live.tool_step && (
+							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">
+								{lbl(live.tool_step.chosen, labels)}
+							</Badge>
+						)}
+						{live.tool_executed ? (
+							<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px] py-0">
+								Kört
+							</Badge>
+						) : (
+							<Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] py-0">
+								Simulerad
+							</Badge>
+						)}
+					</div>
+				</Row>
+
+				{Object.keys(live.tool_args).length > 0 && (
+					<Collapsible title="Verktygsargument">
+						<pre className="text-xs bg-muted/50 rounded p-2 overflow-auto max-h-32">
+							{JSON.stringify(live.tool_args, null, 2)}
+						</pre>
+					</Collapsible>
 				)}
+
 				{live.tool_output && (
 					<div className="rounded-md border bg-muted/30 p-3">
-						<p className="text-xs font-medium text-muted-foreground mb-1">Verktygssvar</p>
-						<div className="text-xs whitespace-pre-wrap max-h-48 overflow-auto">{live.tool_output}</div>
+						<p className="text-xs font-medium text-muted-foreground mb-1">
+							{live.tool_executed ? "Riktigt verktygssvar" : "Simulerat svar"}
+						</p>
+						<div className="text-xs whitespace-pre-wrap max-h-64 overflow-auto font-mono">{live.tool_output}</div>
 					</div>
 				)}
+
 				{live.tool_error && (
 					<div className="rounded-md border border-red-200 bg-red-50/50 p-3">
 						<p className="text-xs font-medium text-red-600 mb-1">Verktygsfel</p>
@@ -712,18 +757,55 @@ function PlanStage({ live, labels }: { live: LivePipelineResult; labels: Record<
 }
 
 // ---------------------------------------------------------------------------
-// Stage 6: Synthesis (Live mode)
+// Stage 7: Critic (Live mode)
+// ---------------------------------------------------------------------------
+
+function CriticStage({ live }: { live: LivePipelineResult }) {
+	const decisionColors: Record<string, string> = {
+		ok: "bg-green-100 text-green-800 border-green-300",
+		needs_more: "bg-amber-100 text-amber-800 border-amber-300",
+		replan: "bg-red-100 text-red-800 border-red-300",
+	};
+
+	return (
+		<StageCard number={7} title="Critic" color="bg-orange-500">
+			<div className="space-y-3 text-sm">
+				<Row label="Beslut">
+					<Badge className={decisionColors[live.critic_decision] ?? ""}>
+						{live.critic_decision || "—"}
+					</Badge>
+				</Row>
+				{live.critic_reasoning && (
+					<Row label="Motivering">
+						<span className="text-muted-foreground italic text-xs">{live.critic_reasoning}</span>
+					</Row>
+				)}
+				<Row label="Loopar" value={String(live.critic_loops)} />
+			</div>
+		</StageCard>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Stage 8: Synthesis (Live mode)
 // ---------------------------------------------------------------------------
 
 function SynthesisStage({ live }: { live: LivePipelineResult }) {
 	return (
-		<StageCard number={6} title="Syntes (LLM)" color="bg-rose-500">
+		<StageCard number={8} title="Synthesizer" color="bg-rose-500">
 			<div className="space-y-3 text-sm">
 				{live.synthesis && (
 					<div className="rounded-md border bg-muted/30 p-3">
 						<div className="text-sm whitespace-pre-wrap">{live.synthesis}</div>
 					</div>
 				)}
+				<Row label="Datakälla">
+					{live.tool_executed ? (
+						<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]">Riktig data</Badge>
+					) : (
+						<Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]">Simulerad</Badge>
+					)}
+				</Row>
 				<Row label="Total latens" value={`${live.total_latency_ms.toFixed(0)} ms`} />
 			</div>
 		</StageCard>

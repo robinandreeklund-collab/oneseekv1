@@ -136,9 +136,17 @@ export interface LivePipelineResult {
 	intent_step: LivePipelineStepResult | null;
 	agent_step: LivePipelineStepResult | null;
 	tool_step: LivePipelineStepResult | null;
+	complexity: string;
+	execution_strategy: string;
 	plan: string;
+	plan_steps: Array<{ id: string; content: string }>;
+	tool_args: Record<string, unknown>;
 	tool_output: string;
 	tool_error: string;
+	tool_executed: boolean;
+	critic_decision: string;
+	critic_reasoning: string;
+	critic_loops: number;
 	synthesis: string;
 	total_latency_ms: number;
 }

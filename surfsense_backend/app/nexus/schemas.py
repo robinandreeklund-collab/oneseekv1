@@ -110,14 +110,40 @@ class LivePipelineStepResult(BaseModel):
 
 
 class LivePipelineResult(BaseModel):
-    """Full result from the live LLM-only pipeline with tool execution."""
+    """Full result from the live LLM-only pipeline with tool execution.
 
+    Mirrors the real LangGraph flow:
+    resolve_intent → agent_resolver → planner → tool_resolver →
+    execution_router → executor → tools → critic → synthesizer
+    """
+
+    # Routing steps (LLM replaces embeddings/reranker)
     intent_step: LivePipelineStepResult | None = None
     agent_step: LivePipelineStepResult | None = None
     tool_step: LivePipelineStepResult | None = None
+
+    # Complexity classification (trivial/simple/complex)
+    complexity: str = "simple"
+
+    # Execution strategy (inline/parallel/subagent)
+    execution_strategy: str = "inline"
+
+    # Planner output (ordered steps)
     plan: str = ""
+    plan_steps: list[dict] = Field(default_factory=list)
+
+    # Tool execution (real invocation)
+    tool_args: dict = Field(default_factory=dict)
     tool_output: str = ""
     tool_error: str = ""
+    tool_executed: bool = False
+
+    # Critic evaluation
+    critic_decision: str = ""  # "ok" | "needs_more" | "replan"
+    critic_reasoning: str = ""
+    critic_loops: int = 0
+
+    # Final synthesis
     synthesis: str = ""
     total_latency_ms: float = 0.0
 
