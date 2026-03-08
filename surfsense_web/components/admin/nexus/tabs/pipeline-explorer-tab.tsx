@@ -18,6 +18,7 @@ import {
 	type RoutingDecision,
 	type AgentCandidateResponse,
 	type RoutingCandidate,
+	type LlmGateResult,
 } from "@/lib/apis/nexus-api.service";
 
 const BAND_COLORS: Record<number, string> = {
@@ -41,6 +42,7 @@ export function PipelineExplorerTab() {
 	const [error, setError] = useState<string | null>(null);
 	const [history, setHistory] = useState<Array<{ query: string; result: RoutingDecision }>>([]);
 	const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
+	const [llmGateEnabled, setLlmGateEnabled] = useState(false);
 
 	const handleRun = async () => {
 		const q = query.trim();
@@ -50,6 +52,7 @@ export function PipelineExplorerTab() {
 		try {
 			const decision = await nexusApiService.routeQuery(q, {
 				llm_judge: llmJudgeEnabled,
+				llm_gate: llmGateEnabled,
 			});
 			setResult(decision);
 			setHistory((prev) => [{ query: q, result: decision }, ...prev].slice(0, 10));
@@ -93,9 +96,22 @@ export function PipelineExplorerTab() {
 						<label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
 							<input
 								type="checkbox"
+								checked={llmGateEnabled}
+								onChange={(e) => {
+									setLlmGateEnabled(e.target.checked);
+									if (e.target.checked) setLlmJudgeEnabled(false);
+								}}
+								disabled={loading}
+								className="rounded"
+							/>
+							LLM Gate
+						</label>
+						<label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
+							<input
+								type="checkbox"
 								checked={llmJudgeEnabled}
 								onChange={(e) => setLlmJudgeEnabled(e.target.checked)}
-								disabled={loading}
+								disabled={loading || llmGateEnabled}
 								className="rounded"
 							/>
 							LLM Judge
@@ -223,6 +239,16 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 						Band {result.band} — {result.band_name}
 					</span>
 
+					{/* LLM Gate */}
+					{result.llm_gate && (
+						<>
+							<ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+							<Badge className="bg-purple-100 text-purple-800 border-purple-300 gap-1 text-[10px]">
+								LLM Gate
+							</Badge>
+						</>
+					)}
+
 					{/* LLM Judge */}
 					{result.llm_judge && (
 						<>
@@ -258,9 +284,10 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 
 function IntentStage({ result }: { result: RoutingDecision }) {
 	const qa = result.query_analysis;
+	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={1} title="Intent (QUL)" color="bg-blue-500">
+		<StageCard number={1} title={gate ? "Intent (LLM)" : "Intent (QUL)"} color="bg-blue-500">
 			<div className="space-y-3 text-sm">
 				<Row label="Normaliserad" value={qa.normalized_query} />
 				<Row label="Komplexitet">
@@ -284,6 +311,23 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 				)}
 				<Row label="Multi-intent" value={qa.is_multi_intent ? "Ja" : "Nej"} />
 				<Row label="OOD-risk" value={qa.ood_risk.toFixed(2)} />
+
+				{gate?.intent_step && (
+					<div className="rounded-md border border-blue-200 bg-blue-50/50 p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<span className="text-xs font-medium text-blue-600">LLM Gate — Intent</span>
+							<Badge variant="outline" className="text-[10px] py-0">{gate.intent_step.candidates_shown} kandidater</Badge>
+						</div>
+						<Row label="Vald domän">
+							<Badge className="bg-blue-100 text-blue-800 border-blue-300">{gate.intent_step.chosen}</Badge>
+						</Row>
+						{gate.intent_step.reasoning && (
+							<Row label="Motivering">
+								<span className="text-muted-foreground italic text-xs">{gate.intent_step.reasoning}</span>
+							</Row>
+						)}
+					</div>
+				)}
 
 				{/* Entities */}
 				<EntityList entities={qa.entities} />
@@ -309,9 +353,10 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 
 function AgentStage({ result }: { result: RoutingDecision }) {
 	const ar = result.agent_resolution;
+	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={2} title="Agent" color="bg-indigo-500">
+		<StageCard number={2} title={gate ? "Agent (LLM)" : "Agent"} color="bg-indigo-500">
 			{ar ? (
 				<div className="space-y-3 text-sm">
 					<Row label="Vald agent">
@@ -334,6 +379,23 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 								: <span className="text-muted-foreground">Alla</span>}
 						</div>
 					</Row>
+
+					{gate?.agent_step && (
+						<div className="rounded-md border border-indigo-200 bg-indigo-50/50 p-3 space-y-2">
+							<div className="flex items-center justify-between">
+								<span className="text-xs font-medium text-indigo-600">LLM Gate — Agent</span>
+								<Badge variant="outline" className="text-[10px] py-0">{gate.agent_step.candidates_shown} kandidater</Badge>
+							</div>
+							<Row label="Vald agent">
+								<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">{gate.agent_step.chosen}</Badge>
+							</Row>
+							{gate.agent_step.reasoning && (
+								<Row label="Motivering">
+									<span className="text-muted-foreground italic text-xs">{gate.agent_step.reasoning}</span>
+								</Row>
+							)}
+						</div>
+					)}
 
 					{ar.candidates.length > 0 && (
 						<Collapsible title={`Alla kandidater (${ar.candidates.length})`}>
@@ -382,15 +444,34 @@ function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateR
 function ToolStage({ result }: { result: RoutingDecision }) {
 	const top5 = result.candidates.slice(0, 5);
 	const judge = result.llm_judge;
+	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={3} title="Tool (StR + Rerank)" color="bg-emerald-500">
+		<StageCard number={3} title={gate ? "Tool (LLM)" : "Tool (StR + Rerank)"} color="bg-emerald-500">
 			<div className="space-y-3 text-sm">
 				<Row label="NEXUS valde">
 					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono">
 						{result.selected_tool ?? "—"}
 					</Badge>
 				</Row>
+
+				{/* LLM Gate tool result */}
+				{gate?.tool_step && (
+					<div className="rounded-md border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<span className="text-xs font-medium text-emerald-600">LLM Gate — Tool</span>
+							<Badge variant="outline" className="text-[10px] py-0">{gate.tool_step.candidates_shown} kandidater</Badge>
+						</div>
+						<Row label="Valt verktyg">
+							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono">{gate.tool_step.chosen}</Badge>
+						</Row>
+						{gate.tool_step.reasoning && (
+							<Row label="Motivering">
+								<span className="text-muted-foreground italic text-xs">{gate.tool_step.reasoning}</span>
+							</Row>
+						)}
+					</div>
+				)}
 
 				{/* LLM Judge result */}
 				{judge && (

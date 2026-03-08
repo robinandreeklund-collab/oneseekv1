@@ -83,6 +83,22 @@ class LlmJudgeResult(BaseModel):
     agreement: bool = False
 
 
+class LlmGateStepResult(BaseModel):
+    """Result from a single LLM gate step (intent, agent, or tool)."""
+
+    chosen: str = ""
+    reasoning: str = ""
+    candidates_shown: int = 0
+
+
+class LlmGateResult(BaseModel):
+    """Full result from the 3-step LLM-only pipeline."""
+
+    intent_step: LlmGateStepResult | None = None
+    agent_step: LlmGateStepResult | None = None
+    tool_step: LlmGateStepResult | None = None
+
+
 class RoutingDecision(BaseModel):
     query_analysis: QueryAnalysis
     agent_resolution: AgentResolution | None = None
@@ -97,11 +113,13 @@ class RoutingDecision(BaseModel):
     schema_verified: bool = False
     latency_ms: float = 0.0
     llm_judge: LlmJudgeResult | None = None
+    llm_gate: LlmGateResult | None = None
 
 
 class RouteQueryRequest(BaseModel):
     query: str
     llm_judge: bool = False
+    llm_gate: bool = False
 
 
 # ---------------------------------------------------------------------------

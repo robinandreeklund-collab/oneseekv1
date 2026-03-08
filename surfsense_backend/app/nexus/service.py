@@ -2510,6 +2510,318 @@ class NexusService:
             }
 
     # ------------------------------------------------------------------
+    # LLM Gate — pure LLM-based routing (no embeddings / reranker)
+    # ------------------------------------------------------------------
+
+    async def route_query_llm_gate(
+        self,
+        query: str,
+        session: AsyncSession,
+    ) -> "RoutingDecision":
+        """Run a pure LLM-based routing pipeline: Intent → Agent → Tool.
+
+        Three sequential LLM calls replace all embedding/reranker logic:
+        1. LLM picks the best intent domain from all available domains
+        2. LLM picks the best agent within that domain
+        3. LLM picks the best tool within that agent
+
+        Returns a RoutingDecision with llm_gate populated.
+        """
+        import time
+
+        from app.nexus.llm import nexus_llm_call
+        from app.nexus.platform_bridge import get_platform_tools
+        from app.nexus.schemas import (
+            AgentCandidateResponse,
+            AgentResolution,
+            LlmGateResult,
+            LlmGateStepResult,
+            QueryAnalysis,
+            QueryEntities,
+            RoutingCandidate,
+            RoutingDecision,
+        )
+
+        start_time = time.monotonic()
+
+        # Load domains and agents from DB / seeds
+        (
+            db_agent_by_name,
+            db_agents_by_zone,
+            _,
+            _,
+        ) = await self._load_db_agents(session)
+
+        # Gather all domains from seed data
+        from app.seeds.intent_domains import get_default_intent_domains
+
+        all_domains = get_default_intent_domains()
+
+        # Gather all agents from seed data
+        from app.seeds.agent_definitions import get_default_agent_definitions
+
+        all_agents = get_default_agent_definitions()
+
+        # ── Step 1: LLM picks Intent / Domain ──
+        domain_lines = []
+        for i, (did, d) in enumerate(sorted(all_domains.items()), 1):
+            kw = ", ".join(d.get("keywords", [])[:6])
+            domain_lines.append(f"{i}. {did} — {d.get('description', '')} (nyckelord: {kw})")
+
+        intent_prompt = (
+            "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
+            "från listan som bäst matchar frågan.\n\n"
+            f"Fråga: {query}\n\n"
+            "Domäner:\n" + "\n".join(domain_lines) + "\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "DOMÄN: <domain_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            intent_response = await nexus_llm_call(intent_prompt)
+            chosen_domain = ""
+            intent_reasoning = ""
+            for line in intent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("DOMÄN:") or ls.upper().startswith("DOMAIN:"):
+                    chosen_domain = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    intent_reasoning = ls.split(":", 1)[1].strip()
+            # Normalize — LLM might return a close but not exact match
+            if chosen_domain and chosen_domain not in all_domains:
+                for did in all_domains:
+                    if did.lower() == chosen_domain.lower():
+                        chosen_domain = did
+                        break
+        except Exception as e:
+            logger.warning("LLM gate intent step failed: %s", e)
+            chosen_domain = "kunskap"
+            intent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        intent_step = LlmGateStepResult(
+            chosen=chosen_domain,
+            reasoning=intent_reasoning,
+            candidates_shown=len(all_domains),
+        )
+
+        # ── Step 2: LLM picks Agent within domain ──
+        # Find all agents for the chosen domain
+        domain_agents = {
+            aid: a
+            for aid, a in all_agents.items()
+            if a.get("domain_id") == chosen_domain
+        }
+        # Also include agents from DB overrides if available
+        if db_agents_by_zone and chosen_domain in db_agents_by_zone:
+            for db_agent in db_agents_by_zone[chosen_domain]:
+                aid = db_agent.get("agent_id", "")
+                if aid and aid not in domain_agents:
+                    domain_agents[aid] = db_agent
+
+        if not domain_agents:
+            # Fallback: if no agents match, show all agents
+            domain_agents = all_agents
+
+        agent_lines = []
+        for i, (aid, a) in enumerate(sorted(domain_agents.items()), 1):
+            kw = ", ".join(a.get("keywords", [])[:8])
+            desc = a.get("description", a.get("label", ""))
+            agent_lines.append(f"{i}. {aid} — {desc} (nyckelord: {kw})")
+
+        agent_prompt = (
+            "Du är en agent-router. Givet användarens fråga och den valda domänen, "
+            "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n\n"
+            "Agenter:\n" + "\n".join(agent_lines) + "\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "AGENT: <agent_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            agent_response = await nexus_llm_call(agent_prompt)
+            chosen_agent = ""
+            agent_reasoning = ""
+            for line in agent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("AGENT:"):
+                    chosen_agent = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    agent_reasoning = ls.split(":", 1)[1].strip()
+            # Normalize
+            if chosen_agent and chosen_agent not in domain_agents:
+                for aid in domain_agents:
+                    if aid.lower() == chosen_agent.lower():
+                        chosen_agent = aid
+                        break
+        except Exception as e:
+            logger.warning("LLM gate agent step failed: %s", e)
+            chosen_agent = next(iter(domain_agents), "kunskap")
+            agent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        agent_step = LlmGateStepResult(
+            chosen=chosen_agent,
+            reasoning=agent_reasoning,
+            candidates_shown=len(domain_agents),
+        )
+
+        # ── Step 3: LLM picks Tool within agent ──
+        # Get all tools for the chosen agent from platform registry
+        platform_tools = get_platform_tools()
+        agent_def = all_agents.get(chosen_agent, {})
+        agent_ns_raw = agent_def.get("primary_namespaces", [])
+        agent_ns_prefixes = []
+        for ns in agent_ns_raw:
+            if isinstance(ns, list) and len(ns) >= 2:
+                agent_ns_prefixes.append("/".join(ns[:2]))
+
+        # Filter tools by agent namespace
+        agent_tools = []
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            ns_str = "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+            if agent_ns_prefixes and any(
+                ns_str.startswith(prefix) for prefix in agent_ns_prefixes
+            ):
+                agent_tools.append(pt)
+
+        # If no tools matched by namespace, try matching by agent_id in tool definitions
+        if not agent_tools:
+            from app.seeds.tool_definitions import get_default_tool_definitions
+
+            tool_defs = get_default_tool_definitions()
+            agent_tool_ids = {
+                tid for tid, td in tool_defs.items() if td.get("agent_id") == chosen_agent
+            }
+            agent_tools = [pt for pt in platform_tools if pt.tool_id in agent_tool_ids]
+
+        tool_lines = []
+        for i, pt in enumerate(agent_tools, 1):
+            kw = ", ".join(pt.keywords[:6]) if pt.keywords else ""
+            tool_lines.append(
+                f"{i}. {pt.tool_id} — {pt.description}"
+                + (f" (nyckelord: {kw})" if kw else "")
+            )
+
+        chosen_tool = None
+        tool_reasoning = ""
+        if tool_lines:
+            tool_prompt = (
+                "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
+                "välj EXAKT ETT verktyg från listan som bäst kan besvara frågan.\n\n"
+                f"Fråga: {query}\n"
+                f"Vald agent: {chosen_agent}\n\n"
+                "Verktyg:\n" + "\n".join(tool_lines) + "\n\n"
+                "Svara EXAKT i detta format (inget annat):\n"
+                "VERKTYG: <tool_id>\n"
+                "MOTIVERING: <en mening>\n"
+            )
+
+            try:
+                tool_response = await nexus_llm_call(tool_prompt)
+                for line in tool_response.strip().splitlines():
+                    ls = line.strip()
+                    if ls.upper().startswith("VERKTYG:"):
+                        chosen_tool = ls.split(":", 1)[1].strip()
+                    elif ls.upper().startswith("MOTIVERING:"):
+                        tool_reasoning = ls.split(":", 1)[1].strip()
+                # Normalize
+                if chosen_tool:
+                    tool_ids = [pt.tool_id for pt in agent_tools]
+                    if chosen_tool not in tool_ids:
+                        for tid in tool_ids:
+                            if (
+                                chosen_tool.lower() in tid.lower()
+                                or tid.lower() in chosen_tool.lower()
+                            ):
+                                chosen_tool = tid
+                                break
+            except Exception as e:
+                logger.warning("LLM gate tool step failed: %s", e)
+                chosen_tool = agent_tools[0].tool_id if agent_tools else None
+                tool_reasoning = f"LLM-anrop misslyckades: {e}"
+        else:
+            tool_reasoning = "Inga verktyg hittades för vald agent."
+
+        tool_step = LlmGateStepResult(
+            chosen=chosen_tool or "",
+            reasoning=tool_reasoning,
+            candidates_shown=len(agent_tools),
+        )
+
+        # ── Build RoutingDecision ──
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
+        # Build candidates list from agent_tools for display
+        candidates = [
+            RoutingCandidate(
+                tool_id=pt.tool_id,
+                zone=pt.zone,
+                raw_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                calibrated_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                rank=0 if pt.tool_id == chosen_tool else i + 1,
+            )
+            for i, pt in enumerate(agent_tools)
+        ]
+        # Sort chosen first
+        candidates.sort(key=lambda c: (c.raw_score,), reverse=True)
+        for i, c in enumerate(candidates):
+            c.rank = i
+
+        # Build agent resolution for display
+        agent_candidates = [
+            AgentCandidateResponse(
+                name=aid,
+                zone=a.get("domain_id", ""),
+                score=1.0 if aid == chosen_agent else 0.0,
+                matched_keywords=[],
+            )
+            for aid, a in sorted(domain_agents.items())
+        ]
+
+        # Minimal QUL — just normalized query + chosen domain
+        analysis = QueryAnalysis(
+            original_query=query,
+            normalized_query=query.lower().strip(),
+            sub_queries=[],
+            entities=QueryEntities(),
+            domain_hints=[],
+            zone_candidates=[chosen_domain],
+            complexity="simple",
+            is_multi_intent=False,
+            ood_risk=0.0,
+        )
+
+        decision = RoutingDecision(
+            query_analysis=analysis,
+            agent_resolution=AgentResolution(
+                selected_agents=[chosen_agent] if chosen_agent else [],
+                candidates=agent_candidates[:5],
+                tool_namespaces=agent_ns_prefixes,
+            ),
+            band=0,
+            band_name="llm_gate",
+            candidates=candidates,
+            selected_tool=chosen_tool,
+            selected_agent=chosen_agent,
+            resolved_zone=chosen_domain,
+            calibrated_confidence=1.0 if chosen_tool else 0.0,
+            is_ood=False,
+            schema_verified=False,
+            latency_ms=elapsed_ms,
+            llm_gate=LlmGateResult(
+                intent_step=intent_step,
+                agent_step=agent_step,
+                tool_step=tool_step,
+            ),
+        )
+
+        return decision
+
+    # ------------------------------------------------------------------
     # Auto Loop Run (Sprint 5)
     # ------------------------------------------------------------------
 

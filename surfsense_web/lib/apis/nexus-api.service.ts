@@ -112,6 +112,18 @@ export interface LlmJudgeToolResult {
 	agreement: boolean;
 }
 
+export interface LlmGateStepResult {
+	chosen: string;
+	reasoning: string;
+	candidates_shown: number;
+}
+
+export interface LlmGateResult {
+	intent_step: LlmGateStepResult | null;
+	agent_step: LlmGateStepResult | null;
+	tool_step: LlmGateStepResult | null;
+}
+
 export interface RoutingDecision {
 	query_analysis: QueryAnalysis;
 	agent_resolution: AgentResolution | null;
@@ -126,6 +138,7 @@ export interface RoutingDecision {
 	schema_verified: boolean;
 	latency_ms: number;
 	llm_judge: LlmJudgeToolResult | null;
+	llm_gate: LlmGateResult | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -648,10 +661,14 @@ class NexusApiService {
 			body: JSON.stringify({ query }),
 		});
 
-	routeQuery = (query: string, options?: { llm_judge?: boolean }) =>
+	routeQuery = (query: string, options?: { llm_judge?: boolean; llm_gate?: boolean }) =>
 		fetchNexus<RoutingDecision>("/routing/route", {
 			method: "POST",
-			body: JSON.stringify({ query, llm_judge: options?.llm_judge ?? false }),
+			body: JSON.stringify({
+				query,
+				llm_judge: options?.llm_judge ?? false,
+				llm_gate: options?.llm_gate ?? false,
+			}),
 		});
 
 	// Space Auditor (Sprint 2)
