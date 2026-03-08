@@ -667,10 +667,116 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "statistik": WorkerConfig(
-            name="statistik-worker",
-            primary_namespaces=[("tools", "statistics")],
+        "statistik-ekonomi": WorkerConfig(
+            name="statistik-ekonomi-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "ekonomi"),
+                ("tools", "statistics", "kolada", "ekonomi"),
+            ],
             fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-befolkning": WorkerConfig(
+            name="statistik-befolkning-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "befolkning"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-arbetsmarknad": WorkerConfig(
+            name="statistik-arbetsmarknad-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "arbetsmarknad"),
+                ("tools", "statistics", "kolada", "arbetsmarknad"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-utbildning": WorkerConfig(
+            name="statistik-utbildning-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "utbildning"),
+                ("tools", "statistics", "kolada", "utbildning"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-halsa": WorkerConfig(
+            name="statistik-halsa-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "halsa"),
+                ("tools", "statistics", "kolada", "halsa"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-miljo": WorkerConfig(
+            name="statistik-miljo-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "miljo"),
+                ("tools", "statistics", "kolada", "miljo"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-fastighet": WorkerConfig(
+            name="statistik-fastighet-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "fastighet"),
+                ("tools", "statistics", "kolada", "fastighet"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-naringsliv": WorkerConfig(
+            name="statistik-naringsliv-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "naringsliv"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
+                ("tools", "action"),
+                ("tools", "knowledge"),
+                ("tools", "general"),
+            ],
+        ),
+        "statistik-samhalle": WorkerConfig(
+            name="statistik-samhalle-worker",
+            primary_namespaces=[
+                ("tools", "statistics", "scb", "samhalle"),
+                ("tools", "statistics", "kolada", "samhalle"),
+            ],
+            fallback_namespaces=[
+                ("tools", "statistics"),
                 ("tools", "action"),
                 ("tools", "knowledge"),
                 ("tools", "general"),
@@ -749,7 +855,15 @@ async def create_supervisor_agent(
         "väder": action_prompt,
         "kartor": action_prompt,
         "media": media_prompt or action_prompt,
-        "statistik": statistics_prompt,
+        "statistik-ekonomi": statistics_prompt,
+        "statistik-befolkning": statistics_prompt,
+        "statistik-arbetsmarknad": statistics_prompt,
+        "statistik-utbildning": statistics_prompt,
+        "statistik-halsa": statistics_prompt,
+        "statistik-miljo": statistics_prompt,
+        "statistik-fastighet": statistics_prompt,
+        "statistik-naringsliv": statistics_prompt,
+        "statistik-samhalle": statistics_prompt,
         "webb": browser_prompt or knowledge_prompt,
         "kod": code_prompt or knowledge_prompt,
         "bolag": bolag_prompt or knowledge_prompt,
@@ -838,28 +952,151 @@ async def create_supervisor_agent(
             prompt_key="kartor",
         ),
         AgentDefinition(
-            name="statistik",
-            description="SCB och officiell svensk statistik samt Kolada kommundata",
+            name="statistik-ekonomi",
+            description="Ekonomisk statistik — BNP, KPI, inflation, handel, finans",
             keywords=[
-                "statistik",
-                "scb",
-                "kolada",
-                "skolverket statistik",
-                "salsa",
-                "nyckeltal",
-                "kommun",
-                "kommundata",
-                "befolkning",
+                "ekonomi",
+                "bnp",
                 "kpi",
-                "aldreomsorg",
-                "äldreomsorg",
-                "hemtjanst",
-                "hemtjänst",
-                "behorighet",
-                "behörighet",
+                "inflation",
+                "handel",
+                "nationalräkenskaper",
+                "priser",
                 "skattesats",
+                "offentlig ekonomi",
+                "finansmarknad",
             ],
-            namespace=("agents", "statistics"),
+            namespace=("agents", "statistics", "ekonomi"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-befolkning",
+            description="Befolkningsstatistik — folkmängd, demografi, migration",
+            keywords=[
+                "befolkning",
+                "folkmängd",
+                "invånare",
+                "kommun",
+                "demografi",
+                "födda",
+                "dödsfall",
+                "invandring",
+            ],
+            namespace=("agents", "statistics", "befolkning"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-arbetsmarknad",
+            description="Arbetsmarknadsstatistik — arbetslöshet, sysselsättning, löner",
+            keywords=[
+                "arbetsmarknad",
+                "arbetslöshet",
+                "sysselsättning",
+                "lön",
+                "löner",
+                "lönestatistik",
+                "lönestruktur",
+            ],
+            namespace=("agents", "statistics", "arbetsmarknad"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-utbildning",
+            description="Utbildningsstatistik — skola, gymnasium, högskola, forskning",
+            keywords=[
+                "utbildning",
+                "skola",
+                "förskola",
+                "grundskola",
+                "gymnasium",
+                "högskola",
+                "forskning",
+                "betyg",
+                "behörighet",
+                "pedagogtäthet",
+            ],
+            namespace=("agents", "statistics", "utbildning"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-halsa",
+            description="Hälso- och omsorgsstatistik — sjukvård, äldreomsorg, LSS, IFO",
+            keywords=[
+                "hälsa",
+                "sjukvård",
+                "äldreomsorg",
+                "hemtjänst",
+                "lss",
+                "ifo",
+                "socialtjänst",
+                "omsorg",
+                "barn och unga",
+                "kolada",
+                "nyckeltal",
+            ],
+            namespace=("agents", "statistics", "halsa"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-miljo",
+            description="Miljö- och energistatistik — utsläpp, energi, klimat",
+            keywords=[
+                "miljö",
+                "energi",
+                "utsläpp",
+                "klimat",
+                "avfall",
+                "återvinning",
+                "energianvändning",
+            ],
+            namespace=("agents", "statistics", "miljo"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-fastighet",
+            description="Bostads- och fastighetsstatistik — bygglov, nybyggnation, bestånd",
+            keywords=[
+                "bostad",
+                "bostäder",
+                "bygglov",
+                "nybyggnation",
+                "bostadsbestånd",
+                "hyra",
+                "fastighet",
+                "byggande",
+            ],
+            namespace=("agents", "statistics", "fastighet"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-naringsliv",
+            description="Näringslivsstatistik — företag, omsättning, nyföretagande",
+            keywords=[
+                "näringsliv",
+                "företag",
+                "omsättning",
+                "nyföretagande",
+                "bransch",
+                "näringsverksamhet",
+            ],
+            namespace=("agents", "statistics", "naringsliv"),
+            prompt_key="statistics",
+        ),
+        AgentDefinition(
+            name="statistik-samhalle",
+            description="Samhällsstatistik — transport, kultur, jordbruk",
+            keywords=[
+                "transport",
+                "transporter",
+                "kultur",
+                "fritid",
+                "jordbruk",
+                "statistik",
+                "nyckeltal",
+                "scb",
+                "samhälle",
+            ],
+            namespace=("agents", "statistics", "samhalle"),
             prompt_key="statistics",
         ),
         AgentDefinition(
@@ -1640,10 +1877,42 @@ async def create_supervisor_agent(
         "trafik-tag": trafik_tool_ids[:6],
         "trafik-vag": trafik_tool_ids[:6],
         "trafik-vagvader": trafik_tool_ids[:6],
-        "statistik": [
-            str(definition.tool_id).strip()
-            for definition in SCB_TOOL_DEFINITIONS[:6]
-            if str(definition.tool_id).strip()
+        "statistik-ekonomi": _registry_tool_ids("statistik-ekonomi")[:6] or [
+            "scb_nationalrakenskaper", "scb_priser_kpi", "scb_priser_inflation",
+            "scb_handel", "scb_finansmarknad", "kolada_ekonomi",
+        ],
+        "statistik-befolkning": _registry_tool_ids("statistik-befolkning")[:6] or [
+            "scb_befolkning", "scb_befolkning_folkmangd", "scb_befolkning_forandringar",
+            "scb_befolkning_fodda", "scb_befolkning_dodsfall", "scb_befolkning_invandring",
+        ],
+        "statistik-arbetsmarknad": _registry_tool_ids("statistik-arbetsmarknad")[:6] or [
+            "scb_arbetsmarknad", "scb_arbetsmarknad_arbetsloshet",
+            "scb_arbetsmarknad_sysselsattning", "scb_arbetsmarknad_lon",
+            "scb_arbetsmarknad_lonestruktur", "kolada_arbetsmarknad",
+        ],
+        "statistik-utbildning": _registry_tool_ids("statistik-utbildning")[:6] or [
+            "scb_utbildning", "scb_utbildning_gymnasie", "scb_utbildning_hogskola",
+            "kolada_forskola", "kolada_grundskola", "kolada_gymnasieskola",
+        ],
+        "statistik-halsa": _registry_tool_ids("statistik-halsa")[:6] or [
+            "scb_halsa_sjukvard", "kolada_halsa", "kolada_aldreomsorg",
+            "kolada_lss", "kolada_ifo", "kolada_barn_unga",
+        ],
+        "statistik-miljo": _registry_tool_ids("statistik-miljo")[:5] or [
+            "scb_miljo", "scb_miljo_utslapp", "scb_miljo_energi",
+            "scb_energi", "kolada_miljo",
+        ],
+        "statistik-fastighet": _registry_tool_ids("statistik-fastighet")[:5] or [
+            "scb_boende_byggande", "scb_boende_bygglov", "scb_boende_nybyggnation",
+            "scb_boende_bestand", "kolada_boende",
+        ],
+        "statistik-naringsliv": _registry_tool_ids("statistik-naringsliv")[:4] or [
+            "scb_naringsverksamhet", "scb_naringsliv_foretag",
+            "scb_naringsliv_omsattning", "scb_naringsliv_nyforetagande",
+        ],
+        "statistik-samhalle": _registry_tool_ids("statistik-samhalle")[:6] or [
+            "scb_transporter", "scb_kultur", "scb_jordbruk",
+            "scb_amnesovergripande", "kolada_kultur", "kolada_sammanfattning",
         ],
         "marknad": [
             str(definition.tool_id).strip()
@@ -1693,7 +1962,35 @@ async def create_supervisor_agent(
         }:
             return "trafik"
         if normalized_tool_id.startswith(("scb_", "kolada_", "skolverket_")):
-            return "statistik"
+            # Fallback: resolve via bigtool_store namespace when registry
+            # is unavailable.  The namespace function already encodes the
+            # correct agent sub-category.
+            from app.agents.new_chat.bigtool_store import (
+                _namespace_for_kolada_tool,
+                _namespace_for_scb_tool,
+            )
+
+            _ns_to_agent: dict[str, str] = {
+                "befolkning": "statistik-befolkning",
+                "arbetsmarknad": "statistik-arbetsmarknad",
+                "utbildning": "statistik-utbildning",
+                "halsa": "statistik-halsa",
+                "miljo": "statistik-miljo",
+                "fastighet": "statistik-fastighet",
+                "naringsliv": "statistik-naringsliv",
+                "ekonomi": "statistik-ekonomi",
+                "samhalle": "statistik-samhalle",
+                "demokrati": "riksdagen",
+            }
+            if normalized_tool_id.startswith("scb_"):
+                ns = _namespace_for_scb_tool(normalized_tool_id)
+            elif normalized_tool_id.startswith("kolada_"):
+                ns = _namespace_for_kolada_tool(normalized_tool_id)
+            else:
+                ns = ()
+            # namespace is e.g. ("tools", "statistics", "scb", "ekonomi")
+            sub_key = ns[-1] if len(ns) >= 4 else ""
+            return _ns_to_agent.get(sub_key, "statistik-ekonomi")
         if normalized_tool_id.startswith("riksdag_"):
             return "riksdagen"
         if normalized_tool_id.startswith("bolagsverket_"):
@@ -2226,12 +2523,12 @@ async def create_supervisor_agent(
             preferred = {
                 "kunskap": ["kunskap", "webb"],
                 "skapande": ["åtgärd", "media"],
-                "jämförelse": ["syntes", "kunskap", "statistik"],
+                "jämförelse": ["syntes", "kunskap", "statistik-ekonomi"],
                 # Backward compat
                 "action": ["åtgärd", "media"],
                 "knowledge": ["kunskap", "webb"],
-                "statistics": ["statistik"],
-                "compare": ["syntes", "kunskap", "statistik"],
+                "statistics": ["statistik-ekonomi"],
+                "compare": ["syntes", "kunskap", "statistik-ekonomi"],
             }.get(str(route_hint), [])
             if marketplace_task and "marknad" not in preferred:
                 preferred.insert(0, "marknad")
@@ -2366,10 +2663,9 @@ async def create_supervisor_agent(
         route_allowed = _route_allowed_agents(route_hint)
         default_for_route = _route_default_agent(route_hint, route_allowed)
         # Weather limit removed: should be controlled by graph_complexity like other routes
-        if route_hint in {
-            "statistik",
-            "statistics",
-        }:  # Statistics agents chosen by agent_resolver, not route
+        if route_hint and (
+            str(route_hint).startswith("statistik") or route_hint == "statistics"
+        ):  # Statistics agents chosen by agent_resolver, not route
             limit = 1
 
         # Extract sub_intents from state for multi-domain cache key
@@ -2409,12 +2705,12 @@ async def create_supervisor_agent(
                 preferred = {
                     "kunskap": ["kunskap", "webb"],
                     "skapande": ["åtgärd", "media"],
-                    "jämförelse": ["syntes", "kunskap", "statistik"],
+                    "jämförelse": ["syntes", "kunskap", "statistik-ekonomi"],
                     # Backward compat
                     "action": ["åtgärd", "media"],
                     "knowledge": ["kunskap", "webb"],
-                    "statistics": ["statistik"],
-                    "compare": ["syntes", "kunskap", "statistik"],
+                    "statistics": ["statistik-ekonomi"],
+                    "compare": ["syntes", "kunskap", "statistik-ekonomi"],
                     "trafik": ["trafik", "åtgärd"],
                 }.get(str(route_hint), [])
                 if has_marketplace_intent and "marknad" not in preferred:

@@ -100,7 +100,16 @@ def _route_default_agent(
         "trafik-tag": "trafik-tag",
         "trafik-vag": "trafik-vag",
         "trafik-vagvader": "trafik-vagvader",
-        "statistik": "statistik",
+        "statistik": "statistik-ekonomi",
+        "statistik-ekonomi": "statistik-ekonomi",
+        "statistik-befolkning": "statistik-befolkning",
+        "statistik-arbetsmarknad": "statistik-arbetsmarknad",
+        "statistik-utbildning": "statistik-utbildning",
+        "statistik-halsa": "statistik-halsa",
+        "statistik-miljo": "statistik-miljo",
+        "statistik-fastighet": "statistik-fastighet",
+        "statistik-naringsliv": "statistik-naringsliv",
+        "statistik-samhalle": "statistik-samhalle",
         "väder": "väder",
         "väder-vatten": "väder-vatten",
         "väder-risk": "väder-risk",
@@ -191,14 +200,17 @@ def _focused_tool_ids_for_agent(
 ) -> list[str]:
     normalized_task = _normalize_text(task)
     normalized_agent_name = str(agent_name or "").strip().lower()
-    if normalized_agent_name in {
-        "kunskap",
-        "statistik",
-        "åtgärd",
-        "knowledge",
-        "statistics",
-        "action",
-    } and any(marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS):
+    if (
+        normalized_agent_name
+        in {
+            "kunskap",
+            "åtgärd",
+            "knowledge",
+            "statistics",
+            "action",
+        }
+        or normalized_agent_name.startswith("statistik-")
+    ) and any(marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS):
         # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
         # instead of locking the worker to static profile IDs.
         return []
@@ -238,7 +250,14 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         (("trafik", "traffic", "road", "vag", "väg"), "trafik-vag"),
         (("rail", "train", "tåg", "tag", "järnväg"), "trafik-tag"),
         (("map", "kart", "geo"), "kartor"),
-        (("stat", "scb", "data"), "statistik"),
+        (("stat", "scb", "data"), "statistik-ekonomi"),
+        (("befolkning", "folkmangd", "invånare"), "statistik-befolkning"),
+        (("arbetsmarknad", "arbetslöshet", "sysselsättning", "lön"), "statistik-arbetsmarknad"),
+        (("utbildning", "skola", "förskola", "grundskola", "gymnasium"), "statistik-utbildning"),
+        (("omsorg", "äldreomsorg", "hemtjänst", "lss", "ifo"), "statistik-halsa"),
+        (("utsläpp", "miljöstatistik", "energistatistik"), "statistik-miljo"),
+        (("bygglov", "nybyggnation", "bostadsbestånd"), "statistik-fastighet"),
+        (("nyföretagande", "företagsstatistik", "näringsverksamhet"), "statistik-naringsliv"),
         (("riks", "parliament", "politik"), "riksdagen"),
         (("bolag", "company", "business", "org"), "bolag"),
         (

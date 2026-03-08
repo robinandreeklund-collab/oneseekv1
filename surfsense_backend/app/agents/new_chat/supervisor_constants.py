@@ -7,14 +7,14 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS
+from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
+from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
-from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
-from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
-from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
-
 
 _AGENT_CACHE_TTL = timedelta(minutes=20)
 _AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
@@ -24,8 +24,16 @@ _AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
 # This scales to 100s of APIs without needing regex patterns for each one
 _SPECIALIZED_AGENTS = {
     "marknad",  # Blocket/Tradera tools
-    "statistik",  # SCB/Kolada tools
-    "riksdagen",  # Parliament data tools
+    "statistik-ekonomi",  # SCB/Kolada economic statistics
+    "statistik-befolkning",  # SCB population/demographics
+    "statistik-arbetsmarknad",  # SCB/Kolada labor market
+    "statistik-utbildning",  # SCB/Kolada education
+    "statistik-halsa",  # SCB/Kolada health & social care
+    "statistik-miljo",  # SCB/Kolada environment & energy
+    "statistik-fastighet",  # SCB/Kolada housing & property
+    "statistik-naringsliv",  # SCB business/enterprise
+    "statistik-samhalle",  # SCB/Kolada society catch-all
+    "riksdagen",  # Parliament data + demokrati statistics
     "bolag",  # Company registry tools
     "trafik-tag",  # Train/rail + route planning tools
     "trafik-vag",  # Road traffic/incidents/cameras tools
@@ -39,7 +47,7 @@ _SPECIALIZED_AGENTS = {
 _COMPAT_AGENT_NAMES: dict[str, str] = {
     "action": "åtgärd",
     "weather": "väder",
-    "statistics": "statistik",
+    "statistics": "statistik-ekonomi",
     "knowledge": "kunskap",
     "browser": "webb",
     "code": "kod",
@@ -144,7 +152,15 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "trafik-tag": [],
         "trafik-vag": [],
         "trafik-vagvader": [],
-        "statistik": [],
+        "statistik-ekonomi": [],
+        "statistik-befolkning": [],
+        "statistik-arbetsmarknad": [],
+        "statistik-utbildning": [],
+        "statistik-halsa": [],
+        "statistik-miljo": [],
+        "statistik-fastighet": [],
+        "statistik-naringsliv": [],
+        "statistik-samhalle": [],
         "riksdagen": [],
         "bolag": [],
         "marknad": [],
@@ -200,11 +216,77 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 ),
             )
         )
+    # SCB: split by tool_id prefix → sub-agent
+    _scb_agent_by_prefix = {
+        "scb_befolkning": "statistik-befolkning",
+        "scb_arbetsmarknad": "statistik-arbetsmarknad",
+        "scb_utbildning": "statistik-utbildning",
+        "scb_halsa": "statistik-halsa",
+        "scb_socialtjanst": "statistik-halsa",
+        "scb_levnadsforhallanden": "statistik-halsa",
+        "scb_miljo": "statistik-miljo",
+        "scb_energi": "statistik-miljo",
+        "scb_boende": "statistik-fastighet",
+        "scb_naringsverksamhet": "statistik-naringsliv",
+        "scb_naringsliv": "statistik-naringsliv",
+        "scb_nationalrakenskaper": "statistik-ekonomi",
+        "scb_priser": "statistik-ekonomi",
+        "scb_finansmarknad": "statistik-ekonomi",
+        "scb_offentlig": "statistik-ekonomi",
+        "scb_hushall": "statistik-ekonomi",
+        "scb_handel": "statistik-ekonomi",
+        "scb_transporter": "statistik-samhalle",
+        "scb_demokrati": "riksdagen",
+        "scb_kultur": "statistik-samhalle",
+        "scb_jordbruk": "statistik-samhalle",
+        "scb_amnesovergripande": "statistik-samhalle",
+    }
     for definition in SCB_TOOL_DEFINITIONS:
-        profiles["statistik"].append(
+        tool_id = str(getattr(definition, "tool_id", ""))
+        sub_agent = "statistik-samhalle"  # default
+        for prefix, agent in _scb_agent_by_prefix.items():
+            if tool_id.startswith(prefix):
+                sub_agent = agent
+                break
+        profiles[sub_agent].append(
             AgentToolProfile(
-                tool_id=str(getattr(definition, "tool_id", "")),
+                tool_id=tool_id,
                 category=str(getattr(definition, "base_path", "statistik")),
+                description=str(getattr(definition, "description", "")),
+                keywords=tuple(
+                    str(item) for item in list(getattr(definition, "keywords", []))
+                ),
+            )
+        )
+    # Kolada: split by tool_id prefix → sub-agent
+    _kolada_agent_by_prefix = {
+        "kolada_aldreomsorg": "statistik-halsa",
+        "kolada_lss": "statistik-halsa",
+        "kolada_ifo": "statistik-halsa",
+        "kolada_barn_unga": "statistik-halsa",
+        "kolada_halsa": "statistik-halsa",
+        "kolada_forskola": "statistik-utbildning",
+        "kolada_grundskola": "statistik-utbildning",
+        "kolada_gymnasieskola": "statistik-utbildning",
+        "kolada_ekonomi": "statistik-ekonomi",
+        "kolada_miljo": "statistik-miljo",
+        "kolada_boende": "statistik-fastighet",
+        "kolada_arbetsmarknad": "statistik-arbetsmarknad",
+        "kolada_demokrati": "riksdagen",
+        "kolada_kultur": "statistik-samhalle",
+        "kolada_sammanfattning": "statistik-samhalle",
+    }
+    for definition in KOLADA_TOOL_DEFINITIONS:
+        tool_id = str(getattr(definition, "tool_id", ""))
+        sub_agent = "statistik-samhalle"  # default
+        for prefix, agent in _kolada_agent_by_prefix.items():
+            if tool_id.startswith(prefix):
+                sub_agent = agent
+                break
+        profiles[sub_agent].append(
+            AgentToolProfile(
+                tool_id=tool_id,
+                category=str(getattr(definition, "category", "kolada")),
                 description=str(getattr(definition, "description", "")),
                 keywords=tuple(
                     str(item) for item in list(getattr(definition, "keywords", []))
@@ -317,11 +399,12 @@ _AGENT_NAME_ALIAS_MAP = {
     "train": "trafik-tag",
     "train_agent": "trafik-tag",
     "rail": "trafik-tag",
-    # Statistics → statistik
-    "municipality_agent": "statistik",
-    "statistic_agent": "statistik",
-    "statistics_agent": "statistik",
-    "statistics": "statistik",
+    # Statistics → statistik-ekonomi (default for backward compat)
+    "municipality_agent": "statistik-ekonomi",
+    "statistic_agent": "statistik-ekonomi",
+    "statistics_agent": "statistik-ekonomi",
+    "statistics": "statistik-ekonomi",
+    "statistik": "statistik-ekonomi",
     # Maps
     "map_agent": "kartor",
     "maps_agent": "kartor",
@@ -496,9 +579,9 @@ _MISSING_FIELD_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _RESULT_STATUS_VALUES = {"success", "partial", "blocked", "error"}
 _ROUTE_STRICT_AGENT_POLICIES: dict[str, set[str]] = {
     # Jämförelse locks to syntes + relevant kunskap agents
-    "jämförelse": {"syntes", "statistik", "kunskap"},
+    "jämförelse": {"syntes", "statistik-ekonomi", "kunskap"},
     # Backward compat for old string values
-    "compare": {"syntes", "statistik", "kunskap"},
+    "compare": {"syntes", "statistik-ekonomi", "kunskap"},
 }
 _COMPARE_FOLLOWUP_RE = re.compile(
     r"\b(jamfor|jämför|jamforelse|jämförelse|skillnad|dessa två|de två|båda|bada)\b",

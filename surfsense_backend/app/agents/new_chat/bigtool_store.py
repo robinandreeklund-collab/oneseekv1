@@ -757,37 +757,124 @@ def get_metadata_limits() -> dict[str, int]:
 
 
 def _namespace_for_scb_tool(tool_id: str) -> tuple[str, ...]:
-    parts = tool_id.split("_")
-    if len(parts) >= 3:
-        return ("tools", "statistics", "scb", parts[1])
+    """Map SCB tools to agent-aligned sub-namespaces."""
+    normalized = str(tool_id or "").strip().lower()
+
+    # Befolkning → statistik-befolkning
+    if normalized.startswith("scb_befolkning"):
+        return ("tools", "statistics", "scb", "befolkning")
+
+    # Arbetsmarknad → statistik-arbetsmarknad
+    if normalized.startswith("scb_arbetsmarknad"):
+        return ("tools", "statistics", "scb", "arbetsmarknad")
+
+    # Utbildning → statistik-utbildning
+    if normalized.startswith("scb_utbildning"):
+        return ("tools", "statistics", "scb", "utbildning")
+
+    # Hälsa, socialtjänst, levnadsförhållanden → statistik-halsa
+    if normalized.startswith((
+        "scb_halsa",
+        "scb_socialtjanst",
+        "scb_levnadsforhallanden",
+    )):
+        return ("tools", "statistics", "scb", "halsa")
+
+    # Miljö, energi → statistik-miljo
+    if normalized.startswith(("scb_miljo", "scb_energi")):
+        return ("tools", "statistics", "scb", "miljo")
+
+    # Boende, byggande → statistik-fastighet
+    if normalized.startswith("scb_boende"):
+        return ("tools", "statistics", "scb", "fastighet")
+
+    # Näringsliv → statistik-naringsliv
+    if normalized.startswith(("scb_naringsverksamhet", "scb_naringsliv")):
+        return ("tools", "statistics", "scb", "naringsliv")
+
+    # Ekonomi: nationalräkenskaper, priser, finans, offentlig ekonomi,
+    # hushåll, handel → statistik-ekonomi
+    if normalized.startswith((
+        "scb_nationalrakenskaper",
+        "scb_priser",
+        "scb_finansmarknad",
+        "scb_offentlig",
+        "scb_hushall",
+        "scb_handel",
+    )):
+        return ("tools", "statistics", "scb", "ekonomi")
+
+    # Demokrati → politik (shared with riksdagen agent)
+    if normalized.startswith("scb_demokrati"):
+        return ("tools", "statistics", "scb", "demokrati")
+
+    # Samhälle catch-all: transporter, kultur, jordbruk,
+    # ämnesövergripande → statistik-samhalle
+    if normalized.startswith((
+        "scb_transporter",
+        "scb_kultur",
+        "scb_jordbruk",
+        "scb_amnesovergripande",
+    )):
+        return ("tools", "statistics", "scb", "samhalle")
+
+    # Fallback: generic SCB namespace
     return ("tools", "statistics", "scb")
 
 
 def _namespace_for_kolada_tool(tool_id: str) -> tuple[str, ...]:
-    """Map Kolada tools to namespaces based on category."""
-    # Find the tool definition to get its category
-    for definition in KOLADA_TOOL_DEFINITIONS:
-        if definition.tool_id == tool_id:
-            category = definition.category
-            if category == "omsorg":
-                return ("tools", "statistics", "kolada", "omsorg")
-            elif category == "skola":
-                return ("tools", "statistics", "kolada", "skola")
-            elif category == "halsa":
-                return ("tools", "statistics", "kolada", "halsa")
-            elif category == "ekonomi":
-                return ("tools", "statistics", "kolada", "ekonomi")
-            elif category == "miljo":
-                return ("tools", "statistics", "kolada", "miljo")
-            elif category == "boende":
-                return ("tools", "statistics", "kolada", "boende")
-            elif category == "ovrig":
-                # Extract subcategory from tool_id (e.g., kolada_kultur -> kultur)
-                parts = tool_id.split("_")
-                if len(parts) >= 2:
-                    return ("tools", "statistics", "kolada", parts[1])
-                return ("tools", "statistics", "kolada", "ovrig")
-    
+    """Map Kolada tools to agent-aligned sub-namespaces."""
+    normalized = str(tool_id or "").strip().lower()
+
+    # Omsorg (äldreomsorg, LSS, IFO, barn & unga) → statistik-halsa
+    if normalized.startswith((
+        "kolada_aldreomsorg",
+        "kolada_lss",
+        "kolada_ifo",
+        "kolada_barn_unga",
+    )):
+        return ("tools", "statistics", "kolada", "halsa")
+
+    # Skola (förskola, grundskola, gymnasie) → statistik-utbildning
+    if normalized.startswith((
+        "kolada_forskola",
+        "kolada_grundskola",
+        "kolada_gymnasieskola",
+    )):
+        return ("tools", "statistics", "kolada", "utbildning")
+
+    # Hälsa → statistik-halsa
+    if normalized.startswith("kolada_halsa"):
+        return ("tools", "statistics", "kolada", "halsa")
+
+    # Ekonomi → statistik-ekonomi
+    if normalized.startswith("kolada_ekonomi"):
+        return ("tools", "statistics", "kolada", "ekonomi")
+
+    # Miljö → statistik-miljo
+    if normalized.startswith("kolada_miljo"):
+        return ("tools", "statistics", "kolada", "miljo")
+
+    # Boende → statistik-fastighet
+    if normalized.startswith("kolada_boende"):
+        return ("tools", "statistics", "kolada", "fastighet")
+
+    # Arbetsmarknad → statistik-arbetsmarknad
+    if normalized.startswith("kolada_arbetsmarknad"):
+        return ("tools", "statistics", "kolada", "arbetsmarknad")
+
+    # Demokrati → politik (shared with riksdagen agent)
+    if normalized.startswith("kolada_demokrati"):
+        return ("tools", "statistics", "kolada", "demokrati")
+
+    # Kultur → statistik-samhalle
+    if normalized.startswith("kolada_kultur"):
+        return ("tools", "statistics", "kolada", "samhalle")
+
+    # Sammanfattning → statistik-samhalle (catch-all)
+    if normalized.startswith("kolada_sammanfattning"):
+        return ("tools", "statistics", "kolada", "samhalle")
+
     # Default fallback
     return ("tools", "statistics", "kolada")
 
@@ -2437,11 +2524,47 @@ AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
     "väder": [("tools", "weather", "smhi")],
     "väder-vatten": [("tools", "weather", "hydro")],
     "väder-risk": [("tools", "weather", "risk")],
-    "statistics": [("tools", "statistics")],
-    "statistik": [("tools", "statistics")],
+    "statistik-ekonomi": [
+        ("tools", "statistics", "scb", "ekonomi"),
+        ("tools", "statistics", "kolada", "ekonomi"),
+    ],
+    "statistik-befolkning": [
+        ("tools", "statistics", "scb", "befolkning"),
+    ],
+    "statistik-arbetsmarknad": [
+        ("tools", "statistics", "scb", "arbetsmarknad"),
+        ("tools", "statistics", "kolada", "arbetsmarknad"),
+    ],
+    "statistik-utbildning": [
+        ("tools", "statistics", "scb", "utbildning"),
+        ("tools", "statistics", "kolada", "utbildning"),
+    ],
+    "statistik-halsa": [
+        ("tools", "statistics", "scb", "halsa"),
+        ("tools", "statistics", "kolada", "halsa"),
+    ],
+    "statistik-miljo": [
+        ("tools", "statistics", "scb", "miljo"),
+        ("tools", "statistics", "kolada", "miljo"),
+    ],
+    "statistik-fastighet": [
+        ("tools", "statistics", "scb", "fastighet"),
+        ("tools", "statistics", "kolada", "fastighet"),
+    ],
+    "statistik-naringsliv": [
+        ("tools", "statistics", "scb", "naringsliv"),
+    ],
+    "statistik-samhalle": [
+        ("tools", "statistics", "scb", "samhalle"),
+        ("tools", "statistics", "kolada", "samhalle"),
+    ],
     "bolag": [("tools", "bolag")],
     "kartor": [("tools", "kartor")],
-    "riksdagen": [("tools", "politik")],
+    "riksdagen": [
+        ("tools", "politik"),
+        ("tools", "statistics", "scb", "demokrati"),
+        ("tools", "statistics", "kolada", "demokrati"),
+    ],
     "marketplace": [("tools", "marketplace")],
     "marknad": [("tools", "marketplace")],
     "media": [("tools", "action", "media")],
