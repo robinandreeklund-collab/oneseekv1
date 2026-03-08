@@ -1395,19 +1395,54 @@ async def create_supervisor_agent(
             success=bool(success),
         )
 
-    weather_tool_ids = [definition.tool_id for definition in SMHI_TOOL_DEFINITIONS]
-    weather_tool_ids.extend(
-        definition.tool_id
-        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
-        if _is_weather_tool_id(definition.tool_id)
-    )
-    weather_tool_ids = list(dict.fromkeys(weather_tool_ids))
+    # ── Build per-agent tool ID lists from GraphRegistry (DB-backed) ──
+    # Falls back to hardcoded lists if registry is unavailable.
+
+    def _registry_tool_ids(agent_id: str) -> list[str]:
+        """Return tool IDs for an agent from the graph registry."""
+        if graph_registry is not None and graph_registry.tools_by_agent:
+            tools = graph_registry.tools_by_agent.get(agent_id, [])
+            return [str(t.get("tool_id", "")).strip() for t in tools if t.get("tool_id")]
+        return []
+
+    # Try registry first, fall back to hardcoded definitions
+    weather_tool_ids = _registry_tool_ids("väder")
+    if not weather_tool_ids:
+        _HYDRO_PREFIXES = ("smhi_hydrologi_", "smhi_oceanografi_")
+        _RISK_PREFIXES = ("smhi_brandrisk_", "smhi_solstralning_")
+        weather_tool_ids = [
+            d.tool_id for d in SMHI_TOOL_DEFINITIONS
+            if not any(d.tool_id.startswith(p) for p in _HYDRO_PREFIXES + _RISK_PREFIXES)
+        ]
+        weather_tool_ids.extend(
+            d.tool_id for d in TRAFIKVERKET_TOOL_DEFINITIONS
+            if _is_weather_tool_id(d.tool_id)
+        )
+        weather_tool_ids = list(dict.fromkeys(weather_tool_ids))
+
+    smhi_hydro_ids = _registry_tool_ids("väder-vatten")
+    if not smhi_hydro_ids:
+        smhi_hydro_ids = [
+            d.tool_id for d in SMHI_TOOL_DEFINITIONS
+            if d.tool_id.startswith(("smhi_hydrologi_", "smhi_oceanografi_"))
+        ]
+
+    smhi_risk_ids = _registry_tool_ids("väder-risk")
+    if not smhi_risk_ids:
+        smhi_risk_ids = [
+            d.tool_id for d in SMHI_TOOL_DEFINITIONS
+            if d.tool_id.startswith(("smhi_brandrisk_", "smhi_solstralning_"))
+        ]
+
     weather_tool_id_set = set(weather_tool_ids)
-    trafik_tool_ids = [
-        definition.tool_id
-        for definition in TRAFIKVERKET_TOOL_DEFINITIONS
-        if definition.tool_id not in weather_tool_id_set
-    ]
+    trafik_tool_ids = _registry_tool_ids("trafik-tag") + _registry_tool_ids("trafik-vag") + _registry_tool_ids("trafik-vagvader")
+    if not trafik_tool_ids:
+        trafik_tool_ids = [
+            definition.tool_id
+            for definition in TRAFIKVERKET_TOOL_DEFINITIONS
+            if definition.tool_id not in weather_tool_id_set
+        ]
+    trafik_tool_ids = list(dict.fromkeys(trafik_tool_ids))
     live_tool_index = []
     _tool_registry_for_fan_out: dict[str, Any] = {}
     if isinstance(db_session, AsyncSession):
@@ -1641,6 +1676,14 @@ async def create_supervisor_agent(
                     return agent_id
 
         # Fallback: prefix-based heuristic for tools not yet in registry
+        if normalized_tool_id in {
+            str(item).strip().lower() for item in smhi_hydro_ids
+        }:
+            return "väder-vatten"
+        if normalized_tool_id in {
+            str(item).strip().lower() for item in smhi_risk_ids
+        }:
+            return "väder-risk"
         if normalized_tool_id in {
             str(item).strip().lower() for item in weather_tool_ids
         }:
@@ -3017,6 +3060,10 @@ async def create_supervisor_agent(
                     selected_tool_ids = list(weather_tool_ids)
             else:
                 selected_tool_ids = list(weather_tool_ids)
+        elif name == "väder-vatten":
+            selected_tool_ids = list(smhi_hydro_ids)
+        elif name == "väder-risk":
+            selected_tool_ids = list(smhi_risk_ids)
         if name.startswith("trafik-"):
             selected_tool_ids = [
                 tool_id for tool_id in selected_tool_ids if tool_id in trafik_tool_ids
@@ -3032,6 +3079,10 @@ async def create_supervisor_agent(
         fallback_tool_ids: list[str] = []
         if name in {"väder", "weather"}:
             fallback_tool_ids = list(weather_tool_ids)
+        elif name == "väder-vatten":
+            fallback_tool_ids = list(smhi_hydro_ids)
+        elif name == "väder-risk":
+            fallback_tool_ids = list(smhi_risk_ids)
         elif name.startswith("trafik-"):
             fallback_tool_ids = list(trafik_tool_ids)
         selected_tool_ids = _sanitize_selected_tool_ids_for_worker(
@@ -3856,6 +3907,10 @@ async def create_supervisor_agent(
                             selected_tool_ids = list(weather_tool_ids)
                     else:
                         selected_tool_ids = list(weather_tool_ids)
+                elif agent_name == "väder-vatten":
+                    selected_tool_ids = list(smhi_hydro_ids)
+                elif agent_name == "väder-risk":
+                    selected_tool_ids = list(smhi_risk_ids)
                 if agent_name.startswith("trafik-"):
                     selected_tool_ids = [
                         tool_id
@@ -3873,6 +3928,10 @@ async def create_supervisor_agent(
                 fallback_tool_ids: list[str] = []
                 if agent_name in {"väder", "weather"}:
                     fallback_tool_ids = list(weather_tool_ids)
+                elif agent_name == "väder-vatten":
+                    fallback_tool_ids = list(smhi_hydro_ids)
+                elif agent_name == "väder-risk":
+                    fallback_tool_ids = list(smhi_risk_ids)
                 elif agent_name.startswith("trafik-"):
                     fallback_tool_ids = list(trafik_tool_ids)
                 selected_tool_ids = _sanitize_selected_tool_ids_for_worker(

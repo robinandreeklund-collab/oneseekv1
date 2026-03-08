@@ -842,6 +842,10 @@ def _is_weather_tool(tool_id: str) -> bool:
 
 def _namespace_for_weather_tool(tool_id: str) -> tuple[str, ...]:
     normalized = str(tool_id or "").strip().lower()
+    if normalized.startswith("smhi_hydrologi_") or normalized.startswith("smhi_oceanografi_"):
+        return ("tools", "weather", "hydro")
+    if normalized.startswith("smhi_brandrisk_") or normalized.startswith("smhi_solstralning_"):
+        return ("tools", "weather", "risk")
     if normalized.startswith("smhi_"):
         return ("tools", "weather", "smhi")
     if normalized.startswith("trafikverket_vader_"):
@@ -2429,8 +2433,10 @@ _NAMESPACE_FULL_EXPOSURE_THRESHOLD = 30
 # Agent name → namespace prefixes whose tools should be fully exposed.
 AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
     "trafik": [("tools", "trafik")],
-    "weather": [("tools", "weather")],
-    "väder": [("tools", "weather")],
+    "weather": [("tools", "weather", "smhi")],
+    "väder": [("tools", "weather", "smhi")],
+    "väder-vatten": [("tools", "weather", "hydro")],
+    "väder-risk": [("tools", "weather", "risk")],
     "statistics": [("tools", "statistics")],
     "statistik": [("tools", "statistics")],
     "bolag": [("tools", "bolag")],
