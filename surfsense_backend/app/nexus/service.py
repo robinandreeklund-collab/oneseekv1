@@ -2704,9 +2704,14 @@ class NexusService:
         # Also include agents from DB overrides if available
         if db_agents_by_zone and chosen_domain in db_agents_by_zone:
             for db_agent in db_agents_by_zone[chosen_domain]:
-                aid = db_agent.get("agent_id", "")
+                aid = getattr(db_agent, "name", "") or getattr(db_agent, "agent_id", "")
                 if aid and aid not in domain_agents:
-                    domain_agents[aid] = db_agent
+                    domain_agents[aid] = {
+                        "description": getattr(db_agent, "description", ""),
+                        "keywords": list(getattr(db_agent, "keywords", ())),
+                        "domain_id": chosen_domain,
+                        "primary_namespaces": list(getattr(db_agent, "primary_namespaces", ())),
+                    }
 
         if not domain_agents:
             # Fallback: if no agents match, show all agents
@@ -3042,9 +3047,14 @@ class NexusService:
         }
         if db_agents_by_zone and chosen_domain in db_agents_by_zone:
             for db_agent in db_agents_by_zone[chosen_domain]:
-                aid = db_agent.get("agent_id", "")
+                aid = getattr(db_agent, "name", "") or getattr(db_agent, "agent_id", "")
                 if aid and aid not in domain_agents:
-                    domain_agents[aid] = db_agent
+                    domain_agents[aid] = {
+                        "description": getattr(db_agent, "description", ""),
+                        "keywords": list(getattr(db_agent, "keywords", ())),
+                        "domain_id": chosen_domain,
+                        "primary_namespaces": list(getattr(db_agent, "primary_namespaces", ())),
+                    }
         if not domain_agents:
             domain_agents = all_agents
 
