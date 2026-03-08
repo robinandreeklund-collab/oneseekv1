@@ -806,8 +806,8 @@ async def approve_loop_run(
             tool = tools_by_id.get(tid)
             if tool and tool.namespace:
                 # namespace is a tuple like ("tools", "weather", "smhi")
-                # Use top-level namespace prefix: "tools/weather"
-                ns = "/".join(tool.namespace[:2]) if len(tool.namespace) >= 2 else ""
+                # Use full namespace depth for precise agent matching
+                ns = "/".join(tool.namespace) if len(tool.namespace) >= 2 else ""
                 if ns:
                     namespaces.add(ns)
 

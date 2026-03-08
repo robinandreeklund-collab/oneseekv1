@@ -114,12 +114,13 @@ def _build_nexus_agents_from_seeds() -> tuple[NexusAgent, ...]:
         domain_id = agent_def.get("domain_id", "kunskap")
         keywords = agent_def.get("keywords", [])
         ns_raw = agent_def.get("primary_namespaces", [])
-        # Normalize to 2-level prefixes (e.g. "tools/weather") to match
-        # _resolve_namespaces_from_flow_tools() which also uses 2-level.
+        # Use full namespace depth so sub-agents within the same domain
+        # (e.g. statistik-befolkning vs statistik-ekonomi) get distinct
+        # tool sets instead of all collapsing to "tools/statistics".
         prefixes: list[str] = []
         for ns in ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
-                prefix = f"{ns[0]}/{ns[1]}"
+                prefix = "/".join(ns)
             elif isinstance(ns, list) and len(ns) == 1:
                 prefix = ns[0]
             else:
@@ -158,8 +159,8 @@ def _resolve_namespaces_from_flow_tools(
     Admin flow stores tool-to-agent mappings as flow_tools.  The actual
     namespace for each tool comes from bigtool_store / platform_bridge, not
     from the agent's own namespace field.  This function collects the unique
-    namespace *prefixes* (first two segments, e.g. "tools/knowledge") that
-    the agent's tools actually belong to.
+    namespace prefixes (full depth, e.g. "tools/statistics/scb/befolkning")
+    that the agent's tools actually belong to.
 
     Falls back to an empty tuple if no tools can be resolved.
     """
@@ -175,7 +176,7 @@ def _resolve_namespaces_from_flow_tools(
         tid = ft.get("tool_id", "")
         pt = tools_by_id.get(tid)
         if pt and len(pt.namespace) >= 2:
-            prefix = f"{pt.namespace[0]}/{pt.namespace[1]}"
+            prefix = "/".join(pt.namespace)
             if prefix not in prefixes:
                 prefixes.append(prefix)
     return tuple(prefixes)
@@ -221,8 +222,10 @@ def build_agents_from_metadata(
         if not primary_namespaces:
             ns_parts = meta.get("namespace", [])
             if isinstance(ns_parts, list) and len(ns_parts) >= 2:
-                ns_prefix = ns_parts[0] if ns_parts[0] != "agents" else "tools"
-                primary_namespaces = (f"{ns_prefix}/{ns_parts[1]}",)
+                parts = list(ns_parts)
+                if parts[0] == "agents":
+                    parts[0] = "tools"
+                primary_namespaces = ("/".join(parts),)
             elif isinstance(ns_parts, str) and ns_parts:
                 primary_namespaces = (ns_parts,)
 

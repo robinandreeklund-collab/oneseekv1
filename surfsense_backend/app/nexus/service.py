@@ -718,7 +718,7 @@ class NexusService:
                     if pt.category == "external_model":
                         continue
                     ns_str = (
-                        "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+                        "/".join(pt.namespace) if len(pt.namespace) >= 2 else ""
                     )
                     if any(ns_str.startswith(prefix) for prefix in agent_namespaces):
                         judge_candidates.append(
@@ -1098,12 +1098,12 @@ class NexusService:
                 _ns_to_agent[ns_prefix] = ag.name
 
         def _find_agent_for_tool(pt_obj) -> str | None:
-            ns_str = "/".join(pt_obj.namespace[:2])
-            if ns_str in _ns_to_agent:
-                return _ns_to_agent[ns_str]
-            # Try single segment
-            if pt_obj.namespace and pt_obj.namespace[0] in _ns_to_agent:
-                return _ns_to_agent[pt_obj.namespace[0]]
+            ns_str = "/".join(pt_obj.namespace)
+            # Try full namespace, then progressively shorter prefixes
+            for length in range(len(pt_obj.namespace), 0, -1):
+                prefix = "/".join(pt_obj.namespace[:length])
+                if prefix in _ns_to_agent:
+                    return _ns_to_agent[prefix]
             return None
 
         tools: list[dict] = []
@@ -4108,7 +4108,7 @@ class NexusService:
                 # Map tool_id → namespace string for failed tools
                 tool_ns_map: dict[str, str] = {}
                 for pt in _get_pt():
-                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace[:2])
+                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace)
 
                 # Collect unique namespaces from proposals
                 ns_set: set[str] = set()
@@ -5095,7 +5095,7 @@ class NexusService:
                 # Map tool_id → namespace string for failed tools
                 tool_ns_map: dict[str, str] = {}
                 for pt in _get_pt():
-                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace[:2])
+                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace)
 
                 # Collect unique namespaces from proposals
                 ns_set: set[str] = set()
