@@ -139,6 +139,7 @@ export interface RoutingDecision {
 	latency_ms: number;
 	llm_judge: LlmJudgeToolResult | null;
 	llm_gate: LlmGateResult | null;
+	labels: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------

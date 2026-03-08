@@ -35,6 +35,11 @@ const COMPLEXITY_COLORS: Record<string, string> = {
 	complex: "bg-purple-50 text-purple-700",
 };
 
+/** Resolve an ID to its human-readable label, falling back to the raw ID. */
+function lbl(id: string, labels: Record<string, string>): string {
+	return labels[id] ?? id;
+}
+
 export function PipelineExplorerTab() {
 	const [query, setQuery] = useState("");
 	const [result, setResult] = useState<RoutingDecision | null>(null);
@@ -165,12 +170,12 @@ export function PipelineExplorerTab() {
 									<span className="truncate mr-4">{item.query}</span>
 									<div className="flex items-center gap-2 shrink-0">
 										<Badge variant="outline" className="text-xs">
-											{item.result.selected_agent ?? "—"}
+											{item.result.selected_agent ? lbl(item.result.selected_agent, item.result.labels) : "—"}
 										</Badge>
 										<ArrowRight className="h-3 w-3 text-muted-foreground" />
-										<Badge variant="outline" className="text-xs font-mono">
+										<Badge variant="outline" className="text-xs">
 											{item.result.selected_tool
-												? item.result.selected_tool.split("/").pop()
+												? lbl(item.result.selected_tool, item.result.labels)
 												: "—"}
 										</Badge>
 										<span
@@ -195,9 +200,11 @@ export function PipelineExplorerTab() {
 
 function FlowSummary({ result }: { result: RoutingDecision }) {
 	const qa = result.query_analysis;
-	const zone = result.resolved_zone ?? qa.zone_candidates[0] ?? "?";
-	const agent = result.selected_agent ?? "—";
-	const tool = result.selected_tool ? result.selected_tool.split("/").pop() : "—";
+	const L = result.labels;
+	const zoneId = result.resolved_zone ?? qa.zone_candidates[0] ?? "?";
+	const zone = lbl(zoneId, L);
+	const agent = result.selected_agent ? lbl(result.selected_agent, L) : "—";
+	const tool = result.selected_tool ? lbl(result.selected_tool, L) : "—";
 
 	return (
 		<Card className="bg-muted/30">
@@ -262,7 +269,7 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 							>
 								<span className="opacity-60">llm:</span>
 								{result.llm_judge.chosen_tool
-									? result.llm_judge.chosen_tool.split("/").pop()
+									? lbl(result.llm_judge.chosen_tool, result.labels)
 									: "—"}
 							</Badge>
 						</>
@@ -319,7 +326,7 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 							<Badge variant="outline" className="text-[10px] py-0">{gate.intent_step.candidates_shown} kandidater</Badge>
 						</div>
 						<Row label="Vald domän">
-							<Badge className="bg-blue-100 text-blue-800 border-blue-300">{gate.intent_step.chosen}</Badge>
+							<Badge className="bg-blue-100 text-blue-800 border-blue-300">{lbl(gate.intent_step.chosen, result.labels)}</Badge>
 						</Row>
 						{gate.intent_step.reasoning && (
 							<Row label="Motivering">
@@ -363,7 +370,7 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 						<div className="flex gap-1 flex-wrap">
 							{ar.selected_agents.map((a) => (
 								<Badge key={a} className="bg-indigo-100 text-indigo-800 border-indigo-300">
-									{a}
+									{lbl(a, result.labels)}
 								</Badge>
 							))}
 						</div>
@@ -387,7 +394,7 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 								<Badge variant="outline" className="text-[10px] py-0">{gate.agent_step.candidates_shown} kandidater</Badge>
 							</div>
 							<Row label="Vald agent">
-								<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">{gate.agent_step.chosen}</Badge>
+								<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">{lbl(gate.agent_step.chosen, result.labels)}</Badge>
 							</Row>
 							{gate.agent_step.reasoning && (
 								<Row label="Motivering">
@@ -401,7 +408,7 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 						<Collapsible title={`Alla kandidater (${ar.candidates.length})`}>
 							<div className="space-y-1">
 								{ar.candidates.map((c) => (
-									<AgentCandidateRow key={c.name} candidate={c} selected={ar.selected_agents.includes(c.name)} />
+									<AgentCandidateRow key={c.name} candidate={c} selected={ar.selected_agents.includes(c.name)} labels={result.labels} />
 								))}
 							</div>
 						</Collapsible>
@@ -414,7 +421,7 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 	);
 }
 
-function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateResponse; selected: boolean }) {
+function AgentCandidateRow({ candidate, selected, labels }: { candidate: AgentCandidateResponse; selected: boolean; labels: Record<string, string> }) {
 	return (
 		<div
 			className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
@@ -422,7 +429,7 @@ function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateR
 			}`}
 		>
 			<div className="flex items-center gap-2">
-				<span className={`font-medium ${selected ? "text-indigo-700" : ""}`}>{candidate.name}</span>
+				<span className={`font-medium ${selected ? "text-indigo-700" : ""}`}>{lbl(candidate.name, labels)}</span>
 				<span className="text-muted-foreground">({candidate.zone})</span>
 			</div>
 			<div className="flex items-center gap-2">
@@ -450,8 +457,8 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 		<StageCard number={3} title={gate ? "Tool (LLM)" : "Tool (StR + Rerank)"} color="bg-emerald-500">
 			<div className="space-y-3 text-sm">
 				<Row label="NEXUS valde">
-					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono">
-						{result.selected_tool ?? "—"}
+					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">
+						{result.selected_tool ? lbl(result.selected_tool, result.labels) : "—"}
 					</Badge>
 				</Row>
 
@@ -463,7 +470,7 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 							<Badge variant="outline" className="text-[10px] py-0">{gate.tool_step.candidates_shown} kandidater</Badge>
 						</div>
 						<Row label="Valt verktyg">
-							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono">{gate.tool_step.chosen}</Badge>
+							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">{lbl(gate.tool_step.chosen, result.labels)}</Badge>
 						</Row>
 						{gate.tool_step.reasoning && (
 							<Row label="Motivering">
@@ -496,7 +503,7 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 										: "bg-amber-100 text-amber-800 border-amber-300"
 								}`}
 							>
-								{judge.chosen_tool ?? "—"}
+								{judge.chosen_tool ? lbl(judge.chosen_tool, result.labels) : "—"}
 							</Badge>
 						</Row>
 						{judge.nexus_rank_of_chosen > 0 && !judge.agreement && (
@@ -520,6 +527,7 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 									candidate={c}
 									isSelected={i === 0}
 									isLlmChoice={judge?.chosen_tool === c.tool_id}
+									labels={result.labels}
 								/>
 							))}
 						</div>
@@ -535,6 +543,7 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 									candidate={c}
 									isSelected={i === 0}
 									isLlmChoice={judge?.chosen_tool === c.tool_id}
+									labels={result.labels}
 								/>
 							))}
 						</div>
@@ -549,10 +558,12 @@ function ToolCandidateRow({
 	candidate,
 	isSelected,
 	isLlmChoice,
+	labels,
 }: {
 	candidate: RoutingCandidate;
 	isSelected: boolean;
 	isLlmChoice?: boolean;
+	labels: Record<string, string>;
 }) {
 	return (
 		<div
@@ -562,8 +573,8 @@ function ToolCandidateRow({
 		>
 			<div className="flex items-center gap-2">
 				<span className="text-muted-foreground w-5 text-right">#{candidate.rank}</span>
-				<span className={`font-mono ${isSelected ? "font-medium text-emerald-700" : ""}`}>
-					{candidate.tool_id}
+				<span className={isSelected ? "font-medium text-emerald-700" : ""}>
+					{lbl(candidate.tool_id, labels)}
 				</span>
 				<Badge variant="outline" className="text-[10px] py-0">{candidate.zone}</Badge>
 				{isLlmChoice && !isSelected && (

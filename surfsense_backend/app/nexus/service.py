@@ -159,6 +159,51 @@ def _all_zone_centers() -> dict[str, tuple[float, float]]:
     }
 
 
+def _build_routing_labels(decision: RoutingDecision) -> dict[str, str]:
+    """Build an ID→label lookup for all IDs referenced in a RoutingDecision."""
+    from app.seeds.agent_definitions import get_default_agent_definitions
+    from app.seeds.intent_domains import get_default_intent_domains
+    from app.seeds.tool_definitions import get_default_tool_definitions
+
+    # Master lookups
+    domain_labels = {d["domain_id"]: d["label"] for d in get_default_intent_domains()}
+    agent_labels = {a["agent_id"]: a["label"] for a in get_default_agent_definitions()}
+    tool_defs = get_default_tool_definitions()
+    tool_labels = {tid: t.get("label", tid) for tid, t in tool_defs.items()}
+
+    all_labels = {**domain_labels, **agent_labels, **tool_labels}
+
+    # Collect IDs referenced in the decision
+    ids: set[str] = set()
+    qa = decision.query_analysis
+    ids.update(qa.zone_candidates)
+    ids.update(qa.domain_hints)
+    if decision.selected_agent:
+        ids.add(decision.selected_agent)
+    if decision.selected_tool:
+        ids.add(decision.selected_tool)
+    if decision.resolved_zone:
+        ids.add(decision.resolved_zone)
+    for c in decision.candidates:
+        ids.add(c.tool_id)
+    if decision.agent_resolution:
+        ids.update(decision.agent_resolution.selected_agents)
+        for ac in decision.agent_resolution.candidates:
+            ids.add(ac.name)
+    if decision.llm_gate:
+        for step in (
+            decision.llm_gate.intent_step,
+            decision.llm_gate.agent_step,
+            decision.llm_gate.tool_step,
+        ):
+            if step and step.chosen:
+                ids.add(step.chosen)
+    if decision.llm_judge and decision.llm_judge.chosen_tool:
+        ids.add(decision.llm_judge.chosen_tool)
+
+    return {k: all_labels[k] for k in ids if k in all_labels}
+
+
 class NexusService:
     """Orchestrates the full NEXUS precision routing pipeline."""
 
@@ -670,6 +715,7 @@ class NexusService:
             latency_ms=elapsed_ms,
             llm_judge=llm_judge_result,
         )
+        decision.labels = _build_routing_labels(decision)
 
         # Log routing event
         await self._log_routing_event(session, query, decision, raw_top_score)
@@ -2517,7 +2563,7 @@ class NexusService:
         self,
         query: str,
         session: AsyncSession,
-    ) -> "RoutingDecision":
+    ) -> RoutingDecision:
         """Run a pure LLM-based routing pipeline: Intent → Agent → Tool.
 
         Three sequential LLM calls replace all embedding/reranker logic:
@@ -2818,6 +2864,7 @@ class NexusService:
                 tool_step=tool_step,
             ),
         )
+        decision.labels = _build_routing_labels(decision)
 
         return decision
 

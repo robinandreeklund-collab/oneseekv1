@@ -114,6 +114,7 @@ class RoutingDecision(BaseModel):
     latency_ms: float = 0.0
     llm_judge: LlmJudgeResult | None = None
     llm_gate: LlmGateResult | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class RouteQueryRequest(BaseModel):
