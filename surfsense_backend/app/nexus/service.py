@@ -2871,6 +2871,406 @@ class NexusService:
         return decision
 
     # ------------------------------------------------------------------
+    # Live Pipeline (LLM-only routing + plan + synthesis)
+    # ------------------------------------------------------------------
+
+    async def route_query_live(
+        self,
+        query: str,
+        session: AsyncSession,
+    ) -> RoutingDecision:
+        """Run a live pipeline: LLM-based routing + planning + synthesis.
+
+        Replicates the real LangGraph pipeline flow but replaces all
+        embedding/reranker steps with pure LLM decisions.  Shows ALL
+        candidates at each level so we can evaluate LLM routing quality.
+
+        Steps:
+        1. LLM picks Intent / Domain (all domains visible)
+        2. LLM picks Agent (all agents for chosen domain visible)
+        3. LLM picks Tool (all tools for chosen agent visible)
+        4. LLM generates an execution plan
+        5. LLM synthesizes a response (simulating tool execution)
+        """
+        import time
+
+        from app.nexus.llm import nexus_llm_call
+        from app.nexus.platform_bridge import get_platform_tools
+        from app.nexus.schemas import (
+            AgentCandidateResponse,
+            AgentResolution,
+            LivePipelineResult,
+            LivePipelineStepResult,
+            LlmGateResult,
+            LlmGateStepResult,
+            QueryAnalysis,
+            QueryEntities,
+            RoutingCandidate,
+            RoutingDecision,
+        )
+
+        total_start = time.monotonic()
+
+        # ── Load seed data ──
+        (
+            db_agent_by_name,
+            db_agents_by_zone,
+            _,
+            _,
+        ) = await self._load_db_agents(session)
+
+        from app.seeds.agent_definitions import get_default_agent_definitions
+        from app.seeds.intent_domains import get_default_intent_domains
+
+        all_domains = get_default_intent_domains()
+        all_agents = get_default_agent_definitions()
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 1: LLM picks Intent / Domain
+        # ═══════════════════════════════════════════════════════════════
+        step1_start = time.monotonic()
+
+        domain_lines = []
+        for i, (did, d) in enumerate(sorted(all_domains.items()), 1):
+            kw = ", ".join(d.get("keywords", [])[:6])
+            domain_lines.append(
+                f"{i}. {did} — {d.get('description', '')} (nyckelord: {kw})"
+            )
+
+        intent_prompt = (
+            "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
+            "från listan som bäst matchar frågan.\n\n"
+            f"Fråga: {query}\n\n"
+            "Domäner:\n" + "\n".join(domain_lines) + "\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "DOMÄN: <domain_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            intent_response = await nexus_llm_call(intent_prompt)
+            chosen_domain = ""
+            intent_reasoning = ""
+            for line in intent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("DOMÄN:") or ls.upper().startswith(
+                    "DOMAIN:"
+                ):
+                    chosen_domain = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    intent_reasoning = ls.split(":", 1)[1].strip()
+            if chosen_domain and chosen_domain not in all_domains:
+                for did in all_domains:
+                    if did.lower() == chosen_domain.lower():
+                        chosen_domain = did
+                        break
+        except Exception as e:
+            logger.warning("Live pipeline intent step failed: %s", e)
+            chosen_domain = "kunskap"
+            intent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        step1_ms = (time.monotonic() - step1_start) * 1000
+        intent_step_live = LivePipelineStepResult(
+            step_name="intent",
+            chosen=chosen_domain,
+            reasoning=intent_reasoning,
+            candidates_shown=len(all_domains),
+            latency_ms=step1_ms,
+        )
+        intent_step = LlmGateStepResult(
+            chosen=chosen_domain,
+            reasoning=intent_reasoning,
+            candidates_shown=len(all_domains),
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 2: LLM picks Agent
+        # ═══════════════════════════════════════════════════════════════
+        step2_start = time.monotonic()
+
+        domain_agents = {
+            aid: a
+            for aid, a in all_agents.items()
+            if a.get("domain_id") == chosen_domain
+        }
+        if db_agents_by_zone and chosen_domain in db_agents_by_zone:
+            for db_agent in db_agents_by_zone[chosen_domain]:
+                aid = db_agent.get("agent_id", "")
+                if aid and aid not in domain_agents:
+                    domain_agents[aid] = db_agent
+        if not domain_agents:
+            domain_agents = all_agents
+
+        agent_lines = []
+        for i, (aid, a) in enumerate(sorted(domain_agents.items()), 1):
+            kw = ", ".join(a.get("keywords", [])[:8])
+            desc = a.get("description", a.get("label", ""))
+            agent_lines.append(f"{i}. {aid} — {desc} (nyckelord: {kw})")
+
+        agent_prompt = (
+            "Du är en agent-router. Givet användarens fråga och den valda domänen, "
+            "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n\n"
+            "Agenter:\n" + "\n".join(agent_lines) + "\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "AGENT: <agent_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            agent_response = await nexus_llm_call(agent_prompt)
+            chosen_agent = ""
+            agent_reasoning = ""
+            for line in agent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("AGENT:"):
+                    chosen_agent = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    agent_reasoning = ls.split(":", 1)[1].strip()
+            if chosen_agent and chosen_agent not in domain_agents:
+                for aid in domain_agents:
+                    if aid.lower() == chosen_agent.lower():
+                        chosen_agent = aid
+                        break
+        except Exception as e:
+            logger.warning("Live pipeline agent step failed: %s", e)
+            chosen_agent = next(iter(domain_agents), "kunskap")
+            agent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        step2_ms = (time.monotonic() - step2_start) * 1000
+        agent_step_live = LivePipelineStepResult(
+            step_name="agent",
+            chosen=chosen_agent,
+            reasoning=agent_reasoning,
+            candidates_shown=len(domain_agents),
+            latency_ms=step2_ms,
+        )
+        agent_step = LlmGateStepResult(
+            chosen=chosen_agent,
+            reasoning=agent_reasoning,
+            candidates_shown=len(domain_agents),
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 3: LLM picks Tool
+        # ═══════════════════════════════════════════════════════════════
+        step3_start = time.monotonic()
+
+        platform_tools = get_platform_tools()
+        agent_def = all_agents.get(chosen_agent, {})
+        agent_ns_raw = agent_def.get("primary_namespaces", [])
+        agent_ns_prefixes = []
+        for ns in agent_ns_raw:
+            if isinstance(ns, list) and len(ns) >= 2:
+                agent_ns_prefixes.append("/".join(ns[:2]))
+
+        agent_tools = []
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            ns_str = "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+            if agent_ns_prefixes and any(
+                ns_str.startswith(prefix) for prefix in agent_ns_prefixes
+            ):
+                agent_tools.append(pt)
+
+        if not agent_tools:
+            from app.seeds.tool_definitions import get_default_tool_definitions
+
+            tool_defs = get_default_tool_definitions()
+            agent_tool_ids = {
+                tid
+                for tid, td in tool_defs.items()
+                if td.get("agent_id") == chosen_agent
+            }
+            agent_tools = [
+                pt for pt in platform_tools if pt.tool_id in agent_tool_ids
+            ]
+
+        tool_lines = []
+        for i, pt in enumerate(agent_tools, 1):
+            kw = ", ".join(pt.keywords[:6]) if pt.keywords else ""
+            tool_lines.append(
+                f"{i}. {pt.tool_id} — {pt.description}"
+                + (f" (nyckelord: {kw})" if kw else "")
+            )
+
+        chosen_tool = None
+        tool_reasoning = ""
+        if tool_lines:
+            tool_prompt = (
+                "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
+                "välj EXAKT ETT verktyg från listan som bäst kan besvara frågan.\n\n"
+                f"Fråga: {query}\n"
+                f"Vald agent: {chosen_agent}\n\n"
+                "Verktyg:\n" + "\n".join(tool_lines) + "\n\n"
+                "Svara EXAKT i detta format (inget annat):\n"
+                "VERKTYG: <tool_id>\n"
+                "MOTIVERING: <en mening>\n"
+            )
+            try:
+                tool_response = await nexus_llm_call(tool_prompt)
+                for line in tool_response.strip().splitlines():
+                    ls = line.strip()
+                    if ls.upper().startswith("VERKTYG:"):
+                        chosen_tool = ls.split(":", 1)[1].strip()
+                    elif ls.upper().startswith("MOTIVERING:"):
+                        tool_reasoning = ls.split(":", 1)[1].strip()
+                if chosen_tool:
+                    tool_ids = [pt.tool_id for pt in agent_tools]
+                    if chosen_tool not in tool_ids:
+                        for tid in tool_ids:
+                            if (
+                                chosen_tool.lower() in tid.lower()
+                                or tid.lower() in chosen_tool.lower()
+                            ):
+                                chosen_tool = tid
+                                break
+            except Exception as e:
+                logger.warning("Live pipeline tool step failed: %s", e)
+                chosen_tool = agent_tools[0].tool_id if agent_tools else None
+                tool_reasoning = f"LLM-anrop misslyckades: {e}"
+        else:
+            tool_reasoning = "Inga verktyg hittades för vald agent."
+
+        step3_ms = (time.monotonic() - step3_start) * 1000
+        tool_step_live = LivePipelineStepResult(
+            step_name="tool",
+            chosen=chosen_tool or "",
+            reasoning=tool_reasoning,
+            candidates_shown=len(agent_tools),
+            latency_ms=step3_ms,
+        )
+        tool_step = LlmGateStepResult(
+            chosen=chosen_tool or "",
+            reasoning=tool_reasoning,
+            candidates_shown=len(agent_tools),
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 4: LLM generates execution plan
+        # ═══════════════════════════════════════════════════════════════
+        chosen_tool_desc = ""
+        for pt in agent_tools:
+            if pt.tool_id == chosen_tool:
+                chosen_tool_desc = pt.description
+                break
+
+        plan_prompt = (
+            "Du är en planeringsagent. Givet användarens fråga och det valda verktyget, "
+            "skapa en kort exekveringsplan (1-3 steg) för att besvara frågan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n"
+            f"Vald agent: {chosen_agent}\n"
+            f"Valt verktyg: {chosen_tool or 'inget'}\n"
+            f"Verktygsbeskrivning: {chosen_tool_desc}\n\n"
+            "Skriv planen som en numrerad lista. Var kortfattad.\n"
+        )
+
+        plan_text = ""
+        try:
+            plan_text = await nexus_llm_call(plan_prompt)
+        except Exception as e:
+            plan_text = f"Planering misslyckades: {e}"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 5: LLM synthesizes a response
+        # ═══════════════════════════════════════════════════════════════
+        synthesis_prompt = (
+            "Du är en syntesagent. Givet användarens fråga, det valda verktyget och "
+            "planen, skriv ett kort och informativt svar som visar vad systemet "
+            "SKULLE svara om verktyget kördes.\n\n"
+            f"Fråga: {query}\n"
+            f"Valt verktyg: {chosen_tool or 'inget'} — {chosen_tool_desc}\n"
+            f"Plan:\n{plan_text}\n\n"
+            "Skriv ett kort, naturligt svar på svenska. "
+            "Om verktyget inte kunde köras, förklara vad som skulle hända.\n"
+        )
+
+        synthesis_text = ""
+        try:
+            synthesis_text = await nexus_llm_call(synthesis_prompt)
+        except Exception as e:
+            synthesis_text = f"Syntes misslyckades: {e}"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Build RoutingDecision with live pipeline data
+        # ═══════════════════════════════════════════════════════════════
+        total_ms = (time.monotonic() - total_start) * 1000
+
+        candidates = [
+            RoutingCandidate(
+                tool_id=pt.tool_id,
+                zone=pt.zone,
+                raw_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                calibrated_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                rank=0 if pt.tool_id == chosen_tool else i + 1,
+            )
+            for i, pt in enumerate(agent_tools)
+        ]
+        candidates.sort(key=lambda c: (c.raw_score,), reverse=True)
+        for i, c in enumerate(candidates):
+            c.rank = i
+
+        agent_candidates = [
+            AgentCandidateResponse(
+                name=aid,
+                zone=a.get("domain_id", ""),
+                score=1.0 if aid == chosen_agent else 0.0,
+                matched_keywords=[],
+            )
+            for aid, a in sorted(domain_agents.items())
+        ]
+
+        analysis = QueryAnalysis(
+            original_query=query,
+            normalized_query=query.lower().strip(),
+            sub_queries=[],
+            entities=QueryEntities(),
+            domain_hints=[],
+            zone_candidates=[chosen_domain],
+            complexity="simple",
+            is_multi_intent=False,
+            ood_risk=0.0,
+        )
+
+        decision = RoutingDecision(
+            query_analysis=analysis,
+            agent_resolution=AgentResolution(
+                selected_agents=[chosen_agent] if chosen_agent else [],
+                candidates=agent_candidates[:10],
+                tool_namespaces=agent_ns_prefixes,
+            ),
+            band=0,
+            band_name="live",
+            candidates=candidates,
+            selected_tool=chosen_tool,
+            selected_agent=chosen_agent,
+            resolved_zone=chosen_domain,
+            calibrated_confidence=1.0 if chosen_tool else 0.0,
+            is_ood=False,
+            schema_verified=False,
+            latency_ms=total_ms,
+            llm_gate=LlmGateResult(
+                intent_step=intent_step,
+                agent_step=agent_step,
+                tool_step=tool_step,
+            ),
+            live=LivePipelineResult(
+                intent_step=intent_step_live,
+                agent_step=agent_step_live,
+                tool_step=tool_step_live,
+                plan=plan_text.strip(),
+                synthesis=synthesis_text.strip(),
+                total_latency_ms=total_ms,
+            ),
+        )
+        decision.labels = _build_routing_labels(decision)
+
+        return decision
+
+    # ------------------------------------------------------------------
     # Auto Loop Run (Sprint 5)
     # ------------------------------------------------------------------
 

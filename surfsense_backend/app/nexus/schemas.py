@@ -99,6 +99,29 @@ class LlmGateResult(BaseModel):
     tool_step: LlmGateStepResult | None = None
 
 
+class LivePipelineStepResult(BaseModel):
+    """Result from a single step in the live pipeline."""
+
+    step_name: str = ""
+    chosen: str = ""
+    reasoning: str = ""
+    candidates_shown: int = 0
+    latency_ms: float = 0.0
+
+
+class LivePipelineResult(BaseModel):
+    """Full result from the live LLM-only pipeline with tool execution."""
+
+    intent_step: LivePipelineStepResult | None = None
+    agent_step: LivePipelineStepResult | None = None
+    tool_step: LivePipelineStepResult | None = None
+    plan: str = ""
+    tool_output: str = ""
+    tool_error: str = ""
+    synthesis: str = ""
+    total_latency_ms: float = 0.0
+
+
 class RoutingDecision(BaseModel):
     query_analysis: QueryAnalysis
     agent_resolution: AgentResolution | None = None
@@ -114,6 +137,7 @@ class RoutingDecision(BaseModel):
     latency_ms: float = 0.0
     llm_judge: LlmJudgeResult | None = None
     llm_gate: LlmGateResult | None = None
+    live: LivePipelineResult | None = None
     labels: dict[str, str] = Field(default_factory=dict)
 
 
@@ -121,6 +145,7 @@ class RouteQueryRequest(BaseModel):
     query: str
     llm_judge: bool = False
     llm_gate: bool = False
+    live: bool = False
 
 
 # ---------------------------------------------------------------------------

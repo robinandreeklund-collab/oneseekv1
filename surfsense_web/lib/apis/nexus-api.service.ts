@@ -124,6 +124,25 @@ export interface LlmGateResult {
 	tool_step: LlmGateStepResult | null;
 }
 
+export interface LivePipelineStepResult {
+	step_name: string;
+	chosen: string;
+	reasoning: string;
+	candidates_shown: number;
+	latency_ms: number;
+}
+
+export interface LivePipelineResult {
+	intent_step: LivePipelineStepResult | null;
+	agent_step: LivePipelineStepResult | null;
+	tool_step: LivePipelineStepResult | null;
+	plan: string;
+	tool_output: string;
+	tool_error: string;
+	synthesis: string;
+	total_latency_ms: number;
+}
+
 export interface RoutingDecision {
 	query_analysis: QueryAnalysis;
 	agent_resolution: AgentResolution | null;
@@ -139,6 +158,7 @@ export interface RoutingDecision {
 	latency_ms: number;
 	llm_judge: LlmJudgeToolResult | null;
 	llm_gate: LlmGateResult | null;
+	live: LivePipelineResult | null;
 	labels: Record<string, string>;
 }
 
@@ -662,13 +682,14 @@ class NexusApiService {
 			body: JSON.stringify({ query }),
 		});
 
-	routeQuery = (query: string, options?: { llm_judge?: boolean; llm_gate?: boolean }) =>
+	routeQuery = (query: string, options?: { llm_judge?: boolean; llm_gate?: boolean; live?: boolean }) =>
 		fetchNexus<RoutingDecision>("/routing/route", {
 			method: "POST",
 			body: JSON.stringify({
 				query,
 				llm_judge: options?.llm_judge ?? false,
 				llm_gate: options?.llm_gate ?? false,
+				live: options?.live ?? false,
 			}),
 		});
 
