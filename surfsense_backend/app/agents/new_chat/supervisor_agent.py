@@ -77,7 +77,6 @@ from app.agents.new_chat.retrieval_feedback import (
     hydrate_global_retrieval_feedback_store,
 )
 from app.agents.new_chat.shared_worker_pool import get_or_create_shared_worker_pool
-from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.structured_schemas import structured_output_enabled
 from app.agents.new_chat.subagent_utils import SMALLTALK_INSTRUCTIONS
 from app.agents.new_chat.supervisor_pipeline_prompts import (

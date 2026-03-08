@@ -7,13 +7,10 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
-from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
-from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
-from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+# NOTE: Tool definition imports (SCB, Kolada, SMHI, Trafikverket, Riksdagen,
+# Bolagsverket, Marketplace) are lazy-imported inside _build_agent_tool_profiles()
+# to avoid circular imports via tools/__init__ → tools/registry → *_tools.
 from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
-from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 
 _AGENT_CACHE_TTL = timedelta(minutes=20)
 _AGENT_COMBO_CACHE: dict[str, tuple[datetime, list[str]]] = {}
@@ -144,9 +141,15 @@ class AgentToolProfile:
 
 
 def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
-    # Lazy import to avoid circular dependency:
-    # supervisor_constants → kolada_tools → tools/__init__ → tools/registry → kolada_tools
-    from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS  # noqa: E402
+    # Lazy imports to avoid circular dependency:
+    # supervisor_constants → *_tools → tools/__init__ → tools/registry → *_tools
+    from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS
+    from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
+    from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+    from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 
     profiles: dict[str, list[AgentToolProfile]] = {
         "väder": [],
