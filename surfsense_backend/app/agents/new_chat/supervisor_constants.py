@@ -7,7 +7,6 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
-from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS
 from app.agents.new_chat.marketplace_tools import MARKETPLACE_TOOL_DEFINITIONS
 from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
@@ -145,6 +144,10 @@ class AgentToolProfile:
 
 
 def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
+    # Lazy import to avoid circular dependency:
+    # supervisor_constants → kolada_tools → tools/__init__ → tools/registry → kolada_tools
+    from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS  # noqa: E402
+
     profiles: dict[str, list[AgentToolProfile]] = {
         "väder": [],
         "väder-vatten": [],
