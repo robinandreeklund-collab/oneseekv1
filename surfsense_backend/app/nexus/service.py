@@ -2764,17 +2764,19 @@ class NexusService:
         platform_tools = get_platform_tools()
         agent_def = all_agents.get(chosen_agent, {})
         agent_ns_raw = agent_def.get("primary_namespaces", [])
+        # Use full namespace depth (3+ levels) so agents within the same
+        # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
         agent_ns_prefixes = []
         for ns in agent_ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
-                agent_ns_prefixes.append("/".join(ns[:2]))
+                agent_ns_prefixes.append("/".join(ns))
 
-        # Filter tools by agent namespace
+        # Filter tools by agent namespace (full depth match)
         agent_tools = []
         for pt in platform_tools:
             if pt.category == "external_model":
                 continue
-            ns_str = "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+            ns_str = "/".join(pt.namespace) if pt.namespace else ""
             if agent_ns_prefixes and any(
                 ns_str.startswith(prefix) for prefix in agent_ns_prefixes
             ):
@@ -3119,16 +3121,18 @@ class NexusService:
         platform_tools = get_platform_tools()
         agent_def = all_agents.get(chosen_agent, {})
         agent_ns_raw = agent_def.get("primary_namespaces", [])
+        # Use full namespace depth (3+ levels) so agents within the same
+        # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
         agent_ns_prefixes = []
         for ns in agent_ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
-                agent_ns_prefixes.append("/".join(ns[:2]))
+                agent_ns_prefixes.append("/".join(ns))
 
         agent_tools = []
         for pt in platform_tools:
             if pt.category == "external_model":
                 continue
-            ns_str = "/".join(pt.namespace[:2]) if len(pt.namespace) >= 2 else ""
+            ns_str = "/".join(pt.namespace) if pt.namespace else ""
             if agent_ns_prefixes and any(
                 ns_str.startswith(prefix) for prefix in agent_ns_prefixes
             ):
