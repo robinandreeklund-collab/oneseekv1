@@ -206,6 +206,48 @@ def _build_routing_labels(decision: RoutingDecision) -> dict[str, str]:
     return {k: all_labels[k] for k in ids if k in all_labels}
 
 
+def _resolve_llm_choice(raw: str, sorted_keys: list[str]) -> str:
+    """Resolve an LLM response to an actual ID from the candidate list.
+
+    The LLM sometimes returns the list number (e.g. "17") instead of the
+    actual identifier (e.g. "väder-och-klimat").  This helper:
+    1. Tries exact match first
+    2. Tries case-insensitive match
+    3. Tries partial/substring match
+    4. Falls back to interpreting the response as a 1-based list index
+    """
+    if not raw:
+        return ""
+    # 1. Exact match
+    if raw in sorted_keys:
+        return raw
+    # 2. Case-insensitive
+    lower = raw.lower()
+    for key in sorted_keys:
+        if key.lower() == lower:
+            return key
+    # 3. Partial / substring
+    for key in sorted_keys:
+        if lower in key.lower() or key.lower() in lower:
+            return key
+    # 4. Numeric → 1-based index
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(sorted_keys):
+            return sorted_keys[idx]
+    except ValueError:
+        pass
+    return raw
+
+
+def _format_candidate_list(items: list[tuple[str, str]]) -> str:
+    """Format candidates as '- id — description' without numbering.
+
+    This prevents the LLM from confusing list numbers with IDs.
+    """
+    return "\n".join(f"- {item_id} — {desc}" for item_id, desc in items)
+
+
 class NexusService:
     """Orchestrates the full NEXUS precision routing pipeline."""
 
@@ -2611,16 +2653,20 @@ class NexusService:
         all_agents = get_default_agent_definitions()
 
         # ── Step 1: LLM picks Intent / Domain ──
-        domain_lines = []
-        for i, (did, d) in enumerate(sorted(all_domains.items()), 1):
-            kw = ", ".join(d.get("keywords", [])[:6])
-            domain_lines.append(f"{i}. {did} — {d.get('description', '')} (nyckelord: {kw})")
+        sorted_domain_ids = sorted(all_domains.keys())
+        domain_items = [
+            (did, f"{all_domains[did].get('description', '')} "
+             f"(nyckelord: {', '.join(all_domains[did].get('keywords', [])[:6])})")
+            for did in sorted_domain_ids
+        ]
 
         intent_prompt = (
             "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
             "från listan som bäst matchar frågan.\n\n"
             f"Fråga: {query}\n\n"
-            "Domäner:\n" + "\n".join(domain_lines) + "\n\n"
+            "Domäner:\n" + _format_candidate_list(domain_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
+            "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
             "DOMÄN: <domain_id>\n"
             "MOTIVERING: <en mening>\n"
@@ -2636,12 +2682,7 @@ class NexusService:
                     chosen_domain = ls.split(":", 1)[1].strip()
                 elif ls.upper().startswith("MOTIVERING:"):
                     intent_reasoning = ls.split(":", 1)[1].strip()
-            # Normalize — LLM might return a close but not exact match
-            if chosen_domain and chosen_domain not in all_domains:
-                for did in all_domains:
-                    if did.lower() == chosen_domain.lower():
-                        chosen_domain = did
-                        break
+            chosen_domain = _resolve_llm_choice(chosen_domain, sorted_domain_ids)
         except Exception as e:
             logger.warning("LLM gate intent step failed: %s", e)
             chosen_domain = "kunskap"
@@ -2671,18 +2712,21 @@ class NexusService:
             # Fallback: if no agents match, show all agents
             domain_agents = all_agents
 
-        agent_lines = []
-        for i, (aid, a) in enumerate(sorted(domain_agents.items()), 1):
-            kw = ", ".join(a.get("keywords", [])[:8])
-            desc = a.get("description", a.get("label", ""))
-            agent_lines.append(f"{i}. {aid} — {desc} (nyckelord: {kw})")
+        sorted_agent_ids = sorted(domain_agents.keys())
+        agent_items = [
+            (aid, f"{domain_agents[aid].get('description', domain_agents[aid].get('label', ''))} "
+             f"(nyckelord: {', '.join(domain_agents[aid].get('keywords', [])[:8])})")
+            for aid in sorted_agent_ids
+        ]
 
         agent_prompt = (
             "Du är en agent-router. Givet användarens fråga och den valda domänen, "
             "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
             f"Fråga: {query}\n"
             f"Vald domän: {chosen_domain}\n\n"
-            "Agenter:\n" + "\n".join(agent_lines) + "\n\n"
+            "Agenter:\n" + _format_candidate_list(agent_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
+            "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
             "AGENT: <agent_id>\n"
             "MOTIVERING: <en mening>\n"
@@ -2698,12 +2742,7 @@ class NexusService:
                     chosen_agent = ls.split(":", 1)[1].strip()
                 elif ls.upper().startswith("MOTIVERING:"):
                     agent_reasoning = ls.split(":", 1)[1].strip()
-            # Normalize
-            if chosen_agent and chosen_agent not in domain_agents:
-                for aid in domain_agents:
-                    if aid.lower() == chosen_agent.lower():
-                        chosen_agent = aid
-                        break
+            chosen_agent = _resolve_llm_choice(chosen_agent, sorted_agent_ids)
         except Exception as e:
             logger.warning("LLM gate agent step failed: %s", e)
             chosen_agent = next(iter(domain_agents), "kunskap")
@@ -2746,23 +2785,24 @@ class NexusService:
             }
             agent_tools = [pt for pt in platform_tools if pt.tool_id in agent_tool_ids]
 
-        tool_lines = []
-        for i, pt in enumerate(agent_tools, 1):
-            kw = ", ".join(pt.keywords[:6]) if pt.keywords else ""
-            tool_lines.append(
-                f"{i}. {pt.tool_id} — {pt.description}"
-                + (f" (nyckelord: {kw})" if kw else "")
-            )
+        tool_ids_sorted = [pt.tool_id for pt in agent_tools]
+        tool_items = [
+            (pt.tool_id,
+             pt.description + (f" (nyckelord: {', '.join(pt.keywords[:6])})" if pt.keywords else ""))
+            for pt in agent_tools
+        ]
 
         chosen_tool = None
         tool_reasoning = ""
-        if tool_lines:
+        if tool_items:
             tool_prompt = (
                 "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
                 "välj EXAKT ETT verktyg från listan som bäst kan besvara frågan.\n\n"
                 f"Fråga: {query}\n"
                 f"Vald agent: {chosen_agent}\n\n"
-                "Verktyg:\n" + "\n".join(tool_lines) + "\n\n"
+                "Verktyg:\n" + _format_candidate_list(tool_items) + "\n\n"
+                "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
+                "INTE ett nummer.\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
                 "VERKTYG: <tool_id>\n"
                 "MOTIVERING: <en mening>\n"
@@ -2776,17 +2816,10 @@ class NexusService:
                         chosen_tool = ls.split(":", 1)[1].strip()
                     elif ls.upper().startswith("MOTIVERING:"):
                         tool_reasoning = ls.split(":", 1)[1].strip()
-                # Normalize
                 if chosen_tool:
-                    tool_ids = [pt.tool_id for pt in agent_tools]
-                    if chosen_tool not in tool_ids:
-                        for tid in tool_ids:
-                            if (
-                                chosen_tool.lower() in tid.lower()
-                                or tid.lower() in chosen_tool.lower()
-                            ):
-                                chosen_tool = tid
-                                break
+                    chosen_tool = _resolve_llm_choice(
+                        chosen_tool, tool_ids_sorted
+                    )
             except Exception as e:
                 logger.warning("LLM gate tool step failed: %s", e)
                 chosen_tool = agent_tools[0].tool_id if agent_tools else None
@@ -2935,19 +2968,21 @@ class NexusService:
         # ═══════════════════════════════════════════════════════════════
         step1_start = time.monotonic()
 
-        domain_lines = []
-        for i, (did, d) in enumerate(sorted(all_domains.items()), 1):
-            kw = ", ".join(d.get("keywords", [])[:6])
-            domain_lines.append(
-                f"{i}. {did} — {d.get('description', '')} (nyckelord: {kw})"
-            )
+        sorted_domain_ids = sorted(all_domains.keys())
+        domain_items = [
+            (did, f"{all_domains[did].get('description', '')} "
+             f"(nyckelord: {', '.join(all_domains[did].get('keywords', [])[:6])})")
+            for did in sorted_domain_ids
+        ]
 
         intent_prompt = (
             "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
             "från listan som bäst matchar frågan. Klassificera även frågans "
             "komplexitet.\n\n"
             f"Fråga: {query}\n\n"
-            "Domäner:\n" + "\n".join(domain_lines) + "\n\n"
+            "Domäner:\n" + _format_candidate_list(domain_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
+            "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
             "DOMÄN: <domain_id>\n"
             "KOMPLEXITET: <trivial|simple|complex>\n"
@@ -2971,11 +3006,7 @@ class NexusService:
                         complexity = raw_compl
                 elif ls.upper().startswith("MOTIVERING:"):
                     intent_reasoning = ls.split(":", 1)[1].strip()
-            if chosen_domain and chosen_domain not in all_domains:
-                for did in all_domains:
-                    if did.lower() == chosen_domain.lower():
-                        chosen_domain = did
-                        break
+            chosen_domain = _resolve_llm_choice(chosen_domain, sorted_domain_ids)
         except Exception as e:
             logger.warning("Live pipeline intent step failed: %s", e)
             chosen_domain = "kunskap"
@@ -3017,18 +3048,21 @@ class NexusService:
         if not domain_agents:
             domain_agents = all_agents
 
-        agent_lines = []
-        for i, (aid, a) in enumerate(sorted(domain_agents.items()), 1):
-            kw = ", ".join(a.get("keywords", [])[:8])
-            desc = a.get("description", a.get("label", ""))
-            agent_lines.append(f"{i}. {aid} — {desc} (nyckelord: {kw})")
+        sorted_agent_ids = sorted(domain_agents.keys())
+        agent_items = [
+            (aid, f"{domain_agents[aid].get('description', domain_agents[aid].get('label', ''))} "
+             f"(nyckelord: {', '.join(domain_agents[aid].get('keywords', [])[:8])})")
+            for aid in sorted_agent_ids
+        ]
 
         agent_prompt = (
             "Du är en agent-router. Givet användarens fråga och den valda domänen, "
             "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
             f"Fråga: {query}\n"
             f"Vald domän: {chosen_domain}\n\n"
-            "Agenter:\n" + "\n".join(agent_lines) + "\n\n"
+            "Agenter:\n" + _format_candidate_list(agent_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
+            "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
             "AGENT: <agent_id>\n"
             "MOTIVERING: <en mening>\n"
@@ -3044,11 +3078,7 @@ class NexusService:
                     chosen_agent = ls.split(":", 1)[1].strip()
                 elif ls.upper().startswith("MOTIVERING:"):
                     agent_reasoning = ls.split(":", 1)[1].strip()
-            if chosen_agent and chosen_agent not in domain_agents:
-                for aid in domain_agents:
-                    if aid.lower() == chosen_agent.lower():
-                        chosen_agent = aid
-                        break
+            chosen_agent = _resolve_llm_choice(chosen_agent, sorted_agent_ids)
         except Exception as e:
             logger.warning("Live pipeline agent step failed: %s", e)
             chosen_agent = next(iter(domain_agents), "kunskap")
@@ -3145,24 +3175,25 @@ class NexusService:
         # ═══════════════════════════════════════════════════════════════
         step4_start = time.monotonic()
 
-        tool_lines = []
-        for i, pt in enumerate(agent_tools, 1):
-            kw = ", ".join(pt.keywords[:6]) if pt.keywords else ""
-            tool_lines.append(
-                f"{i}. {pt.tool_id} — {pt.description}"
-                + (f" (nyckelord: {kw})" if kw else "")
-            )
+        tool_ids_sorted = [pt.tool_id for pt in agent_tools]
+        tool_items = [
+            (pt.tool_id,
+             pt.description + (f" (nyckelord: {', '.join(pt.keywords[:6])})" if pt.keywords else ""))
+            for pt in agent_tools
+        ]
 
         chosen_tool = None
         tool_reasoning = ""
-        if tool_lines:
+        if tool_items:
             tool_prompt = (
                 "Du är en verktygsväljare (tool_resolver). Givet användarens fråga, "
                 "den valda agenten och planen, välj EXAKT ETT verktyg från listan.\n\n"
                 f"Fråga: {query}\n"
                 f"Vald agent: {chosen_agent}\n"
                 f"Plan: {plan_text[:300]}\n\n"
-                "Verktyg:\n" + "\n".join(tool_lines) + "\n\n"
+                "Verktyg:\n" + _format_candidate_list(tool_items) + "\n\n"
+                "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
+                "INTE ett nummer.\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
                 "VERKTYG: <tool_id>\n"
                 "MOTIVERING: <en mening>\n"
@@ -3176,15 +3207,9 @@ class NexusService:
                     elif ls.upper().startswith("MOTIVERING:"):
                         tool_reasoning = ls.split(":", 1)[1].strip()
                 if chosen_tool:
-                    tool_ids = [pt.tool_id for pt in agent_tools]
-                    if chosen_tool not in tool_ids:
-                        for tid in tool_ids:
-                            if (
-                                chosen_tool.lower() in tid.lower()
-                                or tid.lower() in chosen_tool.lower()
-                            ):
-                                chosen_tool = tid
-                                break
+                    chosen_tool = _resolve_llm_choice(
+                        chosen_tool, tool_ids_sorted
+                    )
             except Exception as e:
                 logger.warning("Live pipeline tool step failed: %s", e)
                 chosen_tool = agent_tools[0].tool_id if agent_tools else None
