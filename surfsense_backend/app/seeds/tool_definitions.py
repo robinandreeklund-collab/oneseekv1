@@ -257,7 +257,6 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
 
     # Simple agents: one import path → one agent_id
     simple_agent_tool_mapping = {
-        "statistik": "app.agents.new_chat.statistics_agent:SCB_TOOL_DEFINITIONS",
         "riksdagen": "app.agents.new_chat.riksdagen_agent:RIKSDAGEN_TOOL_DEFINITIONS",
         "bolag": "app.agents.new_chat.tools.bolagsverket:BOLAGSVERKET_TOOL_DEFINITIONS",
         "marknad": "app.agents.new_chat.marketplace_tools:MARKETPLACE_TOOL_DEFINITIONS",
@@ -376,6 +375,135 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
                     "category": category,
                     "namespace": list(
                         trafik_ns_by_agent.get(sub_agent, ["tools", "trafik", "vag"])
+                    ),
+                    "enabled": True,
+                    "priority": 100,
+                }
+            )
+    except Exception:
+        pass
+
+    # ── SCB: split across statistik-* sub-agents by tool_id prefix ──
+    scb_agent_by_prefix = {
+        "scb_befolkning": "statistik-befolkning",
+        "scb_arbetsmarknad": "statistik-arbetsmarknad",
+        "scb_utbildning": "statistik-utbildning",
+        "scb_halsa": "statistik-halsa",
+        "scb_socialtjanst": "statistik-halsa",
+        "scb_levnadsforhallanden": "statistik-halsa",
+        "scb_miljo": "statistik-miljo",
+        "scb_energi": "statistik-miljo",
+        "scb_boende": "statistik-fastighet",
+        "scb_naringsverksamhet": "statistik-naringsliv",
+        "scb_naringsliv": "statistik-naringsliv",
+        "scb_nationalrakenskaper": "statistik-ekonomi",
+        "scb_priser": "statistik-ekonomi",
+        "scb_finansmarknad": "statistik-ekonomi",
+        "scb_offentlig": "statistik-ekonomi",
+        "scb_hushall": "statistik-ekonomi",
+        "scb_handel": "statistik-ekonomi",
+        "scb_transporter": "statistik-samhalle",
+        "scb_demokrati": "riksdagen",
+        "scb_kultur": "statistik-samhalle",
+        "scb_jordbruk": "statistik-samhalle",
+        "scb_amnesovergripande": "statistik-samhalle",
+    }
+    scb_ns_by_agent = {
+        "statistik-ekonomi": ["tools", "statistics", "scb", "ekonomi"],
+        "statistik-befolkning": ["tools", "statistics", "scb", "befolkning"],
+        "statistik-arbetsmarknad": ["tools", "statistics", "scb", "arbetsmarknad"],
+        "statistik-utbildning": ["tools", "statistics", "scb", "utbildning"],
+        "statistik-halsa": ["tools", "statistics", "scb", "halsa"],
+        "statistik-miljo": ["tools", "statistics", "scb", "miljo"],
+        "statistik-fastighet": ["tools", "statistics", "scb", "fastighet"],
+        "statistik-naringsliv": ["tools", "statistics", "scb", "naringsliv"],
+        "statistik-samhalle": ["tools", "statistics", "scb", "samhalle"],
+        "riksdagen": ["tools", "politik", "riksdagen"],
+    }
+    try:
+        from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
+
+        for definition in SCB_TOOL_DEFINITIONS:
+            tool_id = str(getattr(definition, "tool_id", ""))
+            if not tool_id:
+                continue
+            sub_agent = "statistik-samhalle"  # default fallback
+            for prefix, agent in scb_agent_by_prefix.items():
+                if tool_id.startswith(prefix):
+                    sub_agent = agent
+                    break
+            additional.append(
+                {
+                    "tool_id": tool_id,
+                    "agent_id": sub_agent,
+                    "label": str(getattr(definition, "name", tool_id)),
+                    "description": str(getattr(definition, "description", "")),
+                    "keywords": list(getattr(definition, "keywords", [])),
+                    "category": str(getattr(definition, "base_path", "statistik")),
+                    "namespace": list(
+                        scb_ns_by_agent.get(
+                            sub_agent, ["tools", "statistics", "scb", "samhalle"]
+                        )
+                    ),
+                    "enabled": True,
+                    "priority": 100,
+                }
+            )
+    except Exception:
+        pass
+
+    # ── Kolada: split across statistik-* sub-agents by tool_id prefix ──
+    kolada_agent_by_prefix = {
+        "kolada_aldreomsorg": "statistik-halsa",
+        "kolada_lss": "statistik-halsa",
+        "kolada_ifo": "statistik-halsa",
+        "kolada_barn_unga": "statistik-halsa",
+        "kolada_halsa": "statistik-halsa",
+        "kolada_forskola": "statistik-utbildning",
+        "kolada_grundskola": "statistik-utbildning",
+        "kolada_gymnasieskola": "statistik-utbildning",
+        "kolada_ekonomi": "statistik-ekonomi",
+        "kolada_miljo": "statistik-miljo",
+        "kolada_boende": "statistik-fastighet",
+        "kolada_arbetsmarknad": "statistik-arbetsmarknad",
+        "kolada_demokrati": "riksdagen",
+        "kolada_kultur": "statistik-samhalle",
+        "kolada_sammanfattning": "statistik-samhalle",
+    }
+    kolada_ns_by_agent = {
+        "statistik-ekonomi": ["tools", "statistics", "kolada", "ekonomi"],
+        "statistik-arbetsmarknad": ["tools", "statistics", "kolada", "arbetsmarknad"],
+        "statistik-utbildning": ["tools", "statistics", "kolada", "utbildning"],
+        "statistik-halsa": ["tools", "statistics", "kolada", "halsa"],
+        "statistik-miljo": ["tools", "statistics", "kolada", "miljo"],
+        "statistik-fastighet": ["tools", "statistics", "kolada", "fastighet"],
+        "statistik-samhalle": ["tools", "statistics", "kolada", "samhalle"],
+        "riksdagen": ["tools", "politik", "riksdagen"],
+    }
+    try:
+        from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS
+
+        for definition in KOLADA_TOOL_DEFINITIONS:
+            tool_id = str(getattr(definition, "tool_id", ""))
+            if not tool_id:
+                continue
+            sub_agent = "statistik-samhalle"  # default fallback
+            for prefix, agent in kolada_agent_by_prefix.items():
+                if tool_id.startswith(prefix):
+                    sub_agent = agent
+                    break
+            additional.append(
+                {
+                    "tool_id": tool_id,
+                    "agent_id": sub_agent,
+                    "label": str(getattr(definition, "name", tool_id)),
+                    "description": str(getattr(definition, "description", "")),
+                    "keywords": list(getattr(definition, "keywords", [])),
+                    "category": str(getattr(definition, "category", "kolada")),
+                    "namespace": list(
+                        kolada_ns_by_agent.get(
+                            sub_agent, ["tools", "statistics", "kolada", "samhalle"]
+                        )
                     ),
                     "enabled": True,
                     "priority": 100,
