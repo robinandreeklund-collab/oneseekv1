@@ -212,16 +212,31 @@ async def upsert_agent(
     if not normalized_id:
         normalized_id = "custom"
     domain_id = _normalize_text(payload.get("domain_id")).lower()
-    normalized = normalize_agent_payload(
-        payload, agent_id=normalized_id, domain_id=domain_id
-    )
 
+    # Look up existing row so we can preserve domain_id when not provided
     result = await session.execute(
         select(DomainAgentDefinition).filter(
             DomainAgentDefinition.agent_id == normalized_id
         )
     )
     existing = result.scalars().first()
+
+    # Fall back to the existing domain_id (or the seed default) when the
+    # payload doesn't supply one — this happens when the optimizer sends
+    # only the changed metadata fields.
+    if not domain_id:
+        if existing:
+            domain_id = existing.domain_id or ""
+        else:
+            defaults = get_default_agent_definitions()
+            default_def = defaults.get(normalized_id, {})
+            routes = default_def.get("routes", [])
+            domain_id = routes[0] if routes else ""
+
+    normalized = normalize_agent_payload(
+        payload, agent_id=normalized_id, domain_id=domain_id
+    )
+
     previous_payload = (
         normalize_agent_payload(
             existing.definition_payload,
