@@ -87,12 +87,7 @@ def build_tool_resolver_node(
                     resolved[agent_name] = chosen_ids
                 tool_trace[agent_name] = {
                     "mode": "llm_gate",
-                    "top1": chosen_ids[0] if chosen_ids else None,
-                    "top2": None,
-                    "margin": None,
-                    "auto_selected": False,
                     "selected": chosen_ids,
-                    "namespace_full_exposure": False,
                     "reasoning": str(gate_result.get("reasoning") or ""),
                     "candidates_shown": gate_result.get("candidates_shown", 0),
                 }
