@@ -75,6 +75,179 @@ from app.nexus.schemas import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers for mapping namespaces to real zone domain_ids
+# ---------------------------------------------------------------------------
+
+
+def _compute_ece(
+    calibrated_scores: list[float],
+    labels: list[float],
+    n_bins: int = 10,
+) -> float:
+    """Compute Expected Calibration Error (ECE).
+
+    Bins calibrated probabilities and measures average |confidence - accuracy|
+    weighted by bin population.
+    """
+    if not calibrated_scores or not labels:
+        return 0.0
+    n = len(calibrated_scores)
+    bin_boundaries = [i / n_bins for i in range(n_bins + 1)]
+    ece = 0.0
+    for i in range(n_bins):
+        lo, hi = bin_boundaries[i], bin_boundaries[i + 1]
+        in_bin = [
+            (conf, lab)
+            for conf, lab in zip(calibrated_scores, labels, strict=False)
+            if lo <= conf < hi or (i == n_bins - 1 and conf == hi)
+        ]
+        if not in_bin:
+            continue
+        avg_conf = sum(conf for conf, _ in in_bin) / len(in_bin)
+        avg_acc = sum(lab for _, lab in in_bin) / len(in_bin)
+        ece += (len(in_bin) / n) * abs(avg_conf - avg_acc)
+    return round(ece, 6)
+
+
+def _zone_from_namespace_str(namespace: str) -> str:
+    """Derive the real zone domain_id from a namespace string.
+
+    Uses NAMESPACE_ZONE_MAP so "tools/trafik/trafikverket_trafikinfo"
+    resolves to "trafik-och-transport" instead of just "trafik".
+    """
+    from app.nexus.config import NAMESPACE_ZONE_MAP
+
+    if "/" not in namespace:
+        return namespace
+    parts = namespace.split("/")
+    if len(parts) >= 2:
+        prefix = f"{parts[0]}/{parts[1]}"
+        if prefix in NAMESPACE_ZONE_MAP:
+            return NAMESPACE_ZONE_MAP[prefix]
+    return parts[1] if len(parts) > 1 else namespace
+
+
+def _all_zone_centers() -> dict[str, tuple[float, float]]:
+    """Return 2D cluster centers for all 17 domains.
+
+    Spread across a grid so each domain gets a distinct visual cluster
+    in the UMAP space map.
+    """
+    return {
+        # Row 1 (top)
+        "väder-och-klimat": (-4.0, 3.0),
+        "trafik-och-transport": (-2.0, 3.0),
+        "energi-och-miljö": (0.0, 3.0),
+        "hälsa-och-vård": (2.0, 3.0),
+        # Row 2
+        "ekonomi-och-skatter": (-4.0, 1.0),
+        "arbetsmarknad": (-2.0, 1.0),
+        "befolkning-och-demografi": (0.0, 1.0),
+        "utbildning": (2.0, 1.0),
+        # Row 3
+        "näringsliv-och-bolag": (-4.0, -1.0),
+        "fastighet-och-mark": (-2.0, -1.0),
+        "handel-och-marknad": (0.0, -1.0),
+        "politik-och-beslut": (2.0, -1.0),
+        "rättsväsende": (4.0, -1.0),
+        # Row 4 (bottom)
+        "kunskap": (-3.0, -3.0),
+        "skapande": (-1.0, -3.0),
+        "konversation": (1.0, -3.0),
+        "jämförelse": (3.0, -3.0),
+    }
+
+
+def _build_routing_labels(decision: RoutingDecision) -> dict[str, str]:
+    """Build an ID→label lookup for all IDs referenced in a RoutingDecision."""
+    from app.seeds.agent_definitions import get_default_agent_definitions
+    from app.seeds.intent_domains import get_default_intent_domains
+    from app.seeds.tool_definitions import get_default_tool_definitions
+
+    # Master lookups — get_default_*() return dict[str, dict] keyed by ID
+    domain_defs = get_default_intent_domains()
+    domain_labels = {did: d["label"] for did, d in domain_defs.items()}
+    agent_defs = get_default_agent_definitions()
+    agent_labels = {aid: a["label"] for aid, a in agent_defs.items()}
+    tool_defs = get_default_tool_definitions()
+    tool_labels = {tid: t.get("label", tid) for tid, t in tool_defs.items()}
+
+    all_labels = {**domain_labels, **agent_labels, **tool_labels}
+
+    # Collect IDs referenced in the decision
+    ids: set[str] = set()
+    qa = decision.query_analysis
+    ids.update(qa.zone_candidates)
+    ids.update(qa.domain_hints)
+    if decision.selected_agent:
+        ids.add(decision.selected_agent)
+    if decision.selected_tool:
+        ids.add(decision.selected_tool)
+    if decision.resolved_zone:
+        ids.add(decision.resolved_zone)
+    for c in decision.candidates:
+        ids.add(c.tool_id)
+    if decision.agent_resolution:
+        ids.update(decision.agent_resolution.selected_agents)
+        for ac in decision.agent_resolution.candidates:
+            ids.add(ac.name)
+    if decision.llm_gate:
+        for step in (
+            decision.llm_gate.intent_step,
+            decision.llm_gate.agent_step,
+            decision.llm_gate.tool_step,
+        ):
+            if step and step.chosen:
+                ids.add(step.chosen)
+    if decision.llm_judge and decision.llm_judge.chosen_tool:
+        ids.add(decision.llm_judge.chosen_tool)
+
+    return {k: all_labels[k] for k in ids if k in all_labels}
+
+
+def _resolve_llm_choice(raw: str, sorted_keys: list[str]) -> str:
+    """Resolve an LLM response to an actual ID from the candidate list.
+
+    The LLM sometimes returns the list number (e.g. "17") instead of the
+    actual identifier (e.g. "väder-och-klimat").  This helper:
+    1. Tries exact match first
+    2. Tries case-insensitive match
+    3. Tries partial/substring match
+    4. Falls back to interpreting the response as a 1-based list index
+    """
+    if not raw:
+        return ""
+    # 1. Exact match
+    if raw in sorted_keys:
+        return raw
+    # 2. Case-insensitive
+    lower = raw.lower()
+    for key in sorted_keys:
+        if key.lower() == lower:
+            return key
+    # 3. Partial / substring
+    for key in sorted_keys:
+        if lower in key.lower() or key.lower() in lower:
+            return key
+    # 4. Numeric → 1-based index
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(sorted_keys):
+            return sorted_keys[idx]
+    except ValueError:
+        pass
+    return raw
+
+
+def _format_candidate_list(items: list[tuple[str, str]]) -> str:
+    """Format candidates as '- id — description' without numbering.
+
+    This prevents the LLM from confusing list numbers with IDs.
+    """
+    return "\n".join(f"- {item_id} — {desc}" for item_id, desc in items)
+
+
 class NexusService:
     """Orchestrates the full NEXUS precision routing pipeline."""
 
@@ -84,7 +257,10 @@ class NexusService:
         self.ood_detector = DarkMatterDetector()
         self.band_cascade = ConfidenceBandCascade()
         self.zone_manager = ZoneManager()
-        self.platt_scaler = PlattCalibratedReranker()
+        # Per-zone Platt scalers: zone → scaler.
+        # Global fallback used when no zone-specific scaler exists.
+        self._platt_global = PlattCalibratedReranker()
+        self._platt_by_zone: dict[str, PlattCalibratedReranker] = {}
         # Sprint 2 additions
         self.str_pipeline = SelectThenRoute(zone_manager=self.zone_manager)
         self.schema_verifier = SchemaVerifier()
@@ -99,6 +275,24 @@ class NexusService:
         self.deploy_control = DeployControl()
         # Shadow observer — reads from real platform routing pipeline
         self.shadow_observer = ShadowObserver()
+
+    # -- Per-zone Platt helpers --
+
+    @property
+    def platt_scaler(self) -> PlattCalibratedReranker:
+        """Backward-compat: return the global Platt scaler."""
+        return self._platt_global
+
+    def _get_platt_for_zone(self, zone: str | None) -> PlattCalibratedReranker:
+        """Get the best Platt scaler for a zone.
+
+        Returns zone-specific scaler if fitted, else global fallback.
+        """
+        if zone and zone in self._platt_by_zone:
+            scaler = self._platt_by_zone[zone]
+            if scaler.is_fitted:
+                return scaler
+        return self._platt_global
 
     # ------------------------------------------------------------------
     # Dynamic Agent Loading (from admin flow DB)
@@ -152,6 +346,8 @@ class NexusService:
         if not self.deploy_control.is_loaded:
             await self._ensure_deploy_state_loaded(session)
 
+        # Ensure zones are auto-seeded before counting
+        await self.get_zones(session)
         zones_count = (
             await session.scalar(select(func.count()).select_from(NexusZoneConfig)) or 0
         )
@@ -177,12 +373,13 @@ class NexusService:
     async def get_zones(self, session: AsyncSession) -> list[ZoneConfigResponse]:
         """Return all zone configurations from DB.
 
-        Auto-seeds missing zones into DB so that all 4 zones always appear.
-        Filters out stale zone names (e.g. old 'myndigheter', 'handling').
+        Auto-seeds missing zones into DB so that all domains appear.
+        Uses ``get_all_zone_prefixes()`` which includes both legacy 4 zones
+        and the new 17 domain zones.
         """
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
 
-        valid_zones = set(ZONE_PREFIXES.keys())
+        valid_zones = set(get_all_zone_prefixes().keys())
 
         result = await session.execute(select(NexusZoneConfig))
         rows = result.scalars().all()
@@ -319,6 +516,7 @@ class NexusService:
         session: AsyncSession,
         *,
         tool_entries: list[dict] | None = None,
+        run_llm_judge: bool = False,
     ) -> RoutingDecision:
         """Run the full precision routing pipeline.
 
@@ -369,7 +567,7 @@ class NexusService:
             candidates=[
                 AgentCandidateResponse(
                     name=c.agent.name,
-                    zone=c.agent.zone.value,
+                    zone=c.agent.zone,
                     score=round(c.score, 3),
                     matched_keywords=c.matched_keywords,
                 )
@@ -380,7 +578,9 @@ class NexusService:
 
         # Auto-build tool_entries from platform registry if not provided
         if tool_entries is None:
-            tool_entries = self._build_tool_entries_from_platform(analysis)
+            tool_entries = self._build_tool_entries_from_platform(
+                analysis, agent_namespaces=agent_namespaces
+            )
 
         candidates: list[RoutingCandidate] = []
         selected_tool: str | None = None
@@ -424,10 +624,14 @@ class NexusService:
             top_score = str_result.top_score
             second_score = str_result.second_score
 
-            # Step 4: Calibrate scores (use reranked scores when available)
+            # Step 4: Calibrate scores using zone-specific Platt scaler
+            resolved_zone = (
+                analysis.zone_candidates[0] if analysis.zone_candidates else None
+            )
+            zone_platt = self._get_platt_for_zone(resolved_zone)
             for rank, c in enumerate(str_result.candidates):
                 raw = rerank_scores.get(c.tool_id, c.raw_score)
-                calibrated = self.platt_scaler.calibrate(raw)
+                calibrated = zone_platt.calibrate(raw)
                 candidates.append(
                     RoutingCandidate(
                         tool_id=c.tool_id,
@@ -439,7 +643,11 @@ class NexusService:
                 )
 
             # Re-sort by calibrated score after reranking
-            candidates.sort(key=lambda rc: rc.calibrated_score, reverse=True)
+            # Use raw_score as tiebreaker when calibrated scores are equal
+            # (e.g. when Platt scaler produces degenerate all-zero outputs)
+            candidates.sort(
+                key=lambda rc: (rc.calibrated_score, rc.raw_score), reverse=True
+            )
             for i, rc in enumerate(candidates):
                 rc.rank = i
 
@@ -480,6 +688,58 @@ class NexusService:
             raw_margin=raw_margin,
         )
 
+        # Optional: LLM Tool Judge — sees ALL tools in resolved agent
+        # namespaces (not just top-5 NEXUS candidates) so it can find
+        # the correct tool even when embedding ranking missed it.
+        llm_judge_result = None
+        if run_llm_judge and candidates:
+            from app.nexus.platform_bridge import get_platform_tools as _gpt
+            from app.nexus.schemas import LlmJudgeResult
+
+            platform_tools = _gpt()
+            _desc_map = {t.tool_id: t.description for t in platform_tools}
+
+            # Build full tool list from agent's namespace
+            nexus_tool_ids = {c.tool_id for c in candidates}
+            judge_candidates = [
+                {
+                    "tool_id": c.tool_id,
+                    "name": c.tool_id,
+                    "description": _desc_map.get(c.tool_id, ""),
+                    "score": c.calibrated_score,
+                }
+                for c in candidates
+            ]
+            # Add namespace tools that NEXUS didn't rank (score=0)
+            if agent_namespaces:
+                for pt in platform_tools:
+                    if pt.tool_id in nexus_tool_ids:
+                        continue
+                    if pt.category == "external_model":
+                        continue
+                    ns_str = (
+                        "/".join(pt.namespace) if len(pt.namespace) >= 2 else ""
+                    )
+                    if any(ns_str.startswith(prefix) for prefix in agent_namespaces):
+                        judge_candidates.append(
+                            {
+                                "tool_id": pt.tool_id,
+                                "name": pt.tool_id,
+                                "description": pt.description,
+                                "score": 0.0,
+                            }
+                        )
+            try:
+                judge_raw = await self.llm_judge_tools(query, judge_candidates)
+                llm_judge_result = LlmJudgeResult(
+                    chosen_tool=judge_raw.get("chosen_tool"),
+                    reasoning=judge_raw.get("reasoning", ""),
+                    nexus_rank_of_chosen=judge_raw.get("nexus_rank_of_chosen", -1),
+                    agreement=judge_raw.get("agreement", False),
+                )
+            except Exception:
+                pass  # LLM judge is optional — don't fail routing
+
         elapsed_ms = (time.monotonic() - start_time) * 1000
 
         decision = RoutingDecision(
@@ -497,7 +757,9 @@ class NexusService:
             is_ood=ood_result.is_ood,
             schema_verified=schema_verified,
             latency_ms=elapsed_ms,
+            llm_judge=llm_judge_result,
         )
+        decision.labels = _build_routing_labels(decision)
 
         # Log routing event
         await self._log_routing_event(session, query, decision, raw_top_score)
@@ -535,7 +797,7 @@ class NexusService:
                     continue
                 seen.add(snap.tool_id)
 
-                zone = snap.namespace.split("/")[1] if "/" in snap.namespace else ""
+                zone = _zone_from_namespace_str(snap.namespace)
 
                 # Try real embedding from the configured model
                 prefixed_text = f"[{zone.upper()[:5]}] {snap.tool_id} {snap.namespace}"
@@ -640,9 +902,8 @@ class NexusService:
                         "tool_id": snap.tool_id,
                         "x": snap.umap_x,
                         "y": snap.umap_y,
-                        "zone": snap.namespace.split("/")[1]
-                        if "/" in snap.namespace
-                        else "",
+                        "zone": _zone_from_namespace_str(snap.namespace),
+                        "namespace": snap.namespace,
                         "cluster": snap.cluster_label,
                     }
                 )
@@ -662,12 +923,8 @@ class NexusService:
             )
 
         # Generate UMAP-like 2D coordinates clustered by zone
-        zone_centers = {
-            "kunskap": (-1.0, 1.5),
-            "skapande": (2.0, -1.0),
-            "jämförelse": (3.0, 2.0),
-            "konversation": (-3.0, -2.0),
-        }
+        # All 17 domains get distinct cluster centers
+        zone_centers = _all_zone_centers()
         zone_list = list(zone_centers.keys())
 
         points = []
@@ -682,6 +939,9 @@ class NexusService:
                     "x": cx + random.uniform(-0.8, 0.8),
                     "y": cy + random.uniform(-0.8, 0.8),
                     "zone": pt.zone,
+                    "namespace": "/".join(pt.namespace)
+                    if isinstance(pt.namespace, list | tuple)
+                    else pt.namespace,
                     "cluster": cluster,
                 }
             )
@@ -690,6 +950,76 @@ class NexusService:
             snapshot_at=datetime.now(tz=UTC),
             points=points,
         )
+
+    async def refresh_space_snapshot(self, session: AsyncSession) -> int:
+        """Recompute space snapshot from current tool embeddings.
+
+        Embeds all platform tools, runs PCA/UMAP to 2D, and saves the
+        result to NexusSpaceSnapshot so the Space tab shows real positions.
+
+        Returns:
+            Number of tool points saved.
+        """
+        from app.nexus.embeddings import nexus_embed_np
+        from app.nexus.platform_bridge import get_platform_tools
+
+        tools = get_platform_tools()
+        filtered = [t for t in tools if t.category != "external_model"]
+        if not filtered:
+            return 0
+
+        # Build ToolPoints with real embeddings
+        from app.nexus.layers.space_auditor import ToolPoint
+
+        tool_points: list[ToolPoint] = []
+        for pt in filtered:
+            emb = nexus_embed_np(f"{pt.tool_id} {pt.description}")
+            if emb is not None:
+                tool_points.append(
+                    ToolPoint(
+                        tool_id=pt.tool_id,
+                        zone=pt.zone,
+                        embedding=emb.tolist(),
+                        namespace="/".join(pt.namespace)
+                        if isinstance(pt.namespace, list | tuple)
+                        else pt.namespace,
+                    )
+                )
+
+        if len(tool_points) < 3:
+            return 0
+
+        # Compute 2D projection via space auditor
+        import numpy as np
+
+        embeddings = np.array([tp.embedding for tp in tool_points], dtype=np.float32)
+        umap_points = self.space_auditor._compute_umap(embeddings, tool_points)
+
+        # Build namespace lookup from ToolPoints
+        ns_map = {tp.tool_id: tp.namespace for tp in tool_points}
+
+        # Delete old snapshots and insert new ones
+        from sqlalchemy import delete
+
+        await session.execute(delete(NexusSpaceSnapshot))
+
+        now = datetime.now(tz=UTC)
+        for up in umap_points:
+            session.add(
+                NexusSpaceSnapshot(
+                    tool_id=up.tool_id,
+                    namespace=ns_map.get(up.tool_id, up.zone),
+                    embedding_model="refresh",
+                    umap_x=up.x,
+                    umap_y=up.y,
+                    cluster_label=up.cluster_label,
+                    snapshot_at=now,
+                )
+            )
+        await session.commit()
+
+        logger.info("Refreshed space snapshot: %d tool points", len(umap_points))
+        return len(umap_points)
 
     async def get_confusion_pairs(
         self, session: AsyncSession, *, limit: int = 20
@@ -758,6 +1088,24 @@ class NexusService:
 
         # Build tool metadata from REAL platform tool registry
         platform_tools = get_platform_tools()
+
+        # Build namespace → agent lookup for expected_agent on test cases
+        from app.nexus.config import NEXUS_AGENTS
+
+        _ns_to_agent: dict[str, str] = {}
+        for ag in NEXUS_AGENTS:
+            for ns_prefix in ag.primary_namespaces:
+                _ns_to_agent[ns_prefix] = ag.name
+
+        def _find_agent_for_tool(pt_obj) -> str | None:
+            ns_str = "/".join(pt_obj.namespace)
+            # Try full namespace, then progressively shorter prefixes
+            for length in range(len(pt_obj.namespace), 0, -1):
+                prefix = "/".join(pt_obj.namespace[:length])
+                if prefix in _ns_to_agent:
+                    return _ns_to_agent[prefix]
+            return None
+
         tools: list[dict] = []
         for pt in platform_tools:
             # Always exclude external model tools — they are for compare mode
@@ -782,6 +1130,8 @@ class NexusService:
                     "keywords": pt.keywords,
                     "excludes": pt.excludes,
                     "geographic_scope": pt.geographic_scope,
+                    "zone": pt.zone,
+                    "agent": _find_agent_for_tool(pt),
                 }
             )
 
@@ -831,6 +1181,8 @@ class NexusService:
                 question=case.question,
                 difficulty=case.difficulty,
                 expected_tool=case.expected_tool,
+                expected_intent=case.expected_intent,
+                expected_agent=case.expected_agent,
                 roundtrip_verified=case.roundtrip_verified,
                 quality_score=case.quality_score,
                 generation_run_id=result.run_id,
@@ -1056,12 +1408,59 @@ class NexusService:
         if not event:
             return False
 
+        valid_implicit = {"reformulation", "follow_up"}
         if implicit is not None:
+            if implicit not in valid_implicit:
+                return False
             event.implicit_feedback = implicit
         if explicit is not None:
+            if explicit not in (-1, 0, 1):
+                return False
             event.explicit_feedback = explicit
 
         await session.flush()
+
+        # Propagate feedback to the live retrieval_feedback_store so it
+        # affects subsequent routing decisions (not just DB/calibration).
+        if explicit is not None and event.selected_tool and event.query_text:
+            success = explicit > 0
+            try:
+                from app.agents.new_chat.retrieval_feedback import (
+                    get_global_retrieval_feedback_store,
+                )
+
+                store = get_global_retrieval_feedback_store()
+                store.record(
+                    tool_id=event.selected_tool,
+                    query=event.query_text,
+                    success=success,
+                    competitor_tool_id=None,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to propagate feedback to retrieval_feedback_store",
+                    exc_info=True,
+                )
+
+            # Also persist to GlobalRetrievalFeedbackSignal table so future
+            # supervisor sessions load the feedback via hydration.
+            try:
+                from app.services.retrieval_feedback_persistence_service import (
+                    upsert_retrieval_feedback_signal,
+                )
+
+                await upsert_retrieval_feedback_signal(
+                    session,
+                    tool_id=event.selected_tool,
+                    query=event.query_text,
+                    success=success,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to persist feedback to GlobalRetrievalFeedbackSignal",
+                    exc_info=True,
+                )
+
         return True
 
     # ------------------------------------------------------------------
@@ -1069,16 +1468,33 @@ class NexusService:
     # ------------------------------------------------------------------
 
     async def load_calibration(self, session: AsyncSession) -> None:
-        """Load active calibration parameters from DB."""
+        """Load active calibration parameters from DB (per-zone)."""
+        import numpy as _np
+
         result = await session.execute(
             select(NexusCalibrationParam).where(
                 NexusCalibrationParam.is_active.is_(True),
                 NexusCalibrationParam.calibration_method == "platt",
             )
         )
-        row = result.scalars().first()
-        if row and row.param_a is not None and row.param_b is not None:
-            self.platt_scaler = PlattCalibratedReranker(
+        rows = result.scalars().all()
+
+        _test = _np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+
+        for row in rows:
+            if row.param_a is None or row.param_b is None:
+                continue
+            _out = 1.0 / (1.0 + _np.exp(row.param_a * _test + row.param_b))
+            if _np.max(_out) < 0.01 or _np.min(_out) > 0.99:
+                logger.warning(
+                    "Platt params degenerate for zone=%s (A=%.4f, B=%.4f). Skipping.",
+                    row.zone,
+                    row.param_a,
+                    row.param_b,
+                )
+                continue
+
+            scaler = PlattCalibratedReranker(
                 PlattParams(
                     a=row.param_a,
                     b=row.param_b,
@@ -1086,9 +1502,22 @@ class NexusService:
                     n_samples=row.fitted_on_samples or 0,
                 )
             )
-            logger.info(
-                "Loaded Platt calibration: A=%.4f, B=%.4f", row.param_a, row.param_b
-            )
+
+            if row.zone == "__global__":
+                self._platt_global = scaler
+                logger.info(
+                    "Loaded global Platt: A=%.4f, B=%.4f",
+                    row.param_a,
+                    row.param_b,
+                )
+            else:
+                self._platt_by_zone[row.zone] = scaler
+                logger.info(
+                    "Loaded Platt for zone=%s: A=%.4f, B=%.4f",
+                    row.zone,
+                    row.param_a,
+                    row.param_b,
+                )
 
     # ------------------------------------------------------------------
     # Event Logging
@@ -1143,7 +1572,12 @@ class NexusService:
     # Tool Entry Builder
     # ------------------------------------------------------------------
 
-    def _build_tool_entries_from_platform(self, analysis: QueryAnalysis) -> list[dict]:
+    def _build_tool_entries_from_platform(
+        self,
+        analysis: QueryAnalysis,
+        *,
+        agent_namespaces: list[str] | None = None,
+    ) -> list[dict]:
         """Build tool_entries from the platform registry with embedding-first scoring.
 
         Scoring strategy (aligned with vision):
@@ -1155,7 +1589,7 @@ class NexusService:
         Uses nexus_batch_score to embed the query once and score all tools
         via vectorized cosine similarity in a single operation.
         """
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
         from app.nexus.embeddings import nexus_batch_score
         from app.nexus.platform_bridge import get_platform_tools
 
@@ -1163,23 +1597,31 @@ class NexusService:
         if not tools:
             return []
 
+        all_prefixes = get_all_zone_prefixes()
         query_lower = analysis.normalized_query.lower()
         query_tokens = set(query_lower.split())
         zone_candidates = set(analysis.zone_candidates)
         domain_hints = set(analysis.domain_hints)
 
         # Build zone-prefixed query for embedding (vision: prefix trick)
+        # Use all_prefixes so new domains (e.g. trafik-och-transport) get prefixed too
         zone_hint = analysis.zone_candidates[0] if analysis.zone_candidates else None
         prefixed_query = query_lower
-        if zone_hint and zone_hint in ZONE_PREFIXES:
-            prefixed_query = f"{ZONE_PREFIXES[zone_hint]}{query_lower}"
+        if zone_hint and zone_hint in all_prefixes:
+            prefixed_query = f"{all_prefixes[zone_hint]}{query_lower}"
 
         # Filter tools and build tool texts for batch scoring
+        # Include keywords and example queries for better intra-category
+        # discrimination (e.g. störningar vs olyckor vs köer)
         filtered_tools = [pt for pt in tools if pt.category != "external_model"]
         tool_texts = []
         for pt in filtered_tools:
-            zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-            tool_texts.append(f"{zone_prefix}{pt.tool_id} {pt.description}")
+            zone_prefix = all_prefixes.get(pt.zone, "")
+            kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+            ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
+            tool_texts.append(
+                f"{zone_prefix}{pt.tool_id} {pt.description} {kw_text} {ex_text}"
+            )
 
         # Batch score: embed query once, all tool texts in one pass,
         # vectorized cosine similarity
@@ -1197,11 +1639,23 @@ class NexusService:
             if pt.zone in zone_candidates:
                 score += 0.05
 
-            # BONUS: Keyword overlap (+0.03 per hit, max +0.09)
+            # BONUS: Keyword overlap (+0.05 per exact hit, max +0.15)
+            # Strong enough to discriminate between similar tools in same category
+            # (e.g. störningar vs olyckor vs köer within trafikverket_trafikinfo)
             tool_keywords = {k.lower() for k in pt.keywords}
             keyword_hits = query_tokens & tool_keywords
             if keyword_hits:
-                score += min(0.09, len(keyword_hits) * 0.03)
+                score += min(0.15, len(keyword_hits) * 0.05)
+
+            # BONUS: Substring keyword match for Swedish compound words (+0.04 per hit, max +0.12)
+            # Handles cases like "signalproblem" matching keyword "signal",
+            # "trafikstockning" matching "stockning", "vägavstängningar" matching "avstängning"
+            substring_hits = 0
+            for kw in tool_keywords - keyword_hits:  # skip already-matched
+                if len(kw) >= 4 and kw in query_lower:
+                    substring_hits += 1
+            if substring_hits:
+                score += min(0.12, substring_hits * 0.04)
 
             # BONUS: Domain hint match (+0.10)
             if pt.category in domain_hints:
@@ -1235,6 +1689,20 @@ class NexusService:
         # Sort by score descending, take top 20
         raw_entries.sort(key=lambda e: e[1], reverse=True)
         top_entries = raw_entries[:20]
+
+        # Ensure ALL tools in resolved agent namespaces are included,
+        # even if they scored below the top-20 cutoff.  This prevents
+        # the eval loop and LLM judge from missing relevant tools.
+        if agent_namespaces:
+            top_ids = {e[0]["tool_id"] for e in top_entries}
+            for entry_dict, score in raw_entries[20:]:
+                ns = entry_dict.get("namespace", "")
+                if (
+                    any(ns.startswith(prefix) for prefix in agent_namespaces)
+                    and entry_dict["tool_id"] not in top_ids
+                ):
+                    top_entries.append((entry_dict, score))
+                    top_ids.add(entry_dict["tool_id"])
 
         # NO normalization — scores are already in [0, 1] from cosine similarity.
         # Band thresholds (0.95/0.80/0.60/0.40) are designed for this scale.
@@ -1275,13 +1743,8 @@ class NexusService:
                 # Fallback: use zone-based synthetic 2D coordinates
                 import random
 
-                zone_centers = {
-                    "kunskap": (-1.0, 1.5),
-                    "skapande": (2.0, -1.0),
-                    "jämförelse": (3.0, 2.0),
-                    "konversation": (-3.0, -2.0),
-                }
-                cx, cy = zone_centers.get(pt.zone, (0, 0))
+                all_centers = _all_zone_centers()
+                cx, cy = all_centers.get(pt.zone, (0, 0))
                 points.append(
                     ToolPoint(
                         tool_id=pt.tool_id,
@@ -1621,62 +2084,107 @@ class NexusService:
 
         return ECEReport(global_ece=global_ece, per_zone=per_zone)
 
-    async def fit_calibration(self, session: AsyncSession) -> dict:
+    async def fit_calibration(
+        self,
+        session: AsyncSession,
+        *,
+        zone: str | None = None,
+        category: str | None = None,
+    ) -> dict:
         """Fit Platt calibration using routing event data.
 
-        Collects (raw_score, band) pairs from routing events and fits
-        the Platt sigmoid to produce calibrated confidence scores.
+        Per-zone fitting: each domain gets its own sigmoid parameters
+        so that training one category (e.g. väder) doesn't pollute others.
+
+        Args:
+            zone: Fit only for this zone/domain (e.g. "väder-och-klimat").
+            category: Fit only for events matching this tool category
+                (e.g. "smhi"). Resolves to zone via platform tools.
         """
         from datetime import UTC, datetime
 
-        # Load routing events with scores
-        result = await session.execute(
+        # Resolve category → zone if needed
+        target_zone: str | None = zone
+        if category and not target_zone:
+            from app.nexus.platform_bridge import get_platform_tools
+
+            cat_tools = [t for t in get_platform_tools() if t.category == category]
+            if cat_tools:
+                target_zone = cat_tools[0].zone
+
+        # Load routing events with scores, optionally filtered by zone
+        stmt = (
             select(NexusRoutingEvent)
             .where(NexusRoutingEvent.raw_reranker_score.isnot(None))
             .order_by(NexusRoutingEvent.routed_at.desc())
-            .limit(1000)
+            .limit(2000)
         )
+        if target_zone:
+            stmt = stmt.where(NexusRoutingEvent.resolved_zone == target_zone)
+
+        result = await session.execute(stmt)
         events = result.scalars().all()
 
         if len(events) < 10:
             return {
                 "status": "insufficient_data",
-                "message": f"Need at least 10 scored events, got {len(events)}",
+                "message": (
+                    f"Need ≥10 scored events"
+                    f"{f' for zone {target_zone}' if target_zone else ''}"
+                    f", got {len(events)}"
+                ),
+                "zone": target_zone,
             }
 
-        # Build training data: raw_score → binary label (band 0/1 = correct)
-        scores = []
+        # Build training data: raw_score → binary label
+        # User feedback overrides band-based labels when available
+        scores = [ev.raw_reranker_score for ev in events]
         labels = []
         for ev in events:
-            scores.append(ev.raw_reranker_score)
-            labels.append(1.0 if ev.band <= 1 else 0.0)
+            if ev.explicit_feedback == 1:
+                labels.append(1.0)
+            elif ev.explicit_feedback == -1:
+                labels.append(0.0)
+            else:
+                labels.append(1.0 if ev.band <= 1 else 0.0)
 
         # Fit Platt scaler
-        params = self.platt_scaler.fit(scores, labels)
+        scaler = PlattCalibratedReranker()
+        params = scaler.fit(scores, labels)
 
-        # Persist calibration per zone
-        from app.nexus.config import ZONE_PREFIXES
+        if not params.fitted:
+            return {
+                "status": "degenerate",
+                "message": "Platt fit rejected as degenerate",
+                "zone": target_zone,
+            }
+
+        # Compute ECE (Expected Calibration Error) from fitted data
+        calibrated_scores = scaler.calibrate_batch(scores)
+        ece = _compute_ece(calibrated_scores, labels)
+
+        # Determine which zones to write
+        zones_to_write = [target_zone] if target_zone else ["__global__"]
 
         fitted_count = 0
-        for zone in ZONE_PREFIXES:
-            # Deactivate old params
+        for z in zones_to_write:
+            # Deactivate old params for this zone
             old = await session.execute(
                 select(NexusCalibrationParam).where(
-                    NexusCalibrationParam.zone == zone,
+                    NexusCalibrationParam.zone == z,
                     NexusCalibrationParam.is_active.is_(True),
                 )
             )
             for old_row in old.scalars().all():
                 old_row.is_active = False
 
-            # Insert new
             cal = NexusCalibrationParam(
-                zone=zone,
+                zone=z,
                 calibration_method="platt",
                 param_a=params.a,
                 param_b=params.b,
                 temperature=1.0,
-                ece_score=None,
+                ece_score=ece,
                 fitted_on_samples=len(scores),
                 fitted_at=datetime.now(tz=UTC),
                 is_active=True,
@@ -1684,13 +2192,21 @@ class NexusService:
             session.add(cal)
             fitted_count += 1
 
+        # Update in-memory scalers
+        if target_zone:
+            self._platt_by_zone[target_zone] = scaler
+        else:
+            self._platt_global = scaler
+
         await session.commit()
 
         return {
             "status": "completed",
+            "zone": target_zone or "__global__",
             "fitted_on_samples": len(scores),
             "param_a": params.a,
             "param_b": params.b,
+            "ece_score": ece,
             "zones_updated": fitted_count,
         }
 
@@ -1731,9 +2247,9 @@ class NexusService:
 
         Called when overview metrics are requested to keep zone rows fresh.
         """
-        from app.nexus.config import ZONE_PREFIXES
+        from app.nexus.config import get_all_zone_prefixes
 
-        for zone_name in ZONE_PREFIXES:
+        for zone_name in get_all_zone_prefixes():
             # Count band-0 events for this zone
             zone_total = (
                 await session.scalar(
@@ -1772,24 +2288,33 @@ class NexusService:
                 select(NexusZoneConfig).where(NexusZoneConfig.zone == zone_name)
             )
             zone_row = result.scalars().first()
-            if zone_row:
-                zone_row.band0_rate = round(band0_rate, 4)
-                if avg_conf is not None:
-                    # ECE approximation: |average_confidence - accuracy|
-                    # accuracy proxy: proportion of events in bands 0-1
-                    zone_b01 = (
-                        await session.scalar(
-                            select(func.count())
-                            .select_from(NexusRoutingEvent)
-                            .where(
-                                NexusRoutingEvent.resolved_zone == zone_name,
-                                NexusRoutingEvent.band <= 1,
-                            )
+            if not zone_row:
+                # Auto-create zone config row for new domain zones
+                all_prefixes = get_all_zone_prefixes()
+                zone_row = NexusZoneConfig(
+                    zone=zone_name,
+                    prefix_token=all_prefixes.get(
+                        zone_name, f"[{zone_name[:5].upper()}] "
+                    ),
+                )
+                session.add(zone_row)
+            zone_row.band0_rate = round(band0_rate, 4)
+            if avg_conf is not None:
+                # ECE approximation: |average_confidence - accuracy|
+                # accuracy proxy: proportion of events in bands 0-1
+                zone_b01 = (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(NexusRoutingEvent)
+                        .where(
+                            NexusRoutingEvent.resolved_zone == zone_name,
+                            NexusRoutingEvent.band <= 1,
                         )
-                        or 0
                     )
-                    accuracy_proxy = zone_b01 / zone_total
-                    zone_row.ece_score = round(abs(avg_conf - accuracy_proxy), 4)
+                    or 0
+                )
+                accuracy_proxy = zone_b01 / zone_total
+                zone_row.ece_score = round(abs(avg_conf - accuracy_proxy), 4)
 
         await session.flush()
 
@@ -1826,15 +2351,19 @@ class NexusService:
         ece_report = await self.get_ece_report(session)
 
         # Schema verification rate (namespace purity proxy)
+        # Only count non-OOD events to avoid ratio > 1.0
+        non_ood_count = total - ood_count
         schema_verified_count = (
             await session.scalar(
                 select(func.count())
                 .select_from(NexusRoutingEvent)
-                .where(NexusRoutingEvent.schema_verified.is_(True))
+                .where(
+                    NexusRoutingEvent.schema_verified.is_(True),
+                    NexusRoutingEvent.is_ood.is_(False),
+                )
             )
             or 0
         )
-        non_ood_count = total - ood_count
         namespace_purity = (
             schema_verified_count / non_ood_count if non_ood_count > 0 else 0.0
         )
@@ -1915,12 +2444,22 @@ class NexusService:
             "ece_global": ece_report.global_ece,
             "ood_rate": round(ood_rate, 4),
             "namespace_purity": round(namespace_purity, 4),
-            "platt_calibrated": self.platt_scaler.is_fitted,
+            "platt_calibrated": (
+                self._platt_global.is_fitted
+                or any(s.is_fitted for s in self._platt_by_zone.values())
+            ),
+            "platt_zones_fitted": len(
+                [z for z, s in self._platt_by_zone.items() if s.is_fitted]
+            ),
             "total_events": total,
             "total_tools": tool_count,
             "total_hard_negatives": hn_count,
-            "band_distribution": band_dist["distribution"],
-            "band_percentages": band_dist["percentages"],
+            "band_distribution": {
+                f"band_{i}": v for i, v in enumerate(band_dist["distribution"])
+            },
+            "band_percentages": {
+                f"band_{i}": v for i, v in enumerate(band_dist["percentages"])
+            },
             "multi_intent_rate": round(multi_intent_rate, 4)
             if multi_intent_rate is not None
             else None,
@@ -1963,6 +2502,1029 @@ class NexusService:
         return MetricsTrend(period_days=days, data_points=data_points)
 
     # ------------------------------------------------------------------
+    # LLM Tool Judge — let an LLM pick the best tool from NEXUS candidates
+    # ------------------------------------------------------------------
+
+    async def llm_judge_tools(
+        self,
+        query: str,
+        candidates: list[dict],
+        *,
+        top_k: int | None = None,
+    ) -> dict:
+        """Ask an LLM to choose the best tool from candidates.
+
+        When top_k is None (default), ALL candidates are presented to the LLM
+        so it can evaluate the full agent namespace. Set top_k to limit.
+
+        Args:
+            query: The user query.
+            candidates: Tool dicts with tool_id, name, description, score.
+            top_k: Max candidates to show LLM. None = all.
+
+        Returns:
+            Dict with chosen_tool, reasoning, nexus_rank_of_chosen, agreement.
+        """
+        from app.nexus.llm import nexus_llm_call
+
+        shortlist = candidates[:top_k] if top_k else candidates
+        if not shortlist:
+            return {
+                "chosen_tool": None,
+                "reasoning": "Inga kandidater att bedöma.",
+                "nexus_rank_of_chosen": -1,
+                "agreement": False,
+            }
+
+        tool_lines = []
+        for i, c in enumerate(shortlist, 1):
+            score = c.get("score", c.get("calibrated_confidence", 0))
+            tool_lines.append(
+                f"{i}. {c.get('tool_id', c.get('name', '?'))} "
+                f"(poäng {score:.3f}) — {c.get('description', '')}"
+            )
+
+        prompt = (
+            f"Du är en verktygsväljare. Givet användarens fråga, välj ETT verktyg "
+            f"från listan som bäst kan besvara frågan.\n\n"
+            f"Fråga: {query}\n\n"
+            f"Kandidater:\n" + "\n".join(tool_lines) + "\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "VERKTYG: <tool_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            response = await nexus_llm_call(prompt)
+            chosen_tool = None
+            reasoning = ""
+            for line in response.strip().splitlines():
+                line_stripped = line.strip()
+                if line_stripped.upper().startswith("VERKTYG:"):
+                    chosen_tool = line_stripped.split(":", 1)[1].strip()
+                elif line_stripped.upper().startswith("MOTIVERING:"):
+                    reasoning = line_stripped.split(":", 1)[1].strip()
+
+            # Find the NEXUS rank of the chosen tool
+            nexus_rank = -1
+            candidate_ids = [c.get("tool_id", c.get("name", "")) for c in shortlist]
+            if chosen_tool and chosen_tool in candidate_ids:
+                nexus_rank = candidate_ids.index(chosen_tool) + 1
+            elif chosen_tool:
+                # Fuzzy match — LLM might return slightly different name
+                for idx, cid in enumerate(candidate_ids):
+                    if (
+                        chosen_tool.lower() in cid.lower()
+                        or cid.lower() in chosen_tool.lower()
+                    ):
+                        chosen_tool = cid  # Normalize to actual tool_id
+                        nexus_rank = idx + 1
+                        break
+
+            nexus_top1 = candidate_ids[0] if candidate_ids else None
+            agreement = chosen_tool == nexus_top1
+
+            return {
+                "chosen_tool": chosen_tool,
+                "reasoning": reasoning,
+                "nexus_rank_of_chosen": nexus_rank,
+                "agreement": agreement,
+            }
+        except Exception as e:
+            logger.warning("LLM judge failed: %s", e)
+            return {
+                "chosen_tool": None,
+                "reasoning": f"LLM-anrop misslyckades: {e}",
+                "nexus_rank_of_chosen": -1,
+                "agreement": False,
+            }
+
+    # ------------------------------------------------------------------
+    # LLM Gate — pure LLM-based routing (no embeddings / reranker)
+    # ------------------------------------------------------------------
+
+    async def route_query_llm_gate(
+        self,
+        query: str,
+        session: AsyncSession,
+    ) -> RoutingDecision:
+        """Run a pure LLM-based routing pipeline: Intent → Agent → Tool.
+
+        Three sequential LLM calls replace all embedding/reranker logic:
+        1. LLM picks the best intent domain from all available domains
+        2. LLM picks the best agent within that domain
+        3. LLM picks the best tool within that agent
+
+        Returns a RoutingDecision with llm_gate populated.
+        """
+        import time
+
+        from app.nexus.llm import nexus_llm_call
+        from app.nexus.platform_bridge import get_platform_tools
+        from app.nexus.schemas import (
+            AgentCandidateResponse,
+            AgentResolution,
+            LlmGateResult,
+            LlmGateStepResult,
+            QueryAnalysis,
+            QueryEntities,
+            RoutingCandidate,
+            RoutingDecision,
+        )
+
+        start_time = time.monotonic()
+
+        # Load domains and agents from DB / seeds
+        (
+            _,
+            db_agents_by_zone,
+            _,
+            _,
+        ) = await self._load_db_agents(session)
+
+        # Gather all domains from seed data
+        from app.seeds.intent_domains import get_default_intent_domains
+
+        all_domains = get_default_intent_domains()
+
+        # Gather all agents from seed data
+        from app.seeds.agent_definitions import get_default_agent_definitions
+
+        all_agents = get_default_agent_definitions()
+
+        # ── Step 1: LLM picks Intent / Domain ──
+        sorted_domain_ids = sorted(all_domains.keys())
+        domain_items = [
+            (did, f"{all_domains[did].get('description', '')} "
+             f"(nyckelord: {', '.join(all_domains[did].get('keywords', [])[:6])})")
+            for did in sorted_domain_ids
+        ]
+
+        intent_prompt = (
+            "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
+            "från listan som bäst matchar frågan.\n\n"
+            f"Fråga: {query}\n\n"
+            "Domäner:\n" + _format_candidate_list(domain_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
+            "INTE ett nummer.\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "DOMÄN: <domain_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            intent_response = await nexus_llm_call(intent_prompt)
+            chosen_domain = ""
+            intent_reasoning = ""
+            for line in intent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("DOMÄN:") or ls.upper().startswith("DOMAIN:"):
+                    chosen_domain = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    intent_reasoning = ls.split(":", 1)[1].strip()
+            chosen_domain = _resolve_llm_choice(chosen_domain, sorted_domain_ids)
+        except Exception as e:
+            logger.warning("LLM gate intent step failed: %s", e)
+            chosen_domain = "kunskap"
+            intent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        intent_step = LlmGateStepResult(
+            chosen=chosen_domain,
+            reasoning=intent_reasoning,
+            candidates_shown=len(all_domains),
+        )
+
+        # ── Step 2: LLM picks Agent within domain ──
+        # Find all agents for the chosen domain
+        domain_agents = {
+            aid: a
+            for aid, a in all_agents.items()
+            if a.get("domain_id") == chosen_domain
+        }
+        # Also include agents from DB overrides if available
+        if db_agents_by_zone and chosen_domain in db_agents_by_zone:
+            for db_agent in db_agents_by_zone[chosen_domain]:
+                aid = getattr(db_agent, "name", "") or getattr(db_agent, "agent_id", "")
+                if aid and aid not in domain_agents:
+                    domain_agents[aid] = {
+                        "description": getattr(db_agent, "description", ""),
+                        "keywords": list(getattr(db_agent, "keywords", ())),
+                        "domain_id": chosen_domain,
+                        "primary_namespaces": list(getattr(db_agent, "primary_namespaces", ())),
+                    }
+
+        if not domain_agents:
+            # Fallback: if no agents match, show all agents
+            domain_agents = all_agents
+
+        sorted_agent_ids = sorted(domain_agents.keys())
+        agent_items = [
+            (aid, f"{domain_agents[aid].get('description', domain_agents[aid].get('label', ''))} "
+             f"(nyckelord: {', '.join(domain_agents[aid].get('keywords', [])[:8])})")
+            for aid in sorted_agent_ids
+        ]
+
+        agent_prompt = (
+            "Du är en agent-router. Givet användarens fråga och den valda domänen, "
+            "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n\n"
+            "Agenter:\n" + _format_candidate_list(agent_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
+            "INTE ett nummer.\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "AGENT: <agent_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        try:
+            agent_response = await nexus_llm_call(agent_prompt)
+            chosen_agent = ""
+            agent_reasoning = ""
+            for line in agent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("AGENT:"):
+                    chosen_agent = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    agent_reasoning = ls.split(":", 1)[1].strip()
+            chosen_agent = _resolve_llm_choice(chosen_agent, sorted_agent_ids)
+        except Exception as e:
+            logger.warning("LLM gate agent step failed: %s", e)
+            chosen_agent = next(iter(domain_agents), "kunskap")
+            agent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        agent_step = LlmGateStepResult(
+            chosen=chosen_agent,
+            reasoning=agent_reasoning,
+            candidates_shown=len(domain_agents),
+        )
+
+        # ── Step 3: LLM picks Tool within agent ──
+        # Get all tools for the chosen agent from platform registry
+        platform_tools = get_platform_tools()
+        agent_def = all_agents.get(chosen_agent, {})
+        agent_ns_raw = agent_def.get("primary_namespaces", [])
+        # Use full namespace depth (3+ levels) so agents within the same
+        # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
+        agent_ns_prefixes = []
+        for ns in agent_ns_raw:
+            if isinstance(ns, list) and len(ns) >= 2:
+                agent_ns_prefixes.append("/".join(ns))
+
+        # Filter tools by agent namespace (full depth match)
+        agent_tools = []
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            ns_str = "/".join(pt.namespace) if pt.namespace else ""
+            if agent_ns_prefixes and any(
+                ns_str.startswith(prefix) for prefix in agent_ns_prefixes
+            ):
+                agent_tools.append(pt)
+
+        # If no tools matched by namespace, try matching by agent_id in tool definitions
+        if not agent_tools:
+            from app.seeds.tool_definitions import get_default_tool_definitions
+
+            tool_defs = get_default_tool_definitions()
+            agent_tool_ids = {
+                tid for tid, td in tool_defs.items() if td.get("agent_id") == chosen_agent
+            }
+            agent_tools = [pt for pt in platform_tools if pt.tool_id in agent_tool_ids]
+
+        tool_ids_sorted = [pt.tool_id for pt in agent_tools]
+        tool_items = [
+            (pt.tool_id,
+             pt.description + (f" (nyckelord: {', '.join(pt.keywords[:6])})" if pt.keywords else ""))
+            for pt in agent_tools
+        ]
+
+        chosen_tool = None
+        tool_reasoning = ""
+        if tool_items:
+            tool_prompt = (
+                "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
+                "välj EXAKT ETT verktyg från listan som bäst kan besvara frågan.\n\n"
+                f"Fråga: {query}\n"
+                f"Vald agent: {chosen_agent}\n\n"
+                "Verktyg:\n" + _format_candidate_list(tool_items) + "\n\n"
+                "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
+                "INTE ett nummer.\n\n"
+                "Svara EXAKT i detta format (inget annat):\n"
+                "VERKTYG: <tool_id>\n"
+                "MOTIVERING: <en mening>\n"
+            )
+
+            try:
+                tool_response = await nexus_llm_call(tool_prompt)
+                for line in tool_response.strip().splitlines():
+                    ls = line.strip()
+                    if ls.upper().startswith("VERKTYG:"):
+                        chosen_tool = ls.split(":", 1)[1].strip()
+                    elif ls.upper().startswith("MOTIVERING:"):
+                        tool_reasoning = ls.split(":", 1)[1].strip()
+                if chosen_tool:
+                    chosen_tool = _resolve_llm_choice(
+                        chosen_tool, tool_ids_sorted
+                    )
+            except Exception as e:
+                logger.warning("LLM gate tool step failed: %s", e)
+                chosen_tool = agent_tools[0].tool_id if agent_tools else None
+                tool_reasoning = f"LLM-anrop misslyckades: {e}"
+        else:
+            tool_reasoning = "Inga verktyg hittades för vald agent."
+
+        tool_step = LlmGateStepResult(
+            chosen=chosen_tool or "",
+            reasoning=tool_reasoning,
+            candidates_shown=len(agent_tools),
+        )
+
+        # ── Build RoutingDecision ──
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
+        # Build candidates list from agent_tools for display
+        candidates = [
+            RoutingCandidate(
+                tool_id=pt.tool_id,
+                zone=pt.zone,
+                raw_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                calibrated_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                rank=0 if pt.tool_id == chosen_tool else i + 1,
+            )
+            for i, pt in enumerate(agent_tools)
+        ]
+        # Sort chosen first
+        candidates.sort(key=lambda c: (c.raw_score,), reverse=True)
+        for i, c in enumerate(candidates):
+            c.rank = i
+
+        # Build agent resolution for display
+        agent_candidates = [
+            AgentCandidateResponse(
+                name=aid,
+                zone=a.get("domain_id", ""),
+                score=1.0 if aid == chosen_agent else 0.0,
+                matched_keywords=[],
+            )
+            for aid, a in sorted(domain_agents.items())
+        ]
+
+        # Minimal QUL — just normalized query + chosen domain
+        analysis = QueryAnalysis(
+            original_query=query,
+            normalized_query=query.lower().strip(),
+            sub_queries=[],
+            entities=QueryEntities(),
+            domain_hints=[],
+            zone_candidates=[chosen_domain],
+            complexity="simple",
+            is_multi_intent=False,
+            ood_risk=0.0,
+        )
+
+        decision = RoutingDecision(
+            query_analysis=analysis,
+            agent_resolution=AgentResolution(
+                selected_agents=[chosen_agent] if chosen_agent else [],
+                candidates=agent_candidates[:5],
+                tool_namespaces=agent_ns_prefixes,
+            ),
+            band=0,
+            band_name="llm_gate",
+            candidates=candidates,
+            selected_tool=chosen_tool,
+            selected_agent=chosen_agent,
+            resolved_zone=chosen_domain,
+            calibrated_confidence=1.0 if chosen_tool else 0.0,
+            is_ood=False,
+            schema_verified=False,
+            latency_ms=elapsed_ms,
+            llm_gate=LlmGateResult(
+                intent_step=intent_step,
+                agent_step=agent_step,
+                tool_step=tool_step,
+            ),
+        )
+        decision.labels = _build_routing_labels(decision)
+
+        return decision
+
+    # ------------------------------------------------------------------
+    # Live Pipeline (LLM-only routing + real tool execution)
+    # ------------------------------------------------------------------
+
+    async def route_query_live(
+        self,
+        query: str,
+        session: AsyncSession,
+    ) -> RoutingDecision:
+        """Run the live pipeline mirroring the real LangGraph flow.
+
+        Replicates the complete real pipeline but replaces all
+        embedding/reranker steps with pure LLM decisions.
+
+        Flow (mirrors real LangGraph graph):
+        1. resolve_intent  — LLM picks domain + classifies complexity
+        2. agent_resolver  — LLM picks agent within domain
+        3. planner         — LLM generates execution plan (1-4 steps)
+        4. tool_resolver   — LLM picks tool for plan step
+        5. execution_router — classify strategy (inline/parallel/subagent)
+        6. executor+tools  — actually invoke the chosen tool
+        7. critic          — LLM evaluates result quality (loops if needed)
+        8. synthesizer     — LLM generates final answer from real data
+        """
+        import json
+        import re
+        import time
+
+        from app.nexus.llm import nexus_llm_call
+        from app.nexus.platform_bridge import get_platform_tools
+        from app.nexus.schemas import (
+            AgentCandidateResponse,
+            AgentResolution,
+            LivePipelineResult,
+            LivePipelineStepResult,
+            LlmGateResult,
+            LlmGateStepResult,
+            QueryAnalysis,
+            QueryEntities,
+            RoutingCandidate,
+            RoutingDecision,
+        )
+
+        total_start = time.monotonic()
+
+        # ── Load seed data ──
+        (
+            _,
+            db_agents_by_zone,
+            _,
+            _,
+        ) = await self._load_db_agents(session)
+
+        from app.seeds.agent_definitions import get_default_agent_definitions
+        from app.seeds.intent_domains import get_default_intent_domains
+
+        all_domains = get_default_intent_domains()
+        all_agents = get_default_agent_definitions()
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 1: resolve_intent — LLM picks Domain + Complexity
+        # (Real pipeline: hybrid lexical+semantic ranking → LLM fallback)
+        # ═══════════════════════════════════════════════════════════════
+        step1_start = time.monotonic()
+
+        sorted_domain_ids = sorted(all_domains.keys())
+        domain_items = [
+            (did, f"{all_domains[did].get('description', '')} "
+             f"(nyckelord: {', '.join(all_domains[did].get('keywords', [])[:6])})")
+            for did in sorted_domain_ids
+        ]
+
+        intent_prompt = (
+            "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
+            "från listan som bäst matchar frågan. Klassificera även frågans "
+            "komplexitet.\n\n"
+            f"Fråga: {query}\n\n"
+            "Domäner:\n" + _format_candidate_list(domain_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
+            "INTE ett nummer.\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "DOMÄN: <domain_id>\n"
+            "KOMPLEXITET: <trivial|simple|complex>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        chosen_domain = ""
+        intent_reasoning = ""
+        complexity = "simple"
+        try:
+            intent_response = await nexus_llm_call(intent_prompt)
+            for line in intent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("DOMÄN:") or ls.upper().startswith(
+                    "DOMAIN:"
+                ):
+                    chosen_domain = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("KOMPLEXITET:"):
+                    raw_compl = ls.split(":", 1)[1].strip().lower()
+                    if raw_compl in ("trivial", "simple", "complex"):
+                        complexity = raw_compl
+                elif ls.upper().startswith("MOTIVERING:"):
+                    intent_reasoning = ls.split(":", 1)[1].strip()
+            chosen_domain = _resolve_llm_choice(chosen_domain, sorted_domain_ids)
+        except Exception as e:
+            logger.warning("Live pipeline intent step failed: %s", e)
+            chosen_domain = "kunskap"
+            intent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        if not chosen_domain:
+            chosen_domain = "kunskap"
+
+        step1_ms = (time.monotonic() - step1_start) * 1000
+        intent_step_live = LivePipelineStepResult(
+            step_name="resolve_intent",
+            chosen=chosen_domain,
+            reasoning=f"[{complexity}] {intent_reasoning}",
+            candidates_shown=len(all_domains),
+            latency_ms=step1_ms,
+        )
+        intent_step = LlmGateStepResult(
+            chosen=chosen_domain,
+            reasoning=intent_reasoning,
+            candidates_shown=len(all_domains),
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 2: agent_resolver — LLM picks Agent within domain
+        # (Real pipeline: keyword matching + domain filtering)
+        # ═══════════════════════════════════════════════════════════════
+        step2_start = time.monotonic()
+
+        domain_agents = {
+            aid: a
+            for aid, a in all_agents.items()
+            if a.get("domain_id") == chosen_domain
+        }
+        if db_agents_by_zone and chosen_domain in db_agents_by_zone:
+            for db_agent in db_agents_by_zone[chosen_domain]:
+                aid = getattr(db_agent, "name", "") or getattr(db_agent, "agent_id", "")
+                if aid and aid not in domain_agents:
+                    domain_agents[aid] = {
+                        "description": getattr(db_agent, "description", ""),
+                        "keywords": list(getattr(db_agent, "keywords", ())),
+                        "domain_id": chosen_domain,
+                        "primary_namespaces": list(getattr(db_agent, "primary_namespaces", ())),
+                    }
+        if not domain_agents:
+            domain_agents = all_agents
+
+        sorted_agent_ids = sorted(domain_agents.keys())
+        agent_items = [
+            (aid, f"{domain_agents[aid].get('description', domain_agents[aid].get('label', ''))} "
+             f"(nyckelord: {', '.join(domain_agents[aid].get('keywords', [])[:8])})")
+            for aid in sorted_agent_ids
+        ]
+
+        agent_prompt = (
+            "Du är en agent-router. Givet användarens fråga och den valda domänen, "
+            "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n\n"
+            "Agenter:\n" + _format_candidate_list(agent_items) + "\n\n"
+            "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
+            "INTE ett nummer.\n\n"
+            "Svara EXAKT i detta format (inget annat):\n"
+            "AGENT: <agent_id>\n"
+            "MOTIVERING: <en mening>\n"
+        )
+
+        chosen_agent = ""
+        agent_reasoning = ""
+        try:
+            agent_response = await nexus_llm_call(agent_prompt)
+            for line in agent_response.strip().splitlines():
+                ls = line.strip()
+                if ls.upper().startswith("AGENT:"):
+                    chosen_agent = ls.split(":", 1)[1].strip()
+                elif ls.upper().startswith("MOTIVERING:"):
+                    agent_reasoning = ls.split(":", 1)[1].strip()
+            chosen_agent = _resolve_llm_choice(chosen_agent, sorted_agent_ids)
+        except Exception as e:
+            logger.warning("Live pipeline agent step failed: %s", e)
+            chosen_agent = next(iter(domain_agents), "kunskap")
+            agent_reasoning = f"LLM-anrop misslyckades: {e}"
+
+        if not chosen_agent:
+            chosen_agent = next(iter(domain_agents), "kunskap")
+
+        step2_ms = (time.monotonic() - step2_start) * 1000
+        agent_step_live = LivePipelineStepResult(
+            step_name="agent_resolver",
+            chosen=chosen_agent,
+            reasoning=agent_reasoning,
+            candidates_shown=len(domain_agents),
+            latency_ms=step2_ms,
+        )
+        agent_step = LlmGateStepResult(
+            chosen=chosen_agent,
+            reasoning=agent_reasoning,
+            candidates_shown=len(domain_agents),
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 3: planner — LLM generates execution plan
+        # (Real pipeline: LLM with PlannerResult schema, 1-4 steps)
+        # ═══════════════════════════════════════════════════════════════
+        # Collect agent's tool descriptions for context
+        platform_tools = get_platform_tools()
+        agent_def = all_agents.get(chosen_agent, {})
+        agent_ns_raw = agent_def.get("primary_namespaces", [])
+        # Use full namespace depth (3+ levels) so agents within the same
+        # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
+        agent_ns_prefixes = []
+        for ns in agent_ns_raw:
+            if isinstance(ns, list) and len(ns) >= 2:
+                agent_ns_prefixes.append("/".join(ns))
+
+        agent_tools = []
+        for pt in platform_tools:
+            if pt.category == "external_model":
+                continue
+            ns_str = "/".join(pt.namespace) if pt.namespace else ""
+            if agent_ns_prefixes and any(
+                ns_str.startswith(prefix) for prefix in agent_ns_prefixes
+            ):
+                agent_tools.append(pt)
+
+        if not agent_tools:
+            from app.seeds.tool_definitions import get_default_tool_definitions
+
+            tool_defs = get_default_tool_definitions()
+            agent_tool_ids = {
+                tid
+                for tid, td in tool_defs.items()
+                if td.get("agent_id") == chosen_agent
+            }
+            agent_tools = [
+                pt for pt in platform_tools if pt.tool_id in agent_tool_ids
+            ]
+
+        tool_summary = "; ".join(
+            f"{pt.tool_id}: {pt.description[:80]}" for pt in agent_tools[:10]
+        )
+
+        plan_prompt = (
+            "Du är en planeringsagent. Givet användarens fråga, den valda agenten, "
+            "och tillgängliga verktyg, skapa en exekveringsplan.\n\n"
+            f"Fråga: {query}\n"
+            f"Vald domän: {chosen_domain}\n"
+            f"Vald agent: {chosen_agent}\n"
+            f"Tillgängliga verktyg: {tool_summary}\n\n"
+            "Svara med en numrerad lista (1-4 steg). Varje steg ska vara "
+            "en konkret åtgärd. Var kortfattad.\n"
+            "Format:\n"
+            "1. <åtgärd>\n"
+            "2. <åtgärd>\n"
+        )
+
+        plan_text = ""
+        plan_steps: list[dict] = []
+        try:
+            plan_text = await nexus_llm_call(plan_prompt)
+            # Parse numbered steps
+            for line in plan_text.strip().splitlines():
+                m = re.match(r"^\d+\.\s*(.+)$", line.strip())
+                if m:
+                    plan_steps.append(
+                        {"id": f"step-{len(plan_steps)+1}", "content": m.group(1)}
+                    )
+        except Exception as e:
+            plan_text = f"Planering misslyckades: {e}"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 4: tool_resolver — LLM picks Tool for plan
+        # (Real pipeline: bigtool retrieval + namespace filtering + reranker)
+        # ═══════════════════════════════════════════════════════════════
+        step4_start = time.monotonic()
+
+        tool_ids_sorted = [pt.tool_id for pt in agent_tools]
+        tool_items = [
+            (pt.tool_id,
+             pt.description + (f" (nyckelord: {', '.join(pt.keywords[:6])})" if pt.keywords else ""))
+            for pt in agent_tools
+        ]
+
+        chosen_tool = None
+        tool_reasoning = ""
+        if tool_items:
+            tool_prompt = (
+                "Du är en verktygsväljare (tool_resolver). Givet användarens fråga, "
+                "den valda agenten och planen, välj EXAKT ETT verktyg från listan.\n\n"
+                f"Fråga: {query}\n"
+                f"Vald agent: {chosen_agent}\n"
+                f"Plan: {plan_text[:300]}\n\n"
+                "Verktyg:\n" + _format_candidate_list(tool_items) + "\n\n"
+                "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
+                "INTE ett nummer.\n\n"
+                "Svara EXAKT i detta format (inget annat):\n"
+                "VERKTYG: <tool_id>\n"
+                "MOTIVERING: <en mening>\n"
+            )
+            try:
+                tool_response = await nexus_llm_call(tool_prompt)
+                for line in tool_response.strip().splitlines():
+                    ls = line.strip()
+                    if ls.upper().startswith("VERKTYG:"):
+                        chosen_tool = ls.split(":", 1)[1].strip()
+                    elif ls.upper().startswith("MOTIVERING:"):
+                        tool_reasoning = ls.split(":", 1)[1].strip()
+                if chosen_tool:
+                    chosen_tool = _resolve_llm_choice(
+                        chosen_tool, tool_ids_sorted
+                    )
+            except Exception as e:
+                logger.warning("Live pipeline tool step failed: %s", e)
+                chosen_tool = agent_tools[0].tool_id if agent_tools else None
+                tool_reasoning = f"LLM-anrop misslyckades: {e}"
+        else:
+            tool_reasoning = "Inga verktyg hittades för vald agent."
+
+        step4_ms = (time.monotonic() - step4_start) * 1000
+        tool_step_live = LivePipelineStepResult(
+            step_name="tool_resolver",
+            chosen=chosen_tool or "",
+            reasoning=tool_reasoning,
+            candidates_shown=len(agent_tools),
+            latency_ms=step4_ms,
+        )
+        tool_step = LlmGateStepResult(
+            chosen=chosen_tool or "",
+            reasoning=tool_reasoning,
+            candidates_shown=len(agent_tools),
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 5: execution_router — classify strategy
+        # (Real pipeline: inline/parallel/subagent based on complexity)
+        # ═══════════════════════════════════════════════════════════════
+        bulk_pattern = re.compile(
+            r"\b(alla|samtliga|hela\s+listan|bulk|för\s+alla|varje\s+kommun)\b",
+            re.IGNORECASE,
+        )
+        if bulk_pattern.search(query) or len(plan_steps) > 3:
+            execution_strategy = "subagent"
+        elif complexity == "complex":
+            execution_strategy = "parallel"
+        else:
+            execution_strategy = "inline"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 6: executor + tools — actually invoke the chosen tool
+        # (Real pipeline: LLM function calling → tool.ainvoke())
+        # ═══════════════════════════════════════════════════════════════
+        tool_output = ""
+        tool_error = ""
+        tool_executed = False
+        tool_args: dict = {}
+        chosen_tool_desc = ""
+
+        for pt in agent_tools:
+            if pt.tool_id == chosen_tool:
+                chosen_tool_desc = pt.description
+                break
+
+        if chosen_tool:
+            try:
+                from app.agents.new_chat.tools.registry import get_tool_by_name
+
+                tool_def = get_tool_by_name(chosen_tool)
+                if tool_def:
+                    # Check if tool can be instantiated without user-specific deps
+                    missing_deps = [
+                        dep
+                        for dep in tool_def.requires
+                        if dep
+                        not in (
+                            "firecrawl_api_key",
+                            "runtime_hitl",
+                            "trace_recorder",
+                            "trace_parent_span_id",
+                        )
+                    ]
+
+                    if not missing_deps:
+                        # Tool needs no user-specific deps — instantiate it
+                        tool_instance = tool_def.factory({})
+
+                        # Ask LLM to generate appropriate arguments
+                        # Get schema from tool
+                        schema_dict = {}
+                        if hasattr(tool_instance, "args_schema"):
+                            import contextlib
+
+                            with contextlib.suppress(Exception):
+                                schema_dict = (
+                                    tool_instance.args_schema.model_json_schema()
+                                )
+                        elif hasattr(tool_instance, "args"):
+                            schema_dict = tool_instance.args
+
+                        args_prompt = (
+                            "Du ska generera JSON-argument för ett verktygsanrop.\n\n"
+                            f"Verktyg: {chosen_tool}\n"
+                            f"Beskrivning: {chosen_tool_desc}\n"
+                            f"Schema: {json.dumps(schema_dict, ensure_ascii=False, default=str)[:1500]}\n\n"
+                            f"Användarens fråga: {query}\n\n"
+                            "Svara med BARA en JSON-objekt (inget annat). "
+                            "Fyll i rimliga värden baserat på frågan.\n"
+                        )
+
+                        try:
+                            args_response = await nexus_llm_call(args_prompt)
+                            # Extract JSON from response
+                            json_match = re.search(
+                                r"\{[^}]+\}", args_response, re.DOTALL
+                            )
+                            if json_match:
+                                tool_args = json.loads(json_match.group())
+                            else:
+                                tool_args = json.loads(args_response.strip())
+                        except (json.JSONDecodeError, Exception) as e:
+                            logger.warning(
+                                "Live pipeline args generation failed: %s", e
+                            )
+                            # Try simple query arg as fallback
+                            tool_args = {"query": query}
+
+                        # Actually invoke the tool
+                        try:
+                            raw_result = await tool_instance.ainvoke(tool_args)
+                            tool_executed = True
+                            if isinstance(raw_result, str):
+                                tool_output = raw_result[:5000]
+                            elif isinstance(raw_result, dict):
+                                tool_output = json.dumps(
+                                    raw_result,
+                                    ensure_ascii=False,
+                                    indent=2,
+                                    default=str,
+                                )[:5000]
+                            else:
+                                tool_output = str(raw_result)[:5000]
+                        except Exception as e:
+                            tool_error = f"Verktygsexekvering misslyckades: {e}"
+                            logger.warning(
+                                "Live pipeline tool execution failed: %s", e
+                            )
+                    else:
+                        tool_error = (
+                            f"Verktyget kräver beroenden som inte finns i "
+                            f"Pipeline Explorer: {', '.join(missing_deps)}"
+                        )
+                else:
+                    tool_error = f"Verktyget '{chosen_tool}' finns inte i registret."
+            except Exception as e:
+                tool_error = f"Kunde inte ladda verktyg: {e}"
+                logger.warning("Live pipeline tool loading failed: %s", e)
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 7: critic — LLM evaluates result quality
+        # (Real pipeline: guards + LLM critique → ok/needs_more/replan)
+        # ═══════════════════════════════════════════════════════════════
+        critic_decision = "ok"
+        critic_reasoning = ""
+        critic_loops = 0
+
+        if tool_executed and tool_output:
+            critic_prompt = (
+                "Du är en kvalitetskritiker. Utvärdera om verktygsresultatet "
+                "besvarar användarens fråga tillräckligt bra.\n\n"
+                f"Fråga: {query}\n"
+                f"Verktyg: {chosen_tool}\n"
+                f"Resultat (förkortat): {tool_output[:2000]}\n\n"
+                "Svara EXAKT i detta format:\n"
+                "BESLUT: <ok|needs_more|replan>\n"
+                "MOTIVERING: <en mening>\n"
+            )
+            try:
+                critic_response = await nexus_llm_call(critic_prompt)
+                for line in critic_response.strip().splitlines():
+                    ls = line.strip()
+                    if ls.upper().startswith("BESLUT:"):
+                        raw_decision = ls.split(":", 1)[1].strip().lower()
+                        if raw_decision in ("ok", "needs_more", "replan"):
+                            critic_decision = raw_decision
+                    elif ls.upper().startswith("MOTIVERING:"):
+                        critic_reasoning = ls.split(":", 1)[1].strip()
+                critic_loops = 1
+            except Exception as e:
+                critic_decision = "ok"
+                critic_reasoning = f"Critic misslyckades: {e}"
+        elif tool_error:
+            critic_decision = "ok"
+            critic_reasoning = (
+                "Verktyget kunde inte köras — syntetiserar baserat på tillgänglig info."
+            )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Step 8: synthesizer — LLM generates final answer
+        # (Real pipeline: progressive_synthesizer → synthesizer)
+        # ═══════════════════════════════════════════════════════════════
+        if tool_executed and tool_output:
+            synthesis_prompt = (
+                "Du är en syntesagent. Givet användarens fråga och det riktiga "
+                "verktygsresultatet, skriv ett kort och informativt svar.\n\n"
+                f"Fråga: {query}\n"
+                f"Verktyg: {chosen_tool}\n"
+                f"Verktygsresultat:\n{tool_output[:3000]}\n\n"
+                "Skriv ett kort, naturligt svar på svenska baserat på den riktiga datan.\n"
+            )
+        else:
+            synthesis_prompt = (
+                "Du är en syntesagent. Verktyget kunde inte köras.\n\n"
+                f"Fråga: {query}\n"
+                f"Valt verktyg: {chosen_tool or 'inget'} — {chosen_tool_desc}\n"
+                f"Fel: {tool_error or 'Inget verktyg valt'}\n"
+                f"Plan:\n{plan_text[:500]}\n\n"
+                "Skriv ett kort svar som förklarar vad som SKULLE hända "
+                "om verktyget kördes, baserat på planen.\n"
+            )
+
+        synthesis_text = ""
+        try:
+            synthesis_text = await nexus_llm_call(synthesis_prompt)
+        except Exception as e:
+            synthesis_text = f"Syntes misslyckades: {e}"
+
+        # ═══════════════════════════════════════════════════════════════
+        # Build RoutingDecision with live pipeline data
+        # ═══════════════════════════════════════════════════════════════
+        total_ms = (time.monotonic() - total_start) * 1000
+
+        candidates = [
+            RoutingCandidate(
+                tool_id=pt.tool_id,
+                zone=pt.zone,
+                raw_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                calibrated_score=1.0 if pt.tool_id == chosen_tool else 0.0,
+                rank=0 if pt.tool_id == chosen_tool else i + 1,
+            )
+            for i, pt in enumerate(agent_tools)
+        ]
+        candidates.sort(key=lambda c: (c.raw_score,), reverse=True)
+        for i, c in enumerate(candidates):
+            c.rank = i
+
+        agent_candidates = [
+            AgentCandidateResponse(
+                name=aid,
+                zone=a.get("domain_id", ""),
+                score=1.0 if aid == chosen_agent else 0.0,
+                matched_keywords=[],
+            )
+            for aid, a in sorted(domain_agents.items())
+        ]
+
+        analysis = QueryAnalysis(
+            original_query=query,
+            normalized_query=query.lower().strip(),
+            sub_queries=[],
+            entities=QueryEntities(),
+            domain_hints=[],
+            zone_candidates=[chosen_domain],
+            complexity=complexity,
+            is_multi_intent=False,
+            ood_risk=0.0,
+        )
+
+        decision = RoutingDecision(
+            query_analysis=analysis,
+            agent_resolution=AgentResolution(
+                selected_agents=[chosen_agent] if chosen_agent else [],
+                candidates=agent_candidates[:10],
+                tool_namespaces=agent_ns_prefixes,
+            ),
+            band=0,
+            band_name="live",
+            candidates=candidates,
+            selected_tool=chosen_tool,
+            selected_agent=chosen_agent,
+            resolved_zone=chosen_domain,
+            calibrated_confidence=1.0 if chosen_tool else 0.0,
+            is_ood=False,
+            schema_verified=False,
+            latency_ms=total_ms,
+            llm_gate=LlmGateResult(
+                intent_step=intent_step,
+                agent_step=agent_step,
+                tool_step=tool_step,
+            ),
+            live=LivePipelineResult(
+                intent_step=intent_step_live,
+                agent_step=agent_step_live,
+                tool_step=tool_step_live,
+                complexity=complexity,
+                execution_strategy=execution_strategy,
+                plan=plan_text.strip(),
+                plan_steps=plan_steps,
+                tool_args=tool_args,
+                tool_output=tool_output,
+                tool_error=tool_error,
+                tool_executed=tool_executed,
+                critic_decision=critic_decision,
+                critic_reasoning=critic_reasoning,
+                critic_loops=critic_loops,
+                synthesis=synthesis_text.strip(),
+                total_latency_ms=total_ms,
+            ),
+        )
+        decision.labels = _build_routing_labels(decision)
+
+        return decision
+
+    # ------------------------------------------------------------------
     # Auto Loop Run (Sprint 5)
     # ------------------------------------------------------------------
 
@@ -1975,6 +3537,7 @@ class NexusService:
         namespace: str | None = None,
         batch_size: int = 200,
         max_iterations: int = 1,
+        run_llm_judge: bool = False,
     ) -> dict:
         """Run a complete auto-loop iteration inline.
 
@@ -2061,25 +3624,30 @@ class NexusService:
 
         # Pre-warm embedding cache: batch-embed all query texts + tool texts
         # in efficient GPU passes BEFORE the eval loop starts.
+        from app.nexus.config import get_all_zone_prefixes
         from app.nexus.embeddings import nexus_precompute
-        from app.nexus.config import ZONE_PREFIXES
         from app.nexus.platform_bridge import get_platform_tools
 
+        zone_prefixes = get_all_zone_prefixes()
         all_query_texts = [c.question.lower() for c in cases]
         # Also precompute zone-prefixed variants
         platform_tools = get_platform_tools()
         zone_prefixed_queries = set()
         for q in all_query_texts:
             zone_prefixed_queries.add(q)
-            for prefix in ZONE_PREFIXES.values():
+            for prefix in zone_prefixes.values():
                 zone_prefixed_queries.add(f"{prefix}{q}")
         tool_texts = set()
         for pt in platform_tools:
             if pt.category == "external_model":
                 continue
-            zone_prefix = ZONE_PREFIXES.get(pt.zone, "")
-            tool_texts.add(f"{zone_prefix}{pt.tool_id} {pt.description}")
-            tool_texts.add(f"{pt.tool_id} {pt.description}")
+            zone_prefix = zone_prefixes.get(pt.zone, "")
+            # Match the exact format used by _build_tool_entries_from_platform
+            kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+            ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
+            tool_texts.add(
+                f"{zone_prefix}{pt.tool_id} {pt.description} {kw_text} {ex_text}".strip()
+            )
 
         precompute_texts = list(zone_prefixed_queries | tool_texts)
         n_precomputed = nexus_precompute(precompute_texts)
@@ -2107,6 +3675,23 @@ class NexusService:
             correct_at_1 = 0
             correct_at_5 = 0
             reciprocal_ranks: list[float] = []
+            llm_judge_total = 0
+            llm_judge_agreements = 0
+            llm_judge_correct = 0
+            llm_judge_disagreements: list[dict] = []
+            # Dual-sided accuracy quadrants
+            both_correct = 0
+            nexus_only_correct = 0
+            llm_only_correct = 0
+            both_wrong = 0
+            # Platt calibration data — collect raw scores + labels
+            platt_raw_scores: list[float] = []
+            platt_labels: list[int] = []
+            # 3-level accuracy: intent, agent, tool
+            intent_correct = 0
+            intent_total = 0
+            agent_correct = 0
+            agent_total = 0
 
             # --- Parallel evaluation helper --------------------------------
             # Each case gets its own DB session to avoid SQLAlchemy
@@ -2116,17 +3701,77 @@ class NexusService:
             from app.agents.new_chat.forge_pool import forge_pool
             from app.db import async_session_maker
 
-            async def _eval_one_case(case_obj):
+            # Build tool lookups for LLM judge (full namespace)
+            _tool_desc_map: dict[str, str] = {
+                pt.tool_id: pt.description
+                for pt in platform_tools
+                if pt.category != "external_model"
+            }
+            _tools_by_id = {
+                pt.tool_id: pt
+                for pt in platform_tools
+                if pt.category != "external_model"
+            }
+
+            async def _eval_one_case(
+                case_obj,
+                _tdm=_tool_desc_map,
+                _tbi=_tools_by_id,
+            ):
                 """Evaluate a single test case (runs inside forge pool slot)."""
                 async with async_session_maker() as case_session:
                     decision = await self.route_query(case_obj.question, case_session)
                     nexus_tool = decision.selected_tool
                     candidate_ids = [c.tool_id for c in decision.candidates]
+                    # Capture raw top-1 score for Platt calibration fitting
+                    raw_top1 = (
+                        decision.candidates[0].raw_score if decision.candidates else 0.0
+                    )
 
                     platform_result = await self.shadow_observer.run_platform_retrieval(
                         case_obj.question, session=case_session
                     )
                     platform_tool = platform_result.get("top1")
+
+                    # LLM judge: let LLM pick from ALL agent namespace tools
+                    llm_judge_result = None
+                    if run_llm_judge and decision.candidates:
+                        # Start with all NEXUS candidates
+                        judge_candidates = [
+                            {
+                                "tool_id": c.tool_id,
+                                "name": c.tool_id,
+                                "description": _tdm.get(c.tool_id, ""),
+                                "score": c.calibrated_score,
+                            }
+                            for c in decision.candidates
+                        ]
+                        # Add remaining namespace tools not in NEXUS results
+                        if (
+                            decision.agent_resolution
+                            and decision.agent_resolution.tool_namespaces
+                        ):
+                            nexus_ids = {c.tool_id for c in decision.candidates}
+                            for tid, desc in _tdm.items():
+                                if tid not in nexus_ids:
+                                    pt = _tbi.get(tid)
+                                    if pt and len(pt.namespace) >= 2:
+                                        ns_str = f"{pt.namespace[0]}/{pt.namespace[1]}"
+                                        if any(
+                                            ns_str.startswith(prefix)
+                                            for prefix in decision.agent_resolution.tool_namespaces
+                                        ):
+                                            judge_candidates.append(
+                                                {
+                                                    "tool_id": tid,
+                                                    "name": tid,
+                                                    "description": desc,
+                                                    "score": 0.0,
+                                                }
+                                            )
+                        llm_judge_result = await self.llm_judge_tools(
+                            case_obj.question, judge_candidates
+                        )
 
                     await case_session.commit()
 
@@ -2139,6 +3784,11 @@ class NexusService:
                     "resolved_zone": decision.resolved_zone or "",
                     "selected_agent": decision.selected_agent or "",
                     "confidence": round(decision.calibrated_confidence, 3),
+                    "llm_judge": llm_judge_result,
+                    "raw_top1": raw_top1,
+                    "sub_queries": decision.query_analysis.sub_queries
+                    if decision.query_analysis
+                    else [],
                 }
 
             # Process in batches — each batch runs concurrently via forge pool
@@ -2172,10 +3822,26 @@ class NexusService:
                     nexus_tool = br["nexus_tool"]
                     band_counts[min(br["band"], 4)] += 1
 
+                    # 3-level accuracy: intent and agent
+                    exp_intent = getattr(case_obj, "expected_intent", None)
+                    exp_agent = getattr(case_obj, "expected_agent", None)
+                    if exp_intent:
+                        intent_total += 1
+                        if br["resolved_zone"] == exp_intent:
+                            intent_correct += 1
+                    if exp_agent:
+                        agent_total += 1
+                        if br["selected_agent"] == exp_agent:
+                            agent_correct += 1
+
                     candidate_ids = br["candidate_ids"]
                     if case_obj.expected_tool:
-                        if nexus_tool == case_obj.expected_tool:
+                        is_correct = nexus_tool == case_obj.expected_tool
+                        if is_correct:
                             correct_at_1 += 1
+                        # Collect data for Platt calibration fitting
+                        platt_raw_scores.append(br.get("raw_top1", 0.0))
+                        platt_labels.append(1 if is_correct else 0)
                         if case_obj.expected_tool in candidate_ids[:5]:
                             correct_at_5 += 1
                         if case_obj.expected_tool in candidate_ids:
@@ -2189,6 +3855,57 @@ class NexusService:
                         platform_comparisons += 1
                         if nexus_tool == platform_tool:
                             platform_agreements += 1
+
+                    # LLM judge tracking
+                    llm_judge = br.get("llm_judge")
+                    if llm_judge and llm_judge.get("chosen_tool"):
+                        llm_judge_total += 1
+                        llm_chosen = llm_judge["chosen_tool"]
+                        if llm_chosen == nexus_tool:
+                            llm_judge_agreements += 1
+                        if (
+                            case_obj.expected_tool
+                            and llm_chosen == case_obj.expected_tool
+                        ):
+                            llm_judge_correct += 1
+
+                        # Dual-sided accuracy: who was right?
+                        if case_obj.expected_tool:
+                            n_right = nexus_tool == case_obj.expected_tool
+                            l_right = llm_chosen == case_obj.expected_tool
+                            if n_right and l_right:
+                                both_correct += 1
+                            elif n_right and not l_right:
+                                nexus_only_correct += 1
+                            elif not n_right and l_right:
+                                llm_only_correct += 1
+                            else:
+                                both_wrong += 1
+
+                        if llm_chosen != nexus_tool:
+                            # Determine winner for this disagreement
+                            winner = "tie"
+                            if case_obj.expected_tool:
+                                if nexus_tool == case_obj.expected_tool:
+                                    winner = "nexus"
+                                elif llm_chosen == case_obj.expected_tool:
+                                    winner = "llm"
+                                else:
+                                    winner = "neither"
+                            llm_judge_disagreements.append(
+                                {
+                                    "query": case_obj.question,
+                                    "nexus_tool": nexus_tool or "(none)",
+                                    "llm_tool": llm_chosen,
+                                    "expected_tool": case_obj.expected_tool
+                                    or "(unknown)",
+                                    "reasoning": llm_judge.get("reasoning", ""),
+                                    "nexus_rank_of_chosen": llm_judge.get(
+                                        "nexus_rank_of_chosen", -1
+                                    ),
+                                    "winner": winner,
+                                }
+                            )
 
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
                         failures += 1
@@ -2204,6 +3921,13 @@ class NexusService:
                                 "band": br["band"],
                                 "confidence": br["confidence"],
                                 "difficulty": getattr(case_obj, "difficulty", ""),
+                                "llm_judge_tool": (
+                                    llm_judge.get("chosen_tool") if llm_judge else None
+                                ),
+                                "llm_judge_reasoning": (
+                                    llm_judge.get("reasoning", "") if llm_judge else ""
+                                ),
+                                "sub_queries": br.get("sub_queries", []),
                             }
                         )
 
@@ -2216,6 +3940,13 @@ class NexusService:
                 else 0.0
             )
 
+            llm_judge_agreement_rate = (
+                llm_judge_agreements / llm_judge_total if llm_judge_total > 0 else None
+            )
+            llm_judge_accuracy = (
+                llm_judge_correct / llm_judge_total if llm_judge_total > 0 else None
+            )
+
             iter_result = {
                 "iteration": iteration,
                 "total_tests": total_tests,
@@ -2226,16 +3957,47 @@ class NexusService:
                 "band_distribution": band_counts,
                 "platform_comparisons": platform_comparisons,
                 "platform_agreements": platform_agreements,
+                "llm_judge_total": llm_judge_total,
+                "llm_judge_agreements": llm_judge_agreements,
+                "llm_judge_correct": llm_judge_correct,
+                "llm_judge_agreement_rate": (
+                    round(llm_judge_agreement_rate, 3)
+                    if llm_judge_agreement_rate is not None
+                    else None
+                ),
+                "llm_judge_accuracy": (
+                    round(llm_judge_accuracy, 3)
+                    if llm_judge_accuracy is not None
+                    else None
+                ),
+                "llm_judge_disagreements": llm_judge_disagreements[:20],
+                "both_correct": both_correct,
+                "nexus_only_correct": nexus_only_correct,
+                "llm_only_correct": llm_only_correct,
+                "both_wrong": both_wrong,
+                "intent_correct": intent_correct,
+                "intent_total": intent_total,
+                "intent_accuracy": (
+                    round(intent_correct / intent_total, 3)
+                    if intent_total > 0
+                    else None
+                ),
+                "agent_correct": agent_correct,
+                "agent_total": agent_total,
+                "agent_accuracy": (
+                    round(agent_correct / agent_total, 3) if agent_total > 0 else None
+                ),
             }
             all_iteration_results.append(iter_result)
 
             logger.info(
-                "Auto-loop #%d iter %d: %d/%d failures (P@1=%.3f)",
+                "Auto-loop #%d iter %d: %d/%d failures (P@1=%.3f, LLM-agree=%.1f%%)",
                 loop_number,
                 iteration,
                 failures,
                 total_tests,
                 p_at_1,
+                (llm_judge_agreement_rate or 0) * 100,
             )
 
             # Cluster failures and create proposals
@@ -2283,9 +4045,157 @@ class NexusService:
             cumulative_proposals.extend(proposals)
             cumulative_root_causes.extend(root_causes)
 
+            # ── Auto-fit Platt calibration after first iteration ──────────
+            # The first pass gives us (raw_score, correct/incorrect) pairs —
+            # exactly what Platt sigmoid needs.  Fitting once makes band
+            # thresholds meaningful for subsequent iterations.
+            if (
+                iteration == 1
+                and not self._platt_global.is_fitted
+                and len(platt_raw_scores) >= 10
+            ):
+                try:
+                    self._platt_global.fit(platt_raw_scores, platt_labels)
+                    logger.info(
+                        "Auto-loop #%d: Auto-fitted global Platt from %d samples",
+                        loop_number,
+                        len(platt_raw_scores),
+                    )
+                    # Persist to DB so calibration survives restarts
+                    if self._platt_global.is_fitted:
+                        old = await session.execute(
+                            select(NexusCalibrationParam).where(
+                                NexusCalibrationParam.zone == "__global__",
+                                NexusCalibrationParam.is_active.is_(True),
+                            )
+                        )
+                        for old_row in old.scalars().all():
+                            old_row.is_active = False
+                        session.add(
+                            NexusCalibrationParam(
+                                zone="__global__",
+                                calibration_method="platt",
+                                param_a=self._platt_global.params.a,
+                                param_b=self._platt_global.params.b,
+                                temperature=1.0,
+                                ece_score=None,
+                                fitted_on_samples=len(platt_raw_scores),
+                                fitted_at=datetime.now(tz=UTC),
+                                is_active=True,
+                            )
+                        )
+                        await session.commit()
+                        logger.info("Auto-loop: Platt params persisted to DB")
+                except Exception as e:
+                    logger.warning("Auto-loop Platt fitting failed: %s", e)
+
             # If no failures or last iteration, stop iterating
             if failures == 0 or iteration == max_iterations:
                 break
+
+            # ── Apply optimizer suggestions between iterations ────────
+            # Run MetadataOptimizer on namespaces of confused tools, apply
+            # changes to DB, populate proposed_value, and clear caches so
+            # the next iteration evaluates against updated metadata.
+            try:
+                from app.nexus.embeddings import nexus_clear_embed_cache
+                from app.nexus.optimizer import MetadataOptimizer
+                from app.nexus.platform_bridge import (
+                    apply_overrides_to_cache,
+                    get_platform_tools as _get_pt,
+                )
+
+                # Map tool_id → namespace string for failed tools
+                tool_ns_map: dict[str, str] = {}
+                for pt in _get_pt():
+                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace)
+
+                # Collect unique namespaces from proposals
+                ns_set: set[str] = set()
+                for p in proposals:
+                    ns = tool_ns_map.get(p.tool_id, "")
+                    if ns:
+                        ns_set.add(ns)
+
+                optimizer = MetadataOptimizer()
+                applied_tool_ids: set[str] = set()
+                # Collect all overrides to patch in-memory cache
+                memory_overrides: dict[str, dict] = {}
+
+                for ns in ns_set:
+                    try:
+                        opt_result = await optimizer.generate_suggestions(
+                            session,
+                            namespace=ns,
+                            llm_config_id=-1,  # Use local model in loop (cost control)
+                        )
+                        if opt_result.suggestions:
+                            # Apply to DB
+                            apply_list = [
+                                {
+                                    "tool_id": s.tool_id,
+                                    **s.suggested,
+                                }
+                                for s in opt_result.suggestions
+                                if s.suggested.get("description")
+                            ]
+                            if apply_list:
+                                await optimizer.apply_suggestions(session, apply_list)
+                                await session.commit()
+
+                            # Collect overrides + update proposed_value on proposals
+                            for s in opt_result.suggestions:
+                                if s.suggested.get("description"):
+                                    memory_overrides[s.tool_id] = s.suggested
+                                    applied_tool_ids.add(s.tool_id)
+                            desc_map = {
+                                tid: ov.get("description", "")
+                                for tid, ov in memory_overrides.items()
+                            }
+                            for p in proposals:
+                                if p.tool_id in desc_map:
+                                    p.proposed_value = desc_map[p.tool_id]
+                    except Exception as e:
+                        logger.warning(
+                            "Auto-loop optimizer failed for ns=%s: %s", ns, e
+                        )
+
+                if applied_tool_ids:
+                    # Patch in-memory tool cache so route_query sees new metadata
+                    apply_overrides_to_cache(memory_overrides)
+                    # Clear embedding cache so next iteration uses new metadata
+                    nexus_clear_embed_cache()
+                    # Re-precompute embeddings for updated tools — match the
+                    # exact text format used by _build_tool_entries_from_platform
+                    updated_tools = [
+                        pt for pt in _get_pt() if pt.tool_id in applied_tool_ids
+                    ]
+                    recompute_texts = []
+                    for pt in updated_tools:
+                        zone_prefix = zone_prefixes.get(pt.zone, "")
+                        kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+                        ex_text = (
+                            " | ".join(pt.example_queries[:2])
+                            if pt.example_queries
+                            else ""
+                        )
+                        full_text = (
+                            f"{zone_prefix}{pt.tool_id} {pt.description}"
+                            f" {kw_text} {ex_text}".strip()
+                        )
+                        recompute_texts.append(full_text)
+                    if recompute_texts:
+                        nexus_precompute(recompute_texts)
+
+                    logger.info(
+                        "Auto-loop #%d iter %d: applied optimizer suggestions "
+                        "for %d tools, cleared embedding cache",
+                        loop_number,
+                        iteration,
+                        len(applied_tool_ids),
+                    )
+            except Exception as e:
+                logger.warning("Auto-loop inter-iteration optimizer failed: %s", e)
 
         # Use last iteration's values for final metrics
         last_iter = all_iteration_results[-1]
@@ -2476,11 +4386,59 @@ class NexusService:
                             "band": fq.get("band", -1),
                             "confidence": fq.get("confidence", 0.0),
                             "difficulty": fq.get("difficulty", ""),
+                            "llm_judge_tool": fq.get("llm_judge_tool"),
+                            "llm_judge_reasoning": fq.get("llm_judge_reasoning", ""),
                         }
                         for fq in related_queries[:10]  # Cap at 10 queries per proposal
                     ],
                 }
             )
+
+        # Aggregate LLM judge stats from all iterations
+        llm_judge_summary = None
+        all_disagreements: list[dict] = []
+        total_llm_total = 0
+        total_llm_agree = 0
+        total_llm_correct = 0
+        for ir in all_iteration_results:
+            total_llm_total += ir.get("llm_judge_total", 0)
+            total_llm_agree += ir.get("llm_judge_agreements", 0)
+            total_llm_correct += ir.get("llm_judge_correct", 0)
+            all_disagreements.extend(ir.get("llm_judge_disagreements", []))
+        if total_llm_total > 0:
+            # Aggregate quadrants from all iterations
+            total_both_correct = sum(
+                ir.get("both_correct", 0) for ir in all_iteration_results
+            )
+            total_nexus_only = sum(
+                ir.get("nexus_only_correct", 0) for ir in all_iteration_results
+            )
+            total_llm_only = sum(
+                ir.get("llm_only_correct", 0) for ir in all_iteration_results
+            )
+            total_both_wrong = sum(
+                ir.get("both_wrong", 0) for ir in all_iteration_results
+            )
+            nexus_accuracy = round(
+                (total_both_correct + total_nexus_only) / total_llm_total, 3
+            )
+            llm_accuracy = round(
+                (total_both_correct + total_llm_only) / total_llm_total, 3
+            )
+            llm_judge_summary = {
+                "total": total_llm_total,
+                "agreements": total_llm_agree,
+                "correct": total_llm_correct,
+                "agreement_rate": round(total_llm_agree / total_llm_total, 3),
+                "accuracy": round(total_llm_correct / total_llm_total, 3),
+                "nexus_accuracy": nexus_accuracy,
+                "llm_accuracy": llm_accuracy,
+                "both_correct": total_both_correct,
+                "nexus_only_correct": total_nexus_only,
+                "llm_only_correct": total_llm_only,
+                "both_wrong": total_both_wrong,
+                "disagreements": all_disagreements[:30],
+            }
 
         db_run.metadata_proposals = {
             "proposals": enriched_proposals,
@@ -2489,6 +4447,7 @@ class NexusService:
             "band_distribution": final_band_counts,
             "iterations": all_iteration_results,
             "total_cases_available": total_case_count,
+            "llm_judge": llm_judge_summary,
         }
         db_run.approved_proposals = 0
         db_run.embedding_delta = total_embedding_delta
@@ -2533,6 +4492,7 @@ class NexusService:
         namespace: str | None = None,
         batch_size: int = 200,
         max_iterations: int = 1,
+        run_llm_judge: bool = False,
     ):
         """Run auto-loop with SSE progress events.
 
@@ -2614,24 +4574,29 @@ class NexusService:
             "detail": "Forbereder embeddings (batch GPU)...",
         }
 
+        from app.nexus.config import get_all_zone_prefixes
         from app.nexus.embeddings import nexus_precompute
-        from app.nexus.config import ZONE_PREFIXES
         from app.nexus.platform_bridge import get_platform_tools as _get_pt
 
+        zone_prefixes = get_all_zone_prefixes()
         _pt_tools = _get_pt()
         all_query_texts = [c.question.lower() for c in cases]
         zone_prefixed_queries = set()
         for q in all_query_texts:
             zone_prefixed_queries.add(q)
-            for prefix in ZONE_PREFIXES.values():
+            for prefix in zone_prefixes.values():
                 zone_prefixed_queries.add(f"{prefix}{q}")
         tool_texts = set()
         for pt in _pt_tools:
             if pt.category == "external_model":
                 continue
-            zp = ZONE_PREFIXES.get(pt.zone, "")
-            tool_texts.add(f"{zp}{pt.tool_id} {pt.description}")
-            tool_texts.add(f"{pt.tool_id} {pt.description}")
+            zp = zone_prefixes.get(pt.zone, "")
+            # Match the exact format used by _build_tool_entries_from_platform
+            kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+            ex_text = " | ".join(pt.example_queries[:2]) if pt.example_queries else ""
+            tool_texts.add(
+                f"{zp}{pt.tool_id} {pt.description} {kw_text} {ex_text}".strip()
+            )
 
         precompute_texts = list(zone_prefixed_queries | tool_texts)
         n_precomputed = nexus_precompute(precompute_texts)
@@ -2650,15 +4615,73 @@ class NexusService:
         cumulative_proposals = []
         cumulative_root_causes: list[str] = []
 
-        async def _eval_one_case(case_obj):
+        # Tool lookups for LLM judge — mutable so they can be
+        # refreshed between iterations when the optimizer patches tools.
+        _tool_desc_map: dict[str, str] = {
+            pt.tool_id: pt.description
+            for pt in _pt_tools
+            if pt.category != "external_model"
+        }
+        _tools_by_id = {
+            pt.tool_id: pt for pt in _pt_tools if pt.category != "external_model"
+        }
+
+        async def _eval_one_case(
+            case_obj,
+            _tdm=_tool_desc_map,
+            _tbi=_tools_by_id,
+        ):
             async with async_session_maker() as case_session:
                 decision = await self.route_query(case_obj.question, case_session)
                 nexus_tool = decision.selected_tool
                 candidate_ids = [c.tool_id for c in decision.candidates]
+                raw_top1 = (
+                    decision.candidates[0].raw_score if decision.candidates else 0.0
+                )
                 platform_result = await self.shadow_observer.run_platform_retrieval(
                     case_obj.question, session=case_session
                 )
                 platform_tool = platform_result.get("top1")
+
+                # LLM judge: ALL agent namespace tools (not just top-5)
+                llm_judge_result = None
+                if run_llm_judge and decision.candidates:
+                    judge_candidates = [
+                        {
+                            "tool_id": c.tool_id,
+                            "name": c.tool_id,
+                            "description": _tdm.get(c.tool_id, ""),
+                            "score": c.calibrated_score,
+                        }
+                        for c in decision.candidates
+                    ]
+                    # Add remaining namespace tools not in NEXUS results
+                    if (
+                        decision.agent_resolution
+                        and decision.agent_resolution.tool_namespaces
+                    ):
+                        nexus_ids = {c.tool_id for c in decision.candidates}
+                        for tid, desc in _tdm.items():
+                            if tid not in nexus_ids:
+                                pt = _tbi.get(tid)
+                                if pt and len(pt.namespace) >= 2:
+                                    ns_str = f"{pt.namespace[0]}/{pt.namespace[1]}"
+                                    if any(
+                                        ns_str.startswith(prefix)
+                                        for prefix in decision.agent_resolution.tool_namespaces
+                                    ):
+                                        judge_candidates.append(
+                                            {
+                                                "tool_id": tid,
+                                                "name": tid,
+                                                "description": desc,
+                                                "score": 0.0,
+                                            }
+                                        )
+                    llm_judge_result = await self.llm_judge_tools(
+                        case_obj.question, judge_candidates
+                    )
+
                 await case_session.commit()
             return {
                 "case": case_obj,
@@ -2669,9 +4692,20 @@ class NexusService:
                 "resolved_zone": decision.resolved_zone or "",
                 "selected_agent": decision.selected_agent or "",
                 "confidence": round(decision.calibrated_confidence, 3),
+                "llm_judge": llm_judge_result,
+                "raw_top1": raw_top1,
+                "sub_queries": decision.query_analysis.sub_queries
+                if decision.query_analysis
+                else [],
             }
 
         for iteration in range(1, max_iterations + 1):
+            # Refresh tool lookups (picks up optimizer patches)
+            _refreshed = [pt for pt in _get_pt() if pt.category != "external_model"]
+            _tool_desc_map.clear()
+            _tool_desc_map.update({pt.tool_id: pt.description for pt in _refreshed})
+            _tools_by_id.clear()
+            _tools_by_id.update({pt.tool_id: pt for pt in _refreshed})
             yield {
                 "type": "progress",
                 "step": "eval_start",
@@ -2689,11 +4723,26 @@ class NexusService:
             correct_at_1 = 0
             correct_at_5 = 0
             reciprocal_ranks: list[float] = []
+            llm_judge_total = 0
+            llm_judge_agreements = 0
+            llm_judge_correct = 0
+            llm_judge_disagreements: list[dict] = []
+            # Dual-sided accuracy quadrants
+            both_correct = 0
+            nexus_only_correct = 0
+            llm_only_correct = 0
+            both_wrong = 0
+            # Platt calibration data
+            platt_raw_scores: list[float] = []
+            platt_labels: list[int] = []
+            # 3-level accuracy: intent, agent, tool
+            intent_correct = 0
+            intent_total = 0
+            agent_correct = 0
+            agent_total = 0
 
             num_batches = (len(cases) + batch_size - 1) // batch_size
-            for batch_idx, batch_start in enumerate(
-                range(0, len(cases), batch_size)
-            ):
+            for batch_idx, batch_start in enumerate(range(0, len(cases), batch_size)):
                 batch = cases[batch_start : batch_start + batch_size]
 
                 yield {
@@ -2722,8 +4771,11 @@ class NexusService:
                     band_counts[min(br["band"], 4)] += 1
                     candidate_ids = br["candidate_ids"]
                     if case_obj.expected_tool:
-                        if nexus_tool == case_obj.expected_tool:
+                        is_correct = nexus_tool == case_obj.expected_tool
+                        if is_correct:
                             correct_at_1 += 1
+                        platt_raw_scores.append(br.get("raw_top1", 0.0))
+                        platt_labels.append(1 if is_correct else 0)
                         if case_obj.expected_tool in candidate_ids[:5]:
                             correct_at_5 += 1
                         if case_obj.expected_tool in candidate_ids:
@@ -2736,6 +4788,57 @@ class NexusService:
                         platform_comparisons += 1
                         if nexus_tool == platform_tool:
                             platform_agreements += 1
+                    # LLM judge tracking
+                    llm_judge = br.get("llm_judge")
+                    if llm_judge and llm_judge.get("chosen_tool"):
+                        llm_judge_total += 1
+                        llm_chosen = llm_judge["chosen_tool"]
+                        if llm_chosen == nexus_tool:
+                            llm_judge_agreements += 1
+                        if (
+                            case_obj.expected_tool
+                            and llm_chosen == case_obj.expected_tool
+                        ):
+                            llm_judge_correct += 1
+
+                        # Dual-sided accuracy: who was right?
+                        if case_obj.expected_tool:
+                            n_right = nexus_tool == case_obj.expected_tool
+                            l_right = llm_chosen == case_obj.expected_tool
+                            if n_right and l_right:
+                                both_correct += 1
+                            elif n_right and not l_right:
+                                nexus_only_correct += 1
+                            elif not n_right and l_right:
+                                llm_only_correct += 1
+                            else:
+                                both_wrong += 1
+
+                        if llm_chosen != nexus_tool:
+                            # Determine winner for this disagreement
+                            winner = "tie"
+                            if case_obj.expected_tool:
+                                if nexus_tool == case_obj.expected_tool:
+                                    winner = "nexus"
+                                elif llm_chosen == case_obj.expected_tool:
+                                    winner = "llm"
+                                else:
+                                    winner = "neither"
+                            llm_judge_disagreements.append(
+                                {
+                                    "query": case_obj.question,
+                                    "nexus_tool": nexus_tool or "(none)",
+                                    "llm_tool": llm_chosen,
+                                    "expected_tool": case_obj.expected_tool
+                                    or "(unknown)",
+                                    "reasoning": llm_judge.get("reasoning", ""),
+                                    "nexus_rank_of_chosen": llm_judge.get(
+                                        "nexus_rank_of_chosen", -1
+                                    ),
+                                    "winner": winner,
+                                }
+                            )
+
                     if case_obj.expected_tool and nexus_tool != case_obj.expected_tool:
                         failures += 1
                         failed_queries.append(
@@ -2750,6 +4853,13 @@ class NexusService:
                                 "band": br["band"],
                                 "confidence": br["confidence"],
                                 "difficulty": getattr(case_obj, "difficulty", ""),
+                                "llm_judge_tool": (
+                                    llm_judge.get("chosen_tool") if llm_judge else None
+                                ),
+                                "llm_judge_reasoning": (
+                                    llm_judge.get("reasoning", "") if llm_judge else ""
+                                ),
+                                "sub_queries": br.get("sub_queries", []),
                             }
                         )
 
@@ -2759,6 +4869,13 @@ class NexusService:
                 sum(reciprocal_ranks) / len(reciprocal_ranks)
                 if reciprocal_ranks
                 else 0.0
+            )
+
+            llm_judge_agreement_rate = (
+                llm_judge_agreements / llm_judge_total if llm_judge_total > 0 else None
+            )
+            llm_judge_accuracy = (
+                llm_judge_correct / llm_judge_total if llm_judge_total > 0 else None
             )
 
             iter_result = {
@@ -2771,20 +4888,98 @@ class NexusService:
                 "band_distribution": band_counts,
                 "platform_comparisons": platform_comparisons,
                 "platform_agreements": platform_agreements,
+                "llm_judge_total": llm_judge_total,
+                "llm_judge_agreements": llm_judge_agreements,
+                "llm_judge_correct": llm_judge_correct,
+                "llm_judge_agreement_rate": (
+                    round(llm_judge_agreement_rate, 3)
+                    if llm_judge_agreement_rate is not None
+                    else None
+                ),
+                "llm_judge_accuracy": (
+                    round(llm_judge_accuracy, 3)
+                    if llm_judge_accuracy is not None
+                    else None
+                ),
+                "llm_judge_disagreements": llm_judge_disagreements[:20],
+                "both_correct": both_correct,
+                "nexus_only_correct": nexus_only_correct,
+                "llm_only_correct": llm_only_correct,
+                "both_wrong": both_wrong,
+                "intent_correct": intent_correct,
+                "intent_total": intent_total,
+                "intent_accuracy": (
+                    round(intent_correct / intent_total, 3)
+                    if intent_total > 0
+                    else None
+                ),
+                "agent_correct": agent_correct,
+                "agent_total": agent_total,
+                "agent_accuracy": (
+                    round(agent_correct / agent_total, 3) if agent_total > 0 else None
+                ),
             }
             all_iteration_results.append(iter_result)
 
             yield {
                 "type": "iteration",
                 "step": "eval_done",
-                "detail": f"Iteration {iteration} klar — {failures}/{total_tests} fel, P@1={p_at_1:.1%}",
+                "detail": (
+                    f"Iteration {iteration} klar — {failures}/{total_tests} fel, "
+                    f"P@1={p_at_1:.1%}"
+                    + (
+                        f", Intent={intent_correct}/{intent_total}"
+                        if intent_total > 0
+                        else ""
+                    )
+                    + (
+                        f", Agent={agent_correct}/{agent_total}"
+                        if agent_total > 0
+                        else ""
+                    )
+                ),
                 "iteration": iteration,
                 "total_iterations": max_iterations,
                 "failures": failures,
                 "total_tests": total_tests,
                 "precision_at_1": round(p_at_1, 3),
                 "mrr": round(mrr, 3),
+                "intent_accuracy": (
+                    round(intent_correct / intent_total, 3)
+                    if intent_total > 0
+                    else None
+                ),
+                "agent_accuracy": (
+                    round(agent_correct / agent_total, 3) if agent_total > 0 else None
+                ),
             }
+
+            # Emit LLM judge summary event per iteration
+            if llm_judge_total > 0:
+                yield {
+                    "type": "progress",
+                    "step": "llm_judge",
+                    "detail": (
+                        f"LLM-judge: {llm_judge_agreements}/{llm_judge_total} överens med NEXUS "
+                        f"({((llm_judge_agreement_rate or 0) * 100):.0f}%), "
+                        f"LLM korrekt: {llm_judge_correct}/{llm_judge_total}"
+                    ),
+                    "iteration": iteration,
+                    "llm_judge_total": llm_judge_total,
+                    "llm_judge_agreements": llm_judge_agreements,
+                    "llm_judge_correct": llm_judge_correct,
+                    "llm_judge_agreement_rate": (
+                        round(llm_judge_agreement_rate, 3)
+                        if llm_judge_agreement_rate is not None
+                        else None
+                    ),
+                    "llm_judge_accuracy": (
+                        round(llm_judge_accuracy, 3)
+                        if llm_judge_accuracy is not None
+                        else None
+                    ),
+                    "llm_judge_disagreements": llm_judge_disagreements[:10],
+                }
 
             # Cluster + root cause
             yield {
@@ -2807,9 +5002,7 @@ class NexusService:
                         f"Analysera varför dessa frågor routades fel.\n"
                         f"Förväntade verktyg: {', '.join(cluster_obj.tool_ids)}\n"
                         f"Exempelfrågor:\n"
-                        + "\n".join(
-                            f"- {q}" for q in cluster_obj.sample_queries[:3]
-                        )
+                        + "\n".join(f"- {q}" for q in cluster_obj.sample_queries[:3])
                         + "\n\nSvara med EN mening som förklarar rotorsaken."
                     )
                     try:
@@ -2844,6 +5037,154 @@ class NexusService:
 
             if failures == 0 or iteration == max_iterations:
                 break
+
+            # ── Auto-fit global Platt calibration after first iteration ─────
+            if (
+                iteration == 1
+                and not self._platt_global.is_fitted
+                and len(platt_raw_scores) >= 10
+            ):
+                try:
+                    self._platt_global.fit(platt_raw_scores, platt_labels)
+                    # Persist to DB so calibration survives restarts
+                    if self._platt_global.is_fitted:
+                        old = await session.execute(
+                            select(NexusCalibrationParam).where(
+                                NexusCalibrationParam.zone == "__global__",
+                                NexusCalibrationParam.is_active.is_(True),
+                            )
+                        )
+                        for old_row in old.scalars().all():
+                            old_row.is_active = False
+                        session.add(
+                            NexusCalibrationParam(
+                                zone="__global__",
+                                calibration_method="platt",
+                                param_a=self._platt_global.params.a,
+                                param_b=self._platt_global.params.b,
+                                temperature=1.0,
+                                ece_score=None,
+                                fitted_on_samples=len(platt_raw_scores),
+                                fitted_at=datetime.now(tz=UTC),
+                                is_active=True,
+                            )
+                        )
+                        await session.commit()
+                    yield {
+                        "type": "progress",
+                        "step": "platt_fitted",
+                        "detail": f"Global Platt anpassad från {len(platt_raw_scores)} samples",
+                        "iteration": iteration,
+                    }
+                except Exception as e:
+                    logger.warning("Auto-loop Platt fitting failed: %s", e)
+
+            # ── Apply optimizer suggestions between iterations ────────
+            yield {
+                "type": "progress",
+                "step": "optimizing",
+                "detail": f"Kör optimizer på felaktiga verktyg (iteration {iteration}→{iteration + 1})",
+                "iteration": iteration,
+            }
+
+            try:
+                from app.nexus.embeddings import nexus_clear_embed_cache
+                from app.nexus.optimizer import MetadataOptimizer
+                from app.nexus.platform_bridge import apply_overrides_to_cache
+
+                # Map tool_id → namespace string for failed tools
+                tool_ns_map: dict[str, str] = {}
+                for pt in _get_pt():
+                    tool_ns_map[pt.tool_id] = "/".join(pt.namespace)
+
+                # Collect unique namespaces from proposals
+                ns_set: set[str] = set()
+                for p in proposals:
+                    ns = tool_ns_map.get(p.tool_id, "")
+                    if ns:
+                        ns_set.add(ns)
+
+                optimizer = MetadataOptimizer()
+                applied_tool_ids: set[str] = set()
+                # Collect all overrides to patch in-memory cache
+                memory_overrides: dict[str, dict] = {}
+
+                for ns in ns_set:
+                    try:
+                        opt_result = await optimizer.generate_suggestions(
+                            session,
+                            namespace=ns,
+                            llm_config_id=-1,  # Use local model in loop (cost control)
+                        )
+                        if opt_result.suggestions:
+                            apply_list = [
+                                {
+                                    "tool_id": s.tool_id,
+                                    **s.suggested,
+                                }
+                                for s in opt_result.suggestions
+                                if s.suggested.get("description")
+                            ]
+                            if apply_list:
+                                await optimizer.apply_suggestions(session, apply_list)
+                                await session.commit()
+
+                            # Collect overrides + update proposed_value on proposals
+                            for s in opt_result.suggestions:
+                                if s.suggested.get("description"):
+                                    memory_overrides[s.tool_id] = s.suggested
+                                    applied_tool_ids.add(s.tool_id)
+                            desc_map = {
+                                tid: ov.get("description", "")
+                                for tid, ov in memory_overrides.items()
+                            }
+                            for p in proposals:
+                                if p.tool_id in desc_map:
+                                    p.proposed_value = desc_map[p.tool_id]
+                    except Exception as e:
+                        logger.warning(
+                            "Auto-loop stream optimizer failed for ns=%s: %s",
+                            ns,
+                            e,
+                        )
+
+                if applied_tool_ids:
+                    # Patch in-memory tool cache so route_query sees new metadata
+                    apply_overrides_to_cache(memory_overrides)
+                    nexus_clear_embed_cache()
+                    # Re-precompute embeddings — match the exact text format
+                    # used by _build_tool_entries_from_platform
+                    updated_tools = [
+                        pt for pt in _get_pt() if pt.tool_id in applied_tool_ids
+                    ]
+                    recompute_texts = []
+                    for pt in updated_tools:
+                        zone_prefix = zone_prefixes.get(pt.zone, "")
+                        kw_text = " ".join(pt.keywords[:8]) if pt.keywords else ""
+                        ex_text = (
+                            " | ".join(pt.example_queries[:2])
+                            if pt.example_queries
+                            else ""
+                        )
+                        full_text = (
+                            f"{zone_prefix}{pt.tool_id} {pt.description}"
+                            f" {kw_text} {ex_text}".strip()
+                        )
+                        recompute_texts.append(full_text)
+                    if recompute_texts:
+                        nexus_precompute(recompute_texts)
+
+                    yield {
+                        "type": "progress",
+                        "step": "optimized",
+                        "detail": f"Optimerade {len(applied_tool_ids)} verktyg, rensat cache",
+                        "iteration": iteration,
+                        "tools_optimized": len(applied_tool_ids),
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Auto-loop stream inter-iteration optimizer failed: %s", e
+                )
 
         # Compute embedding delta
         yield {
@@ -2922,10 +5263,7 @@ class NexusService:
 
         if final_total_tests >= 3:
             reranker_delta = (
-                (
-                    final_platform_agreements / final_platform_comparisons
-                    - final_p_at_1
-                )
+                (final_platform_agreements / final_platform_comparisons - final_p_at_1)
                 if final_platform_comparisons > 0
                 else None
             )
@@ -3001,11 +5339,59 @@ class NexusService:
                             "band": fq.get("band", -1),
                             "confidence": fq.get("confidence", 0.0),
                             "difficulty": fq.get("difficulty", ""),
+                            "llm_judge_tool": fq.get("llm_judge_tool"),
+                            "llm_judge_reasoning": fq.get("llm_judge_reasoning", ""),
                         }
                         for fq in related_queries[:10]
                     ],
                 }
             )
+
+        # Aggregate LLM judge stats from all iterations
+        llm_judge_summary = None
+        all_disagreements: list[dict] = []
+        total_llm_total = 0
+        total_llm_agree = 0
+        total_llm_correct = 0
+        for ir in all_iteration_results:
+            total_llm_total += ir.get("llm_judge_total", 0)
+            total_llm_agree += ir.get("llm_judge_agreements", 0)
+            total_llm_correct += ir.get("llm_judge_correct", 0)
+            all_disagreements.extend(ir.get("llm_judge_disagreements", []))
+        if total_llm_total > 0:
+            # Aggregate quadrants from all iterations
+            total_both_correct = sum(
+                ir.get("both_correct", 0) for ir in all_iteration_results
+            )
+            total_nexus_only = sum(
+                ir.get("nexus_only_correct", 0) for ir in all_iteration_results
+            )
+            total_llm_only = sum(
+                ir.get("llm_only_correct", 0) for ir in all_iteration_results
+            )
+            total_both_wrong = sum(
+                ir.get("both_wrong", 0) for ir in all_iteration_results
+            )
+            nexus_accuracy = round(
+                (total_both_correct + total_nexus_only) / total_llm_total, 3
+            )
+            llm_accuracy = round(
+                (total_both_correct + total_llm_only) / total_llm_total, 3
+            )
+            llm_judge_summary = {
+                "total": total_llm_total,
+                "agreements": total_llm_agree,
+                "correct": total_llm_correct,
+                "agreement_rate": round(total_llm_agree / total_llm_total, 3),
+                "accuracy": round(total_llm_correct / total_llm_total, 3),
+                "nexus_accuracy": nexus_accuracy,
+                "llm_accuracy": llm_accuracy,
+                "both_correct": total_both_correct,
+                "nexus_only_correct": total_nexus_only,
+                "llm_only_correct": total_llm_only,
+                "both_wrong": total_both_wrong,
+                "disagreements": all_disagreements[:30],
+            }
 
         db_run.total_tests = final_total_tests
         db_run.failures = final_failures
@@ -3016,6 +5402,7 @@ class NexusService:
             "band_distribution": final_band_counts,
             "iterations": all_iteration_results,
             "total_cases_available": total_case_count,
+            "llm_judge": llm_judge_summary,
         }
         db_run.approved_proposals = 0
         db_run.embedding_delta = total_embedding_delta

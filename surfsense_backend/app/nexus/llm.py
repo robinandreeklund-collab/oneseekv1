@@ -82,7 +82,12 @@ async def nexus_llm_call(prompt: str) -> str:
     if _api_key:
         kwargs["api_key"] = _api_key
     if _api_base:
-        kwargs["api_base"] = _api_base
+        from app.services.llm_service import _sanitize_api_base_for_provider
+
+        _provider = (_llm_config or {}).get("provider", "")
+        sanitized = _sanitize_api_base_for_provider(_api_base, _provider)
+        if sanitized:
+            kwargs["api_base"] = sanitized
 
     # Add litellm_params (temperature, max_tokens, etc.)
     for key, value in _litellm_params.items():

@@ -5,7 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import clear_tool_caches
-from app.agents.new_chat.supervisor_agent import clear_agent_combo_cache
+from app.agents.new_chat.supervisor_cache import clear_agent_combo_cache
 from app.db import AgentComboCache, SearchSpaceMembership, User
 from app.db import get_async_session
 from app.schemas.admin_cache import (

@@ -18,19 +18,26 @@ from app.nexus.models import NexusAutoLoopRun, NexusDarkMatterQuery
 from app.nexus.schemas import (
     AnalyzeQueryRequest,
     AutoLoopRunResponse,
+    CalibrationFitResponse,
     CalibrationParamsResponse,
     ConfusionPair,
     DarkMatterCluster,
     ECEReport,
     ForgeGenerateRequest,
+    ForgeRunResult,
     GateStatus,
     HubnessReport,
+    IntentLayerApplyRequest,
+    IntentLayerGenerateRequest,
+    IntentLayerResultResponse,
     MetricsTrend,
     NexusConfigResponse,
     NexusHealthResponse,
     OptimizerApplyRequest,
+    OptimizerApplyResponse,
     OptimizerGenerateRequest,
     OptimizerResultResponse,
+    OverviewMetricsResponse,
     PipelineMetricsSummary,
     PromotionResult,
     QueryAnalysis,
@@ -91,7 +98,7 @@ async def get_nexus_config(
     return await service.get_config(session)
 
 
-@nexus_router.get("/overview/metrics")
+@nexus_router.get("/overview/metrics", response_model=OverviewMetricsResponse)
 async def get_overview_metrics(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
@@ -250,6 +257,102 @@ async def get_platform_intents_endpoint(
     return {"intents": intents}
 
 
+@nexus_router.get("/config/domains")
+async def get_domain_metadata(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Return all domain/intent metadata for dynamic frontend rendering.
+
+    Returns domain_id, label, description, keywords, and fallback_route
+    for all configured domains. The frontend uses this to populate labels,
+    descriptions, and zone colors dynamically.
+    """
+    from app.nexus.platform_bridge import get_effective_intents_from_db
+
+    intents = await get_effective_intents_from_db(session)
+    domains = []
+    for intent in intents:
+        domains.append(
+            {
+                "domain_id": intent.get("intent_id", ""),
+                "label": intent.get("label", ""),
+                "description": intent.get("description", ""),
+                "keywords": intent.get("keywords", []),
+                "fallback_route": intent.get("route", "kunskap"),
+                "enabled": intent.get("enabled", True),
+                "priority": intent.get("priority", 500),
+            }
+        )
+    return {"domains": domains}
+
+
+@nexus_router.get("/config/agents")
+async def get_agent_metadata_endpoint(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Return all agent metadata with domain_id zones.
+
+    The frontend uses this to render agent→domain mappings dynamically.
+    """
+    from app.services.agent_metadata_service import get_effective_agent_metadata
+
+    metadata = await get_effective_agent_metadata(session)
+    agents = []
+    for m in metadata:
+        agents.append(
+            {
+                "agent_id": m.get("agent_id", ""),
+                "label": m.get("label", ""),
+                "description": m.get("description", ""),
+                "domain_id": m.get("routes", ["kunskap"])[0]
+                if m.get("routes")
+                else "kunskap",
+                "keywords": m.get("keywords", []),
+            }
+        )
+    return {"agents": agents}
+
+
+@nexus_router.get("/config/categories")
+async def get_category_metadata(
+    user: User = Depends(current_active_user),
+):
+    """Return tool category metadata for dynamic frontend rendering.
+
+    Returns category_id and label for all tool provider categories.
+    The frontend uses this to populate filter dropdowns dynamically.
+    """
+    from app.nexus.platform_bridge import get_platform_tools_by_category
+
+    by_cat = get_platform_tools_by_category()
+    # Build labels: use category name, capitalized. Special cases for known providers.
+    label_overrides = {
+        "smhi": "SMHI (Väder)",
+        "scb": "SCB (Statistik)",
+        "kolada": "Kolada (Nyckeltal)",
+        "riksdagen": "Riksdagen",
+        "trafikverket": "Trafikverket",
+        "bolagsverket": "Bolagsverket",
+        "marketplace": "Marknadsplats",
+        "skolverket": "Skolverket",
+        "builtin": "Inbyggda verktyg",
+        "geoapify": "Kartor (Geoapify)",
+        "external_model": "Externa modeller",
+    }
+    categories = []
+    for cat_id in sorted(by_cat.keys()):
+        categories.append(
+            {
+                "category_id": cat_id,
+                "label": label_overrides.get(cat_id, cat_id.replace("_", " ").title()),
+                "tool_count": len(by_cat[cat_id]),
+            }
+        )
+    return {"categories": categories}
+
+
 @nexus_router.get("/tools/live-routing")
 async def get_live_routing_config(
     session: AsyncSession = Depends(get_async_session),
@@ -344,7 +447,13 @@ async def route_query(
     service: NexusService = Depends(_get_service),
 ):
     """Run the full precision routing pipeline."""
-    return await service.route_query(request.query, session)
+    if request.live:
+        return await service.route_query_live(request.query, session)
+    if request.llm_gate:
+        return await service.route_query_llm_gate(request.query, session)
+    return await service.route_query(
+        request.query, session, run_llm_judge=request.llm_judge
+    )
 
 
 # ------------------------------------------------------------------
@@ -370,6 +479,17 @@ async def get_space_snapshot(
 ):
     """Get latest UMAP 2D projection for visualization."""
     return await service.get_space_snapshot(session)
+
+
+@nexus_router.post("/space/refresh")
+async def refresh_space_snapshot(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+    service: NexusService = Depends(_get_service),
+):
+    """Recompute space snapshot from current tool embeddings."""
+    count = await service.refresh_space_snapshot(session)
+    return {"refreshed": count}
 
 
 @nexus_router.get("/space/confusion", response_model=list[ConfusionPair])
@@ -416,7 +536,7 @@ async def get_zone_metrics(
 # ------------------------------------------------------------------
 
 
-@nexus_router.post("/forge/generate")
+@nexus_router.post("/forge/generate", response_model=ForgeRunResult)
 async def forge_generate(
     request: ForgeGenerateRequest,
     session: AsyncSession = Depends(get_async_session),
@@ -489,6 +609,7 @@ class LoopStartRequest(BaseModel):
     namespace: str | None = None
     batch_size: int = 200
     max_iterations: int = 1
+    run_llm_judge: bool = False
 
 
 @nexus_router.post("/loop/start")
@@ -513,6 +634,7 @@ async def loop_start(
     ns = request.namespace if request else None
     bs = request.batch_size if request else 200
     mi = request.max_iterations if request else 1
+    llm_judge = request.run_llm_judge if request else False
     return await service.run_auto_loop(
         session,
         category=cat,
@@ -520,6 +642,7 @@ async def loop_start(
         namespace=ns,
         batch_size=max(10, min(bs, 2000)),
         max_iterations=max(1, min(mi, 10)),
+        run_llm_judge=llm_judge,
     )
 
 
@@ -544,6 +667,7 @@ async def loop_start_stream(
     ns = request.namespace if request else None
     bs = request.batch_size if request else 200
     mi = request.max_iterations if request else 1
+    llm_judge = request.run_llm_judge if request else False
 
     async def _event_stream():
         try:
@@ -554,6 +678,7 @@ async def loop_start_stream(
                 namespace=ns,
                 batch_size=max(10, min(bs, 2000)),
                 max_iterations=max(1, min(mi, 10)),
+                run_llm_judge=llm_judge,
             ):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except Exception as exc:
@@ -620,6 +745,7 @@ async def get_loop_run_detail(
         "platform_agreements": meta.get("platform_agreements", 0),
         "iterations": meta.get("iterations", []),
         "total_cases_available": meta.get("total_cases_available"),
+        "llm_judge": meta.get("llm_judge"),
     }
 
 
@@ -680,18 +806,19 @@ async def approve_loop_run(
             tool = tools_by_id.get(tid)
             if tool and tool.namespace:
                 # namespace is a tuple like ("tools", "weather", "smhi")
-                # Use top-level namespace prefix: "tools/weather"
-                ns = "/".join(tool.namespace[:2]) if len(tool.namespace) >= 2 else ""
+                # Use full namespace depth for precise agent matching
+                ns = "/".join(tool.namespace) if len(tool.namespace) >= 2 else ""
                 if ns:
                     namespaces.add(ns)
 
         # Run optimizer for each affected namespace to get real metadata
+        from app.nexus.platform_bridge import apply_overrides_to_cache
+
         optimizer = _get_optimizer()
+        memory_overrides: dict[str, dict] = {}
         for ns in namespaces:
             try:
-                result = await optimizer.generate_suggestions(
-                    session, namespace=ns
-                )
+                result = await optimizer.generate_suggestions(session, namespace=ns)
                 if result.suggestions and not result.error:
                     suggestions_dicts = [
                         {
@@ -708,6 +835,12 @@ async def approve_loop_run(
                             user_id=user.id if user else None,
                         )
                         applied += apply_result.get("applied", 0)
+                        # Collect overrides for in-memory patching
+                        for s in result.suggestions:
+                            if s.tool_id in affected_tool_ids and s.suggested.get(
+                                "description"
+                            ):
+                                memory_overrides[s.tool_id] = s.suggested
             except Exception as exc:
                 import logging
 
@@ -715,6 +848,16 @@ async def approve_loop_run(
                     "Optimizer failed for namespace %s: %s", ns, exc
                 )
                 optimizer_error = str(exc)
+
+        # Patch in-memory cache so routing immediately uses new metadata
+        if memory_overrides:
+            apply_overrides_to_cache(memory_overrides)
+            try:
+                from app.nexus.embeddings import nexus_clear_embed_cache
+
+                nexus_clear_embed_cache()
+            except ImportError:
+                pass
 
     run.status = "approved"
     run.approved_proposals = approved_count
@@ -916,14 +1059,24 @@ async def get_calibration_params(
     return await service.get_calibration_params(session)
 
 
-@nexus_router.post("/calibration/fit")
+class CalibrationFitRequest(BaseModel):
+    zone: str | None = None
+    category: str | None = None
+
+
+@nexus_router.post("/calibration/fit", response_model=CalibrationFitResponse)
 async def fit_calibration(
+    request: CalibrationFitRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
     service: NexusService = Depends(_get_service),
 ):
-    """Trigger calibration fitting using routing event data."""
-    return await service.fit_calibration(session)
+    """Fit Platt calibration. Optionally filter by zone or category for per-zone fit."""
+    return await service.fit_calibration(
+        session,
+        zone=request.zone if request else None,
+        category=request.category if request else None,
+    )
 
 
 @nexus_router.get("/calibration/ece", response_model=ECEReport)
@@ -1005,7 +1158,7 @@ async def optimizer_generate(
     )
 
 
-@nexus_router.post("/optimizer/apply")
+@nexus_router.post("/optimizer/apply", response_model=OptimizerApplyResponse)
 async def optimizer_apply(
     request: OptimizerApplyRequest,
     session: AsyncSession = Depends(get_async_session),
@@ -1018,6 +1171,100 @@ async def optimizer_apply(
     and immediately picked up by NEXUS routing.
     """
     optimizer = _get_optimizer()
+    result = await optimizer.apply_suggestions(
+        session,
+        request.suggestions,
+        user_id=user.id if user else None,
+    )
+
+    # Patch in-memory cache so routing immediately sees new metadata
+    from app.nexus.platform_bridge import apply_overrides_to_cache
+
+    memory_overrides: dict[str, dict] = {}
+    for s in request.suggestions:
+        tool_id = s.get("tool_id", "")
+        if tool_id and s.get("description"):
+            memory_overrides[tool_id] = s
+    if memory_overrides:
+        apply_overrides_to_cache(memory_overrides)
+        try:
+            from app.nexus.embeddings import nexus_clear_embed_cache
+
+            nexus_clear_embed_cache()
+        except ImportError:
+            pass
+
+        # Refresh space snapshot so Space tab shows updated embeddings
+        try:
+            service = _get_service()
+            await service.refresh_space_snapshot(session)
+        except Exception:
+            pass  # Non-critical — space tab will refresh on next manual trigger
+
+    return result
+
+
+# ------------------------------------------------------------------
+# Intent Layer Optimizer
+# ------------------------------------------------------------------
+
+_intent_optimizer = None
+
+
+def _get_intent_optimizer():
+    global _intent_optimizer
+    if _intent_optimizer is None:
+        from app.nexus.optimizer import IntentLayerOptimizer
+
+        _intent_optimizer = IntentLayerOptimizer()
+    return _intent_optimizer
+
+
+@nexus_router.post(
+    "/optimizer/intent-layer/generate",
+    response_model=IntentLayerResultResponse,
+)
+async def intent_layer_generate(
+    request: IntentLayerGenerateRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Generate optimized metadata for the entire intent layer.
+
+    Sends all 17 domains and 13 agents to an LLM which returns
+    optimized keywords, descriptions, excludes, etc. for each.
+    """
+    optimizer = _get_intent_optimizer()
+    result = await optimizer.generate_suggestions(
+        session, llm_config_id=request.llm_config_id
+    )
+    return IntentLayerResultResponse(
+        total_domains=result.total_domains,
+        total_agents=result.total_agents,
+        suggestions=[
+            {
+                "item_id": s.item_id,
+                "item_type": s.item_type,
+                "current": s.current,
+                "suggested": s.suggested,
+                "reasoning": s.reasoning,
+                "fields_changed": s.fields_changed,
+            }
+            for s in result.suggestions
+        ],
+        model_used=result.model_used,
+        error=result.error,
+    )
+
+
+@nexus_router.post("/optimizer/intent-layer/apply")
+async def intent_layer_apply(
+    request: IntentLayerApplyRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Apply approved intent layer suggestions as DB overrides."""
+    optimizer = _get_intent_optimizer()
     result = await optimizer.apply_suggestions(
         session,
         request.suggestions,

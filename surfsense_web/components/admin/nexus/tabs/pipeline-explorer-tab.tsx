@@ -18,6 +18,8 @@ import {
 	type RoutingDecision,
 	type AgentCandidateResponse,
 	type RoutingCandidate,
+	type LlmGateResult,
+	type LivePipelineResult,
 } from "@/lib/apis/nexus-api.service";
 
 const BAND_COLORS: Record<number, string> = {
@@ -34,12 +36,20 @@ const COMPLEXITY_COLORS: Record<string, string> = {
 	complex: "bg-purple-50 text-purple-700",
 };
 
+/** Resolve an ID to its human-readable label, falling back to the raw ID. */
+function lbl(id: string, labels: Record<string, string>): string {
+	return labels[id] ?? id;
+}
+
 export function PipelineExplorerTab() {
 	const [query, setQuery] = useState("");
 	const [result, setResult] = useState<RoutingDecision | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [history, setHistory] = useState<Array<{ query: string; result: RoutingDecision }>>([]);
+	const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
+	const [llmGateEnabled, setLlmGateEnabled] = useState(false);
+	const [liveEnabled, setLiveEnabled] = useState(false);
 
 	const handleRun = async () => {
 		const q = query.trim();
@@ -47,7 +57,11 @@ export function PipelineExplorerTab() {
 		setLoading(true);
 		setError(null);
 		try {
-			const decision = await nexusApiService.routeQuery(q);
+			const decision = await nexusApiService.routeQuery(q, {
+				llm_judge: llmJudgeEnabled,
+				llm_gate: llmGateEnabled,
+				live: liveEnabled,
+			});
 			setResult(decision);
 			setHistory((prev) => [{ query: q, result: decision }, ...prev].slice(0, 10));
 		} catch (err: unknown) {
@@ -87,6 +101,48 @@ export function PipelineExplorerTab() {
 							disabled={loading}
 							className="flex-1"
 						/>
+						<label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								checked={liveEnabled}
+								onChange={(e) => {
+									setLiveEnabled(e.target.checked);
+									if (e.target.checked) {
+										setLlmGateEnabled(false);
+										setLlmJudgeEnabled(false);
+									}
+								}}
+								disabled={loading}
+								className="rounded"
+							/>
+							Live
+						</label>
+						<label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								checked={llmGateEnabled}
+								onChange={(e) => {
+									setLlmGateEnabled(e.target.checked);
+									if (e.target.checked) {
+										setLlmJudgeEnabled(false);
+										setLiveEnabled(false);
+									}
+								}}
+								disabled={loading}
+								className="rounded"
+							/>
+							LLM Gate
+						</label>
+						<label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								checked={llmJudgeEnabled}
+								onChange={(e) => setLlmJudgeEnabled(e.target.checked)}
+								disabled={loading || llmGateEnabled || liveEnabled}
+								className="rounded"
+							/>
+							LLM Judge
+						</label>
 						<Button onClick={handleRun} disabled={loading || !query.trim()}>
 							{loading ? (
 								<Loader2 className="h-4 w-4 animate-spin mr-1.5" />
@@ -112,8 +168,12 @@ export function PipelineExplorerTab() {
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 						<IntentStage result={result} />
 						<AgentStage result={result} />
+						{result.live && <PlannerStage live={result.live} labels={result.labels} />}
 						<ToolStage result={result} />
 						<VerdictStage result={result} />
+						{result.live && <ExecutorStage live={result.live} labels={result.labels} />}
+						{result.live && <CriticStage live={result.live} />}
+						{result.live && <SynthesisStage live={result.live} />}
 					</div>
 				</div>
 			)}
@@ -136,12 +196,12 @@ export function PipelineExplorerTab() {
 									<span className="truncate mr-4">{item.query}</span>
 									<div className="flex items-center gap-2 shrink-0">
 										<Badge variant="outline" className="text-xs">
-											{item.result.selected_agent ?? "—"}
+											{item.result.selected_agent ? lbl(item.result.selected_agent, item.result.labels) : "—"}
 										</Badge>
 										<ArrowRight className="h-3 w-3 text-muted-foreground" />
-										<Badge variant="outline" className="text-xs font-mono">
+										<Badge variant="outline" className="text-xs">
 											{item.result.selected_tool
-												? item.result.selected_tool.split("/").pop()
+												? lbl(item.result.selected_tool, item.result.labels)
 												: "—"}
 										</Badge>
 										<span
@@ -166,9 +226,11 @@ export function PipelineExplorerTab() {
 
 function FlowSummary({ result }: { result: RoutingDecision }) {
 	const qa = result.query_analysis;
-	const zone = result.resolved_zone ?? qa.zone_candidates[0] ?? "?";
-	const agent = result.selected_agent ?? "—";
-	const tool = result.selected_tool ? result.selected_tool.split("/").pop() : "—";
+	const L = result.labels;
+	const zoneId = result.resolved_zone ?? qa.zone_candidates[0] ?? "?";
+	const zone = lbl(zoneId, L);
+	const agent = result.selected_agent ? lbl(result.selected_agent, L) : "—";
+	const tool = result.selected_tool ? lbl(result.selected_tool, L) : "—";
 
 	return (
 		<Card className="bg-muted/30">
@@ -210,6 +272,51 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 						Band {result.band} — {result.band_name}
 					</span>
 
+					{/* Mode badge */}
+					{result.live && (
+						<>
+							<ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+							<Badge className="bg-rose-100 text-rose-800 border-rose-300 gap-1 text-[10px]">
+								Live Pipeline
+							</Badge>
+							<Badge className={COMPLEXITY_COLORS[result.live.complexity] + " text-[10px]"}>
+								{result.live.complexity}
+							</Badge>
+							{result.live.tool_executed && (
+								<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]">
+									Verktyg kört
+								</Badge>
+							)}
+						</>
+					)}
+					{!result.live && result.llm_gate && (
+						<>
+							<ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+							<Badge className="bg-purple-100 text-purple-800 border-purple-300 gap-1 text-[10px]">
+								LLM Gate
+							</Badge>
+						</>
+					)}
+
+					{/* LLM Judge */}
+					{result.llm_judge && (
+						<>
+							<ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+							<Badge
+								className={`gap-1 font-mono ${
+									result.llm_judge.agreement
+										? "bg-green-100 text-green-800 border-green-300"
+										: "bg-amber-100 text-amber-800 border-amber-300"
+								}`}
+							>
+								<span className="opacity-60">llm:</span>
+								{result.llm_judge.chosen_tool
+									? lbl(result.llm_judge.chosen_tool, result.labels)
+									: "—"}
+							</Badge>
+						</>
+					)}
+
 					{/* Latency */}
 					<span className="text-xs text-muted-foreground ml-2">
 						{result.latency_ms.toFixed(0)} ms
@@ -226,13 +333,17 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 
 function IntentStage({ result }: { result: RoutingDecision }) {
 	const qa = result.query_analysis;
+	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={1} title="Intent (QUL)" color="bg-blue-500">
+		<StageCard number={1} title={result.live ? "Intent (Live LLM)" : gate ? "Intent (LLM)" : "Intent (QUL)"} color="bg-blue-500">
 			<div className="space-y-3 text-sm">
 				<Row label="Normaliserad" value={qa.normalized_query} />
 				<Row label="Komplexitet">
-					<Badge className={COMPLEXITY_COLORS[qa.complexity] ?? ""}>{qa.complexity}</Badge>
+					<Badge className={COMPLEXITY_COLORS[result.live?.complexity ?? qa.complexity] ?? ""}>{result.live?.complexity ?? qa.complexity}</Badge>
+					{result.live?.execution_strategy && (
+						<Badge variant="outline" className="ml-1 text-[10px] py-0">{result.live.execution_strategy}</Badge>
+					)}
 				</Row>
 				<Row label="Zon-kandidater">
 					<div className="flex gap-1 flex-wrap">
@@ -252,6 +363,23 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 				)}
 				<Row label="Multi-intent" value={qa.is_multi_intent ? "Ja" : "Nej"} />
 				<Row label="OOD-risk" value={qa.ood_risk.toFixed(2)} />
+
+				{gate?.intent_step && (
+					<div className="rounded-md border border-blue-200 bg-blue-50/50 p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<span className="text-xs font-medium text-blue-600">LLM Gate — Intent</span>
+							<Badge variant="outline" className="text-[10px] py-0">{gate.intent_step.candidates_shown} kandidater</Badge>
+						</div>
+						<Row label="Vald domän">
+							<Badge className="bg-blue-100 text-blue-800 border-blue-300">{lbl(gate.intent_step.chosen, result.labels)}</Badge>
+						</Row>
+						{gate.intent_step.reasoning && (
+							<Row label="Motivering">
+								<span className="text-muted-foreground italic text-xs">{gate.intent_step.reasoning}</span>
+							</Row>
+						)}
+					</div>
+				)}
 
 				{/* Entities */}
 				<EntityList entities={qa.entities} />
@@ -277,16 +405,17 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 
 function AgentStage({ result }: { result: RoutingDecision }) {
 	const ar = result.agent_resolution;
+	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={2} title="Agent" color="bg-indigo-500">
+		<StageCard number={2} title={result.live ? "Agent (Live LLM)" : gate ? "Agent (LLM)" : "Agent"} color="bg-indigo-500">
 			{ar ? (
 				<div className="space-y-3 text-sm">
 					<Row label="Vald agent">
 						<div className="flex gap-1 flex-wrap">
 							{ar.selected_agents.map((a) => (
 								<Badge key={a} className="bg-indigo-100 text-indigo-800 border-indigo-300">
-									{a}
+									{lbl(a, result.labels)}
 								</Badge>
 							))}
 						</div>
@@ -303,11 +432,28 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 						</div>
 					</Row>
 
+					{gate?.agent_step && (
+						<div className="rounded-md border border-indigo-200 bg-indigo-50/50 p-3 space-y-2">
+							<div className="flex items-center justify-between">
+								<span className="text-xs font-medium text-indigo-600">LLM Gate — Agent</span>
+								<Badge variant="outline" className="text-[10px] py-0">{gate.agent_step.candidates_shown} kandidater</Badge>
+							</div>
+							<Row label="Vald agent">
+								<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">{lbl(gate.agent_step.chosen, result.labels)}</Badge>
+							</Row>
+							{gate.agent_step.reasoning && (
+								<Row label="Motivering">
+									<span className="text-muted-foreground italic text-xs">{gate.agent_step.reasoning}</span>
+								</Row>
+							)}
+						</div>
+					)}
+
 					{ar.candidates.length > 0 && (
 						<Collapsible title={`Alla kandidater (${ar.candidates.length})`}>
 							<div className="space-y-1">
 								{ar.candidates.map((c) => (
-									<AgentCandidateRow key={c.name} candidate={c} selected={ar.selected_agents.includes(c.name)} />
+									<AgentCandidateRow key={c.name} candidate={c} selected={ar.selected_agents.includes(c.name)} labels={result.labels} />
 								))}
 							</div>
 						</Collapsible>
@@ -320,7 +466,7 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 	);
 }
 
-function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateResponse; selected: boolean }) {
+function AgentCandidateRow({ candidate, selected, labels }: { candidate: AgentCandidateResponse; selected: boolean; labels: Record<string, string> }) {
 	return (
 		<div
 			className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
@@ -328,7 +474,7 @@ function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateR
 			}`}
 		>
 			<div className="flex items-center gap-2">
-				<span className={`font-medium ${selected ? "text-indigo-700" : ""}`}>{candidate.name}</span>
+				<span className={`font-medium ${selected ? "text-indigo-700" : ""}`}>{lbl(candidate.name, labels)}</span>
 				<span className="text-muted-foreground">({candidate.zone})</span>
 			</div>
 			<div className="flex items-center gap-2">
@@ -349,22 +495,85 @@ function AgentCandidateRow({ candidate, selected }: { candidate: AgentCandidateR
 
 function ToolStage({ result }: { result: RoutingDecision }) {
 	const top5 = result.candidates.slice(0, 5);
+	const judge = result.llm_judge;
+	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={3} title="Tool (StR + Rerank)" color="bg-emerald-500">
+		<StageCard number={3} title={result.live ? "Tool (Live LLM)" : gate ? "Tool (LLM)" : "Tool (StR + Rerank)"} color="bg-emerald-500">
 			<div className="space-y-3 text-sm">
-				<Row label="Valt verktyg">
-					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono">
-						{result.selected_tool ?? "—"}
+				<Row label="NEXUS valde">
+					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">
+						{result.selected_tool ? lbl(result.selected_tool, result.labels) : "—"}
 					</Badge>
 				</Row>
+
+				{/* LLM Gate tool result */}
+				{gate?.tool_step && (
+					<div className="rounded-md border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<span className="text-xs font-medium text-emerald-600">LLM Gate — Tool</span>
+							<Badge variant="outline" className="text-[10px] py-0">{gate.tool_step.candidates_shown} kandidater</Badge>
+						</div>
+						<Row label="Valt verktyg">
+							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">{lbl(gate.tool_step.chosen, result.labels)}</Badge>
+						</Row>
+						{gate.tool_step.reasoning && (
+							<Row label="Motivering">
+								<span className="text-muted-foreground italic text-xs">{gate.tool_step.reasoning}</span>
+							</Row>
+						)}
+					</div>
+				)}
+
+				{/* LLM Judge result */}
+				{judge && (
+					<div className="rounded-md border p-3 space-y-2">
+						<div className="flex items-center justify-between">
+							<span className="text-xs font-medium text-muted-foreground">LLM Judge</span>
+							{judge.agreement ? (
+								<Badge className="bg-green-100 text-green-700 border-green-300 text-[10px] py-0">
+									Overens
+								</Badge>
+							) : (
+								<Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[10px] py-0">
+									Oenig
+								</Badge>
+							)}
+						</div>
+						<Row label="LLM valde">
+							<Badge
+								className={`font-mono ${
+									judge.agreement
+										? "bg-emerald-100 text-emerald-800 border-emerald-300"
+										: "bg-amber-100 text-amber-800 border-amber-300"
+								}`}
+							>
+								{judge.chosen_tool ? lbl(judge.chosen_tool, result.labels) : "—"}
+							</Badge>
+						</Row>
+						{judge.nexus_rank_of_chosen > 0 && !judge.agreement && (
+							<Row label="NEXUS-rank" value={`#${judge.nexus_rank_of_chosen}`} />
+						)}
+						{judge.reasoning && (
+							<Row label="Motivering">
+								<span className="text-muted-foreground italic">{judge.reasoning}</span>
+							</Row>
+						)}
+					</div>
+				)}
 
 				{top5.length > 0 && (
 					<div>
 						<p className="text-xs text-muted-foreground mb-1">Topp-{top5.length} kandidater</p>
 						<div className="space-y-1">
 							{top5.map((c, i) => (
-								<ToolCandidateRow key={c.tool_id} candidate={c} isSelected={i === 0} />
+								<ToolCandidateRow
+									key={c.tool_id}
+									candidate={c}
+									isSelected={i === 0}
+									isLlmChoice={judge?.chosen_tool === c.tool_id}
+									labels={result.labels}
+								/>
 							))}
 						</div>
 					</div>
@@ -374,7 +583,13 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 					<Collapsible title={`Alla kandidater (${result.candidates.length})`}>
 						<div className="space-y-1">
 							{result.candidates.map((c, i) => (
-								<ToolCandidateRow key={c.tool_id} candidate={c} isSelected={i === 0} />
+								<ToolCandidateRow
+									key={c.tool_id}
+									candidate={c}
+									isSelected={i === 0}
+									isLlmChoice={judge?.chosen_tool === c.tool_id}
+									labels={result.labels}
+								/>
 							))}
 						</div>
 					</Collapsible>
@@ -384,7 +599,17 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 	);
 }
 
-function ToolCandidateRow({ candidate, isSelected }: { candidate: RoutingCandidate; isSelected: boolean }) {
+function ToolCandidateRow({
+	candidate,
+	isSelected,
+	isLlmChoice,
+	labels,
+}: {
+	candidate: RoutingCandidate;
+	isSelected: boolean;
+	isLlmChoice?: boolean;
+	labels: Record<string, string>;
+}) {
 	return (
 		<div
 			className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
@@ -393,10 +618,20 @@ function ToolCandidateRow({ candidate, isSelected }: { candidate: RoutingCandida
 		>
 			<div className="flex items-center gap-2">
 				<span className="text-muted-foreground w-5 text-right">#{candidate.rank}</span>
-				<span className={`font-mono ${isSelected ? "font-medium text-emerald-700" : ""}`}>
-					{candidate.tool_id}
+				<span className={isSelected ? "font-medium text-emerald-700" : ""}>
+					{lbl(candidate.tool_id, labels)}
 				</span>
 				<Badge variant="outline" className="text-[10px] py-0">{candidate.zone}</Badge>
+				{isLlmChoice && !isSelected && (
+					<Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[10px] py-0">
+						LLM
+					</Badge>
+				)}
+				{isLlmChoice && isSelected && (
+					<Badge className="bg-green-100 text-green-700 border-green-300 text-[10px] py-0">
+						LLM
+					</Badge>
+				)}
 			</div>
 			<div className="flex items-center gap-3 font-mono">
 				<span className="text-muted-foreground">raw: {candidate.raw_score.toFixed(3)}</span>
@@ -429,6 +664,149 @@ function VerdictStage({ result }: { result: RoutingDecision }) {
 					)}
 				</Row>
 				<Row label="Latens" value={`${result.latency_ms.toFixed(0)} ms`} />
+			</div>
+		</StageCard>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Stage 5: Planner (Live mode)
+// ---------------------------------------------------------------------------
+
+function PlannerStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
+	return (
+		<StageCard number={5} title="Planner (LLM)" color="bg-violet-500">
+			<div className="space-y-3 text-sm">
+				<Row label="Strategi">
+					<Badge variant="outline">{live.execution_strategy}</Badge>
+				</Row>
+				{live.plan_steps.length > 0 ? (
+					<div className="space-y-1">
+						<p className="text-xs font-medium text-muted-foreground">Plansteg</p>
+						{live.plan_steps.map((step, i) => (
+							<div key={step.id} className="flex items-start gap-2 text-xs rounded px-2 py-1 bg-muted/50">
+								<span className="text-muted-foreground shrink-0 w-5">{i + 1}.</span>
+								<span>{step.content}</span>
+							</div>
+						))}
+					</div>
+				) : live.plan ? (
+					<div className="rounded-md border bg-muted/30 p-3">
+						<p className="text-xs font-medium text-muted-foreground mb-1">Exekveringsplan</p>
+						<div className="text-xs whitespace-pre-wrap">{live.plan}</div>
+					</div>
+				) : null}
+			</div>
+		</StageCard>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Stage 6: Executor (Live mode — real tool execution)
+// ---------------------------------------------------------------------------
+
+function ExecutorStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
+	return (
+		<StageCard number={6} title="Executor + Tools" color="bg-teal-500">
+			<div className="space-y-3 text-sm">
+				<Row label="Verktyg">
+					<div className="flex items-center gap-2">
+						{live.tool_step && (
+							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">
+								{lbl(live.tool_step.chosen, labels)}
+							</Badge>
+						)}
+						{live.tool_executed ? (
+							<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px] py-0">
+								Kört
+							</Badge>
+						) : (
+							<Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] py-0">
+								Simulerad
+							</Badge>
+						)}
+					</div>
+				</Row>
+
+				{Object.keys(live.tool_args).length > 0 && (
+					<Collapsible title="Verktygsargument">
+						<pre className="text-xs bg-muted/50 rounded p-2 overflow-auto max-h-32">
+							{JSON.stringify(live.tool_args, null, 2)}
+						</pre>
+					</Collapsible>
+				)}
+
+				{live.tool_output && (
+					<div className="rounded-md border bg-muted/30 p-3">
+						<p className="text-xs font-medium text-muted-foreground mb-1">
+							{live.tool_executed ? "Riktigt verktygssvar" : "Simulerat svar"}
+						</p>
+						<div className="text-xs whitespace-pre-wrap max-h-64 overflow-auto font-mono">{live.tool_output}</div>
+					</div>
+				)}
+
+				{live.tool_error && (
+					<div className="rounded-md border border-red-200 bg-red-50/50 p-3">
+						<p className="text-xs font-medium text-red-600 mb-1">Verktygsfel</p>
+						<div className="text-xs text-red-700 whitespace-pre-wrap">{live.tool_error}</div>
+					</div>
+				)}
+			</div>
+		</StageCard>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Stage 7: Critic (Live mode)
+// ---------------------------------------------------------------------------
+
+function CriticStage({ live }: { live: LivePipelineResult }) {
+	const decisionColors: Record<string, string> = {
+		ok: "bg-green-100 text-green-800 border-green-300",
+		needs_more: "bg-amber-100 text-amber-800 border-amber-300",
+		replan: "bg-red-100 text-red-800 border-red-300",
+	};
+
+	return (
+		<StageCard number={7} title="Critic" color="bg-orange-500">
+			<div className="space-y-3 text-sm">
+				<Row label="Beslut">
+					<Badge className={decisionColors[live.critic_decision] ?? ""}>
+						{live.critic_decision || "—"}
+					</Badge>
+				</Row>
+				{live.critic_reasoning && (
+					<Row label="Motivering">
+						<span className="text-muted-foreground italic text-xs">{live.critic_reasoning}</span>
+					</Row>
+				)}
+				<Row label="Loopar" value={String(live.critic_loops)} />
+			</div>
+		</StageCard>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Stage 8: Synthesis (Live mode)
+// ---------------------------------------------------------------------------
+
+function SynthesisStage({ live }: { live: LivePipelineResult }) {
+	return (
+		<StageCard number={8} title="Synthesizer" color="bg-rose-500">
+			<div className="space-y-3 text-sm">
+				{live.synthesis && (
+					<div className="rounded-md border bg-muted/30 p-3">
+						<div className="text-sm whitespace-pre-wrap">{live.synthesis}</div>
+					</div>
+				)}
+				<Row label="Datakälla">
+					{live.tool_executed ? (
+						<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]">Riktig data</Badge>
+					) : (
+						<Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]">Simulerad</Badge>
+					)}
+				</Row>
+				<Row label="Total latens" value={`${live.total_latency_ms.toFixed(0)} ms`} />
 			</div>
 		</StageCard>
 	);

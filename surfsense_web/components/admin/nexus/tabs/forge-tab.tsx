@@ -13,24 +13,12 @@ import {
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
-
-const CATEGORY_LABELS: Record<string, string> = {
-	"": "Alla kategorier",
-	smhi: "SMHI (V\u00e4der)",
-	scb: "SCB (Statistik)",
-	kolada: "Kolada (Nyckeltal)",
-	riksdagen: "Riksdagen",
-	trafikverket: "Trafikverket",
-	bolagsverket: "Bolagsverket",
-	marketplace: "Marknadsplats",
-	skolverket: "Skolverket",
-	builtin: "Inbyggda verktyg",
-	geoapify: "Kartor (Geoapify)",
-};
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
 type FilterMode = "all" | "category" | "namespace" | "tool";
 
 export function ForgeTab() {
+	const CATEGORY_LABELS = useCategoryLabels();
 	const [cases, setCases] = useState<SyntheticCaseResponse[]>([]);
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);

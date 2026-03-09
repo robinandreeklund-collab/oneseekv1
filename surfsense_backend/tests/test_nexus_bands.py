@@ -93,9 +93,7 @@ class TestRawMarginOverride:
 
     def test_raw_margin_promotes_to_band_1(self, cascade):
         # Calibrated margin < 0.10 but raw margin qualifies for Band 1
-        result = cascade.classify(
-            top_score=0.88, second_score=0.85, raw_margin=0.14
-        )
+        result = cascade.classify(top_score=0.88, second_score=0.85, raw_margin=0.14)
         assert result.band == 1
 
     def test_raw_margin_none_uses_calibrated(self, cascade):

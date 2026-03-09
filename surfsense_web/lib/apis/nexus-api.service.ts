@@ -105,6 +105,52 @@ export interface AgentResolution {
 	tool_namespaces: string[];
 }
 
+export interface LlmJudgeToolResult {
+	chosen_tool: string | null;
+	reasoning: string;
+	nexus_rank_of_chosen: number;
+	agreement: boolean;
+}
+
+export interface LlmGateStepResult {
+	chosen: string;
+	reasoning: string;
+	candidates_shown: number;
+}
+
+export interface LlmGateResult {
+	intent_step: LlmGateStepResult | null;
+	agent_step: LlmGateStepResult | null;
+	tool_step: LlmGateStepResult | null;
+}
+
+export interface LivePipelineStepResult {
+	step_name: string;
+	chosen: string;
+	reasoning: string;
+	candidates_shown: number;
+	latency_ms: number;
+}
+
+export interface LivePipelineResult {
+	intent_step: LivePipelineStepResult | null;
+	agent_step: LivePipelineStepResult | null;
+	tool_step: LivePipelineStepResult | null;
+	complexity: string;
+	execution_strategy: string;
+	plan: string;
+	plan_steps: Array<{ id: string; content: string }>;
+	tool_args: Record<string, unknown>;
+	tool_output: string;
+	tool_error: string;
+	tool_executed: boolean;
+	critic_decision: string;
+	critic_reasoning: string;
+	critic_loops: number;
+	synthesis: string;
+	total_latency_ms: number;
+}
+
 export interface RoutingDecision {
 	query_analysis: QueryAnalysis;
 	agent_resolution: AgentResolution | null;
@@ -118,6 +164,10 @@ export interface RoutingDecision {
 	is_ood: boolean;
 	schema_verified: boolean;
 	latency_ms: number;
+	llm_judge: LlmJudgeToolResult | null;
+	llm_gate: LlmGateResult | null;
+	live: LivePipelineResult | null;
+	labels: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +203,7 @@ export interface SpaceSnapshotPoint {
 	x: number;
 	y: number;
 	zone: string;
+	namespace?: string;
 	cluster: number;
 }
 
@@ -377,6 +428,39 @@ export interface LoopIterationDetail {
 	band_distribution: number[];
 	platform_comparisons: number;
 	platform_agreements: number;
+	llm_judge_total?: number;
+	llm_judge_agreements?: number;
+	llm_judge_correct?: number;
+	llm_judge_agreement_rate?: number | null;
+	llm_judge_accuracy?: number | null;
+	llm_judge_disagreements?: LlmJudgeDisagreement[];
+	intent_accuracy?: number | null;
+	agent_accuracy?: number | null;
+}
+
+export interface LlmJudgeDisagreement {
+	query: string;
+	nexus_tool: string;
+	llm_tool: string;
+	expected_tool: string;
+	reasoning: string;
+	nexus_rank_of_chosen: number;
+	winner: "nexus" | "llm" | "neither" | "tie";
+}
+
+export interface LlmJudgeSummary {
+	total: number;
+	agreements: number;
+	correct: number;
+	agreement_rate: number;
+	accuracy: number;
+	nexus_accuracy: number;
+	llm_accuracy: number;
+	both_correct: number;
+	nexus_only_correct: number;
+	llm_only_correct: number;
+	both_wrong: number;
+	disagreements: LlmJudgeDisagreement[];
 }
 
 export interface LoopProposalFailedQuery {
@@ -388,6 +472,8 @@ export interface LoopProposalFailedQuery {
 	band: number;
 	confidence: number;
 	difficulty: string;
+	llm_judge_tool?: string | null;
+	llm_judge_reasoning?: string;
 }
 
 export interface LoopProposal {
@@ -416,6 +502,7 @@ export interface LoopRunDetail {
 	platform_agreements: number;
 	iterations?: LoopIterationDetail[];
 	total_cases_available?: number;
+	llm_judge?: LlmJudgeSummary | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +537,14 @@ export interface LoopStreamEvent {
 	iterations_completed?: number;
 	embedding_delta?: number;
 	status?: string;
+	llm_judge_total?: number;
+	llm_judge_agreements?: number;
+	llm_judge_correct?: number;
+	llm_judge_agreement_rate?: number | null;
+	llm_judge_accuracy?: number | null;
+	llm_judge_disagreements?: LlmJudgeDisagreement[];
+	intent_accuracy?: number | null;
+	agent_accuracy?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -521,12 +616,59 @@ export interface OptimizerApplyResponse {
 	skipped: number;
 }
 
+export interface IntentLayerItemSuggestion {
+	item_id: string;
+	item_type: "domain" | "agent";
+	current: Record<string, unknown>;
+	suggested: Record<string, unknown>;
+	reasoning: string;
+	fields_changed: string[];
+}
+
+export interface IntentLayerResultResponse {
+	total_domains: number;
+	total_agents: number;
+	suggestions: IntentLayerItemSuggestion[];
+	model_used: string;
+	error: string | null;
+}
+
+export interface IntentLayerApplyResponse {
+	applied_domains: number;
+	applied_agents: number;
+	skipped: number;
+}
+
 export interface ShadowReportResponse {
 	feedback_store: {
 		total_patterns: number;
 		sample_rows: Record<string, unknown>[];
 	};
 	live_routing: Record<string, unknown>;
+}
+
+export interface DomainMetadata {
+	domain_id: string;
+	label: string;
+	description: string;
+	keywords: string[];
+	fallback_route: string;
+	enabled: boolean;
+	priority: number;
+}
+
+export interface CategoryMetadata {
+	category_id: string;
+	label: string;
+	tool_count: number;
+}
+
+export interface AgentMetadataResponse {
+	agent_id: string;
+	label: string;
+	description: string;
+	domain_id: string;
+	keywords: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -548,16 +690,24 @@ class NexusApiService {
 			body: JSON.stringify({ query }),
 		});
 
-	routeQuery = (query: string) =>
+	routeQuery = (query: string, options?: { llm_judge?: boolean; llm_gate?: boolean; live?: boolean }) =>
 		fetchNexus<RoutingDecision>("/routing/route", {
 			method: "POST",
-			body: JSON.stringify({ query }),
+			body: JSON.stringify({
+				query,
+				llm_judge: options?.llm_judge ?? false,
+				llm_gate: options?.llm_gate ?? false,
+				live: options?.live ?? false,
+			}),
 		});
 
 	// Space Auditor (Sprint 2)
 	getSpaceHealth = () => fetchNexus<SpaceHealthReport>("/space/health");
 
 	getSpaceSnapshot = () => fetchNexus<SpaceSnapshot>("/space/snapshot");
+
+	refreshSpaceSnapshot = () =>
+		fetchNexus<{ refreshed: number }>("/space/refresh", { method: "POST" });
 
 	getConfusion = () => fetchNexus<ConfusionPair[]>("/space/confusion");
 
@@ -710,8 +860,11 @@ class NexusApiService {
 	getCalibrationParams = () =>
 		fetchNexus<CalibrationParamsResponse[]>("/calibration/params");
 
-	fitCalibration = () =>
-		fetchNexus<Record<string, string>>("/calibration/fit", { method: "POST" });
+	fitCalibration = (options?: { zone?: string; category?: string }) =>
+		fetchNexus<Record<string, string>>("/calibration/fit", {
+			method: "POST",
+			body: JSON.stringify(options ?? {}),
+		});
 
 	getCalibrationECE = () =>
 		fetchNexus<ECEReportResponse>("/calibration/ece");
@@ -782,6 +935,29 @@ class NexusApiService {
 			method: "POST",
 			body: JSON.stringify({ suggestions }),
 		});
+
+	// Intent Layer Optimizer
+	intentLayerGenerate = (request?: { llm_config_id?: number }) =>
+		fetchNexus<IntentLayerResultResponse>("/optimizer/intent-layer/generate", {
+			method: "POST",
+			body: JSON.stringify(request || {}),
+		});
+
+	intentLayerApply = (suggestions: Record<string, unknown>[]) =>
+		fetchNexus<IntentLayerApplyResponse>("/optimizer/intent-layer/apply", {
+			method: "POST",
+			body: JSON.stringify({ suggestions }),
+		});
+
+	// Dynamic domain/agent metadata
+	getDomainMetadata = () =>
+		fetchNexus<{ domains: DomainMetadata[] }>("/config/domains");
+
+	getAgentMetadata = () =>
+		fetchNexus<{ agents: AgentMetadataResponse[] }>("/config/agents");
+
+	getCategoryMetadata = () =>
+		fetchNexus<{ categories: CategoryMetadata[] }>("/config/categories");
 }
 
 export const nexusApiService = new NexusApiService();

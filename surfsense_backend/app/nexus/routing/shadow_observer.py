@@ -164,9 +164,7 @@ class ShadowObserver:
 
             # Filter tools and batch-compute embedding scores
             filtered_tools = [pt for pt in tools if pt.category != "external_model"]
-            tool_texts = [
-                f"{pt.tool_id} {pt.description}" for pt in filtered_tools
-            ]
+            tool_texts = [f"{pt.tool_id} {pt.description}" for pt in filtered_tools]
             emb_scores = nexus_batch_score(query_lower, tool_texts)
 
             # Score each tool
@@ -279,9 +277,17 @@ class ShadowObserver:
                 [("tools", "statistics")],
                 [("tools", "knowledge")],
             ),
-            "riksdagen": (
-                [("tools", "politik")],
-                [("tools", "knowledge")],
+            "riksdagen-dokument": (
+                [("tools", "politik", "dokument"), ("tools", "politik", "status")],
+                [("tools", "politik"), ("tools", "knowledge")],
+            ),
+            "riksdagen-debatt": (
+                [("tools", "politik", "anforanden"), ("tools", "politik", "voteringar")],
+                [("tools", "politik"), ("tools", "knowledge")],
+            ),
+            "riksdagen-ledamoter": (
+                [("tools", "politik", "ledamoter"), ("tools", "politik", "kalender")],
+                [("tools", "politik"), ("tools", "knowledge")],
             ),
             "bolag": (
                 [("tools", "bolag")],

@@ -49,38 +49,53 @@ class PlatformTool:
 # Intent/Zone mapping — matches the real routing system
 # ---------------------------------------------------------------------------
 
-PLATFORM_INTENTS = ("kunskap", "skapande", "jämförelse", "konversation")
 
-_NAMESPACE_TO_ZONE: dict[str, str] = {
-    "tools/knowledge": "kunskap",
-    "tools/weather": "kunskap",
-    "tools/politik": "kunskap",
-    "tools/statistics": "kunskap",
-    "tools/trafik": "kunskap",
-    "tools/bolag": "kunskap",
-    "tools/marketplace": "kunskap",
-    "tools/action": "skapande",
-    "tools/code": "skapande",
-    "tools/kartor": "skapande",
-    "tools/compare": "jämförelse",
-    "tools/general": "kunskap",
-}
+def _build_platform_intents() -> tuple[str, ...]:
+    """Build platform intents dynamically from seed domain data."""
+    try:
+        from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS
 
-_AGENT_TO_ZONE: dict[str, str] = {
-    "åtgärd": "kunskap",
-    "väder": "kunskap",
-    "kartor": "skapande",
-    "statistik": "kunskap",
-    "media": "skapande",
-    "kunskap": "kunskap",
-    "webb": "kunskap",
-    "kod": "skapande",
-    "bolag": "kunskap",
-    "trafik": "kunskap",
-    "riksdagen": "kunskap",
-    "marknad": "kunskap",
-    "syntes": "kunskap",
-}
+        return tuple(
+            d["domain_id"] for d in DEFAULT_INTENT_DOMAINS if d.get("domain_id")
+        )
+    except Exception:
+        # Fallback: load all domain IDs from get_all_zone_prefixes
+        try:
+            from app.nexus.config import get_all_zone_prefixes
+
+            return tuple(get_all_zone_prefixes().keys())
+        except Exception:
+            return ("kunskap", "skapande", "jämförelse", "konversation")
+
+
+PLATFORM_INTENTS = _build_platform_intents()
+
+
+def _build_namespace_to_zone() -> dict[str, str]:
+    """Build namespace→zone mapping from NEXUS config (which is dynamic)."""
+    from app.nexus.config import NAMESPACE_ZONE_MAP
+
+    return dict(NAMESPACE_ZONE_MAP)
+
+
+_NAMESPACE_TO_ZONE: dict[str, str] = _build_namespace_to_zone()
+
+
+def _build_agent_to_zone() -> dict[str, str]:
+    """Build agent→zone mapping from seed agent definitions."""
+    try:
+        from app.seeds.agent_definitions import DEFAULT_AGENT_DEFINITIONS
+
+        return {
+            a["agent_id"]: a.get("domain_id", "kunskap")
+            for a in DEFAULT_AGENT_DEFINITIONS
+            if a.get("agent_id")
+        }
+    except Exception:
+        return {"kunskap": "kunskap", "skapande": "skapande"}
+
+
+_AGENT_TO_ZONE: dict[str, str] = _build_agent_to_zone()
 
 
 def _zone_from_namespace(ns: tuple[str, ...]) -> str:
@@ -89,7 +104,8 @@ def _zone_from_namespace(ns: tuple[str, ...]) -> str:
         prefix = f"{ns[0]}/{ns[1]}"
         if prefix in _NAMESPACE_TO_ZONE:
             return _NAMESPACE_TO_ZONE[prefix]
-    return "kunskap"
+    # Fallback: first available domain zone
+    return PLATFORM_INTENTS[0] if PLATFORM_INTENTS else "kunskap"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +220,7 @@ def _load_from_registry() -> list[PlatformTool]:
                 description=f"Anropa extern AI-modell: {tid.replace('call_', '')}",
                 category="external_model",
                 namespace=ns,
-                zone="jämförelse",
+                zone=_zone_from_namespace(ns),
                 keywords=TOOL_KEYWORDS.get(tid, []),
             )
         )
@@ -273,13 +289,73 @@ def invalidate_cache() -> None:
     _CACHE = None
 
 
+def apply_overrides_to_cache(
+    overrides: dict[str, dict[str, Any]],
+) -> int:
+    """Patch in-memory tool cache with metadata overrides.
+
+    This is critical for the auto-loop: the optimizer writes improved metadata
+    to the DB, but ``get_platform_tools()`` loads from Python source constants.
+    This function bridges the gap by directly mutating cached PlatformTool
+    objects so the next ``route_query()`` call sees updated descriptions,
+    keywords, etc.
+
+    Args:
+        overrides: Mapping of tool_id → {description, keywords, ...}.
+
+    Returns:
+        Number of tools patched.
+    """
+    tools = get_platform_tools()
+    tool_by_id = {t.tool_id: t for t in tools}
+    patched = 0
+
+    for tool_id, fields in overrides.items():
+        tool = tool_by_id.get(tool_id)
+        if not tool:
+            continue
+
+        for attr in (
+            "description",
+            "keywords",
+            "example_queries",
+            "excludes",
+            "geographic_scope",
+        ):
+            val = fields.get(attr)
+            if val is not None:
+                setattr(tool, attr, val)
+
+        patched += 1
+
+    if patched:
+        logger.info("Platform bridge: patched %d tools in memory", patched)
+    return patched
+
+
 # ---------------------------------------------------------------------------
 # Intent definitions from real platform
 # ---------------------------------------------------------------------------
 
 
 def get_platform_intents() -> dict[str, dict[str, Any]]:
-    """Get intent definitions from the real intent_definition_service."""
+    """Get intent definitions from the real platform.
+
+    Uses the new GraphRegistry seed domains when available (17 domains),
+    falling back to the old 4-intent defaults.
+    """
+    try:
+        from app.seeds.intent_domains import get_default_intent_domains
+        from app.services.intent_definition_service import (
+            domains_to_intent_definitions,
+        )
+
+        domains = list(get_default_intent_domains().values())
+        if domains:
+            defs = domains_to_intent_definitions(domains)
+            return {d["intent_id"]: d for d in defs}
+    except Exception:
+        pass
     from app.services.intent_definition_service import (
         get_default_intent_definitions,
     )
@@ -293,49 +369,26 @@ def get_platform_intents() -> dict[str, dict[str, Any]]:
 
 _PLATFORM_AGENTS_CACHE: list[dict[str, str]] | None = None
 
-_STATIC_FALLBACK_AGENTS: list[dict[str, str]] = [
-    {
-        "name": "åtgärd",
-        "zone": "kunskap",
-        "description": "Generella uppgifter och åtgärder",
-    },
-    {"name": "väder", "zone": "kunskap", "description": "SMHI väder och klimatdata"},
-    {
-        "name": "trafik",
-        "zone": "kunskap",
-        "description": "Trafikverket trafik och vägdata",
-    },
-    {
-        "name": "statistik",
-        "zone": "kunskap",
-        "description": "SCB, Kolada, Skolverket statistik",
-    },
-    {
-        "name": "riksdagen",
-        "zone": "kunskap",
-        "description": "Riksdagsdokument och voteringar",
-    },
-    {"name": "bolag", "zone": "kunskap", "description": "Bolagsverket företagsinfo"},
-    {
-        "name": "marknad",
-        "zone": "kunskap",
-        "description": "Blocket, Tradera marknadsplatser",
-    },
-    {
-        "name": "kunskap",
-        "zone": "kunskap",
-        "description": "Intern kunskapsbas och webbsökning",
-    },
-    {
-        "name": "webb",
-        "zone": "kunskap",
-        "description": "Webbskrapning och länkförhandsgranskning",
-    },
-    {"name": "kartor", "zone": "skapande", "description": "Geoapify kartgenerering"},
-    {"name": "media", "zone": "skapande", "description": "Podcast och bildgenerering"},
-    {"name": "kod", "zone": "skapande", "description": "Sandbox-kodexekvering"},
-    {"name": "syntes", "zone": "kunskap", "description": "Sammanfattning och syntes"},
-]
+
+def _build_static_fallback_agents() -> list[dict[str, str]]:
+    """Build fallback agent list from seed data, using domain_ids as zones."""
+    try:
+        from app.seeds.agent_definitions import DEFAULT_AGENT_DEFINITIONS
+
+        return [
+            {
+                "name": a["agent_id"],
+                "zone": a.get("domain_id", "kunskap"),
+                "description": a.get("description", ""),
+            }
+            for a in DEFAULT_AGENT_DEFINITIONS
+            if a.get("agent_id")
+        ]
+    except Exception:
+        return [{"name": "kunskap", "zone": "kunskap", "description": "Fallback"}]
+
+
+_STATIC_FALLBACK_AGENTS: list[dict[str, str]] = _build_static_fallback_agents()
 
 
 def get_platform_agents() -> list[dict[str, str]]:
@@ -372,7 +425,7 @@ def get_platform_agents() -> list[dict[str, str]]:
     return _PLATFORM_AGENTS_CACHE
 
 
-# Backward compatibility alias
+# Backward compatibility alias (now built from seed data)
 PLATFORM_AGENTS = _STATIC_FALLBACK_AGENTS
 
 

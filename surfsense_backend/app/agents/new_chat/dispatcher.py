@@ -6,7 +6,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agents.new_chat.intent_router import resolve_route_from_intents
 from app.agents.new_chat.routing import Route
 from app.agents.new_chat.system_prompt import append_datetime_context
-from app.services.intent_definition_service import get_default_intent_definitions
+from app.services.intent_definition_service import (
+    domains_to_intent_definitions,
+    get_default_intent_definitions,
+)
 
 _GREETING_REGEX = re.compile(
     r"^(hi|hello|hey|hej|tjena|hallå|yo|god( morgon| kväll| eftermiddag))\b",
@@ -49,13 +52,12 @@ def _normalize_route(value: str) -> Route | None:
     for route in Route:
         if route.value in lowered:
             return route
-    # Backward compat / aliases
+    # Backward compat / aliases — only for English→Swedish translation.
+    # Domain-specific identifiers are no longer collapsed to KUNSKAP.
     _ALIASES: dict[str, Route] = {
         "knowledge": Route.KUNSKAP,
         "action": Route.SKAPANDE,
         "smalltalk": Route.KONVERSATION,
-        "statistics": Route.KUNSKAP,
-        "statistik": Route.KUNSKAP,
         "compare": Route.JAMFORELSE,
     }
     for alias, route in _ALIASES.items():
@@ -71,7 +73,7 @@ def _infer_rule_based_route(text: str) -> Route | None:
     if _COMPARE_COMMAND_RE.match(value):
         return Route.JAMFORELSE
     if _MARKETPLACE_ROUTE_RE.search(value):
-        return Route.KUNSKAP  # Marketplace = information retrieval
+        return None  # Let intent resolver pick the right domain (handel-och-marknad)
     greeting_match = _GREETING_REGEX.match(value)
     if greeting_match:
         trailing_text = value[greeting_match.end() :].strip(" \t\r\n,.;:!?-")
@@ -86,7 +88,9 @@ def _looks_context_dependent_followup(text: str) -> bool:
         return False
     if len(value) <= 90 and _FOLLOWUP_CONTEXT_RE.search(value):
         return True
-    if len(value) <= 70 and value.startswith(("kan du ", "kan ni ", "och ", "hur ", "vad ")):
+    if len(value) <= 70 and value.startswith(
+        ("kan du ", "kan ni ", "och ", "hur ", "vad ")
+    ):
         return True
     return False
 
@@ -108,6 +112,7 @@ async def dispatch_route(
     system_prompt_override: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
+    registry: Any | None = None,
 ) -> Route:
     route, _meta = await dispatch_route_with_trace(
         user_query,
@@ -117,6 +122,7 @@ async def dispatch_route(
         system_prompt_override=system_prompt_override,
         conversation_history=conversation_history,
         intent_definitions=intent_definitions,
+        registry=registry,
     )
     return route
 
@@ -130,6 +136,7 @@ async def dispatch_route_with_trace(
     system_prompt_override: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
+    registry: Any | None = None,
 ) -> tuple[Route, dict[str, Any]]:
     text = (user_query or "").strip()
     if not text:
@@ -149,13 +156,10 @@ async def dispatch_route_with_trace(
             "candidates": [],
         }
 
-    if has_attachments or has_mentions:
-        return Route.KUNSKAP, {
-            "source": "attachment_or_mention",
-            "confidence": 0.98,
-            "reason": "attachments_or_mentions_force_knowledge",
-            "candidates": [],
-        }
+    # Attachments / mentions no longer force Route.KUNSKAP — let the intent
+    # resolver pick the right domain.  The presence of attachments is a
+    # signal, not a route lock.
+    # (Removed hardcoded Route.KUNSKAP override for attachments/mentions.)
 
     safe_history = [
         {
@@ -174,11 +178,7 @@ async def dispatch_route_with_trace(
                 break
     previous_route = _infer_rule_based_route(previous_user_text)
     is_followup = _looks_context_dependent_followup(text)
-    if (
-        is_followup
-        and previous_route
-        and previous_route not in {Route.KONVERSATION}
-    ):
+    if is_followup and previous_route and previous_route not in {Route.KONVERSATION}:
         # Compare followups often start with short polite phrases ("kan du ...")
         # while still introducing a new actionable task (weather/traffic/etc.).
         # Do not hard-lock them to knowledge before intent retrieval runs.
@@ -193,9 +193,16 @@ async def dispatch_route_with_trace(
                 "candidates": [],
             }
 
+    # Prefer explicit intent_definitions, then registry domains, then legacy 4-intent defaults
+    if intent_definitions is not None:
+        _raw_definitions = intent_definitions
+    elif registry is not None and hasattr(registry, "domains") and registry.domains:
+        _raw_definitions = domains_to_intent_definitions(registry.domains)
+    else:
+        _raw_definitions = list(get_default_intent_definitions().values())
     normalized_intents = [
         item
-        for item in (intent_definitions or list(get_default_intent_definitions().values()))
+        for item in _raw_definitions
         if isinstance(item, dict) and bool(item.get("enabled", True))
     ]
     if not previous_route and previous_user_text:
@@ -218,12 +225,16 @@ async def dispatch_route_with_trace(
         if previous_route and previous_route not in {Route.KONVERSATION}:
             # Allow compare followups to preserve compare context
             if previous_route == Route.JAMFORELSE:
-                return Route.KUNSKAP
+                # Fall through to intent retrieval for the right domain
+                candidate_route = _first_non_compare_route(candidates)
+                if candidate_route:
+                    return candidate_route
+                return route
             return previous_route
         candidate_route = _first_non_compare_route(candidates)
         if candidate_route:
             return candidate_route
-        return Route.KUNSKAP
+        return route
 
     retrieval_decision = resolve_route_from_intents(
         query=text,
@@ -259,7 +270,9 @@ async def dispatch_route_with_trace(
             "candidate_routes": sorted(
                 {
                     str(item.get("route") or "").strip()
-                    for item in (retrieval_decision.candidates if retrieval_decision else [])
+                    for item in (
+                        retrieval_decision.candidates if retrieval_decision else []
+                    )
                     if str(item.get("route") or "").strip()
                 }
             ),
@@ -328,7 +341,9 @@ async def dispatch_route_with_trace(
                 if retrieval_decision
                 else 0.55,
                 "reason": f"llm_selected:{guarded_llm_route.value}",
-                "candidates": retrieval_decision.candidates if retrieval_decision else [],
+                "candidates": retrieval_decision.candidates
+                if retrieval_decision
+                else [],
             }
         if retrieval_decision:
             fallback_route = remap_non_explicit_compare(

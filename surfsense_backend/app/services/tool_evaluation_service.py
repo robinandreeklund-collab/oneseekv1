@@ -114,7 +114,9 @@ _SWEDISH_SIGNAL_WORDS = {
 }
 _EVAL_AGENT_CHOICES = (
     "statistik",
-    "riksdagen",
+    "riksdagen-dokument",
+    "riksdagen-debatt",
+    "riksdagen-ledamoter",
     "väder",
     "trafik",
     "bolag",
@@ -129,7 +131,9 @@ _EVAL_AGENT_CHOICES = (
 
 _EVAL_AGENT_DESCRIPTIONS: dict[str, str] = {
     "statistik": "SCB/statistik och officiell data i Sverige.",
-    "riksdagen": "Riksdagens öppna data och politiska dokument.",
+    "riksdagen-dokument": "Riksdagens dokument: propositioner, motioner, betänkanden, SOU.",
+    "riksdagen-debatt": "Riksdagsdebatter, anföranden och voteringsresultat.",
+    "riksdagen-ledamoter": "Riksdagsledamöter och Riksdagens kalender.",
     "väder": "SMHI-väderprognoser och väderkontext för svenska orter.",
     "trafik": "Trafik, vägar, incidenter, järnväg och transport.",
     "bolag": "Bolagsverket och företagsregister.",
@@ -765,7 +769,8 @@ def _normalize_agent_name(value: Any) -> str | None:
         "stats": "statistik",
         "scb": "statistik",
         "statistics": "statistik",
-        "riksdag": "riksdagen",
+        "riksdag": "riksdagen-dokument",
+        "riksdagen": "riksdagen-dokument",
         "traffic": "trafik",
         "trafikverket": "trafik",
         "weather": "väder",
@@ -855,8 +860,12 @@ def _agent_for_tool(
         return "kunskap"
     if tool.startswith("scb_") or cat in {"statistics", "scb_statistics"}:
         return "statistik"
-    if tool.startswith("riksdag_") or cat.startswith("riksdag"):
-        return "riksdagen"
+    if tool.startswith("riksdag_dokument") or tool == "riksdag_dokumentstatus" or cat in {"riksdagen_dokument", "riksdagen_status"}:
+        return "riksdagen-dokument"
+    if tool.startswith("riksdag_anforanden") or tool.startswith("riksdag_voteringar") or cat in {"riksdagen_anforanden", "riksdagen_voteringar"}:
+        return "riksdagen-debatt"
+    if tool.startswith("riksdag_ledamoter") or tool.startswith("riksdag_kalender") or cat in {"riksdagen_ledamoter", "riksdagen_kalender"}:
+        return "riksdagen-ledamoter"
     if _is_weather_domain_tool(tool, cat):
         return "väder"
     if tool.startswith("trafikverket_") or tool == "trafiklab_route":
@@ -1011,11 +1020,11 @@ def _candidate_agents_for_route(
     route_norm = _normalize_route_value(route_value)
     sub_norm = _normalize_sub_route_value(sub_route_value)
     if route_norm == Route.KUNSKAP.value:
-        return ["statistics", "riksdagen", "knowledge"]
+        return ["statistics", "riksdagen-dokument", "knowledge"]
     if route_norm == Route.JAMFORELSE.value:
         return ["synthesis", "statistics", "knowledge"]
     if route_norm == Route.KUNSKAP.value:
-        return ["knowledge", "riksdagen", "statistics", "browser"]
+        return ["knowledge", "riksdagen-dokument", "statistics", "browser"]
     if route_norm == Route.SKAPANDE.value:
         if sub_norm == ActionRoute.TRAVEL.value:
             return ["weather", "trafik", "action", "kartor"]
@@ -1024,7 +1033,7 @@ def _candidate_agents_for_route(
         if sub_norm == ActionRoute.MEDIA.value:
             return ["media", "action"]
         if sub_norm == ActionRoute.DATA.value:
-            return ["marketplace", "action", "statistics", "riksdagen", "bolag", "kartor"]
+            return ["marketplace", "action", "statistics", "riksdagen-dokument", "bolag", "kartor"]
         return ["marketplace", "action", "browser", "weather", "trafik", "media", "bolag", "kartor"]
     return ["knowledge", "action"]
 
@@ -1036,8 +1045,12 @@ def _heuristic_agent_choice(
     candidates: list[str],
 ) -> str | None:
     text = str(question or "").casefold()
-    if any(token in text for token in ("riksdag", "interpellation", "motion", "utskott")):
-        return "riksdagen" if "riksdagen" in candidates else candidates[0]
+    if any(token in text for token in ("riksdag", "interpellation", "motion", "utskott", "proposition", "lagförslag")):
+        return "riksdagen-dokument" if "riksdagen-dokument" in candidates else candidates[0]
+    if any(token in text for token in ("debatt", "anförande", "votering", "omröstning", "frågestund")):
+        return "riksdagen-debatt" if "riksdagen-debatt" in candidates else candidates[0]
+    if any(token in text for token in ("ledamot", "ledamöter", "valkrets", "riksdagskalender")):
+        return "riksdagen-ledamoter" if "riksdagen-ledamoter" in candidates else candidates[0]
     if any(token in text for token in ("scb", "statistik", "inflation", "arbetslös", "befolkning")):
         return "statistics" if "statistics" in candidates else candidates[0]
     if any(

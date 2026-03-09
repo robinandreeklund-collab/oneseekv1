@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from app.agents.new_chat.routing import Route
 from app.services.reranker_service import RerankerService
+
+logger = logging.getLogger(__name__)
+
+# Weight for embedding cosine similarity in the combined score.
+# Empirically tuned: lexical provides keyword precision, embedding adds
+# semantic recall for queries that don't share exact tokens with keywords.
+_EMBEDDING_WEIGHT = 4.0
 
 
 def _normalize_text(value: str) -> str:
@@ -144,6 +152,27 @@ def _rerank_candidates(
     return scores
 
 
+def _embedding_score_candidates(
+    *,
+    query: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, float]:
+    """Compute embedding cosine similarity for each candidate intent."""
+    try:
+        from app.services.embedding_scorer import compute_embedding_scores
+
+        return compute_embedding_scores(
+            query,
+            candidates,
+            id_key="intent_id",
+            label_key="label",
+            description_key="description",
+            keywords_key="keywords",
+        )
+    except Exception:
+        return {}
+
+
 def _clamp_confidence(value: float) -> float:
     return max(0.01, min(0.99, round(float(value), 3)))
 
@@ -198,11 +227,16 @@ def resolve_route_from_intents(
         for definition in candidates
     ]
     rerank_scores = _rerank_candidates(query=text, candidates=scored)
+    embedding_scores = _embedding_score_candidates(query=text, candidates=scored)
     for item in scored:
         rerank_score = rerank_scores.get(str(item.get("intent_id") or ""))
+        embed_score = embedding_scores.get(str(item.get("intent_id") or ""))
         item["rerank_score"] = rerank_score
-        item["score"] = float(item.get("lexical_score") or 0.0) + (
-            float(rerank_score) if rerank_score is not None else 0.0
+        item["embedding_score"] = embed_score
+        item["score"] = (
+            float(item.get("lexical_score") or 0.0)
+            + (float(rerank_score) if rerank_score is not None else 0.0)
+            + (float(embed_score) * _EMBEDDING_WEIGHT if embed_score is not None else 0.0)
         )
     scored.sort(
         key=lambda item: (
@@ -233,6 +267,11 @@ def resolve_route_from_intents(
                 "rerank_score": (
                     round(float(item.get("rerank_score")), 4)
                     if item.get("rerank_score") is not None
+                    else None
+                ),
+                "embedding_score": (
+                    round(float(item.get("embedding_score")), 4)
+                    if item.get("embedding_score") is not None
                     else None
                 ),
                 "keyword_hits": int(item.get("keyword_hits") or 0),

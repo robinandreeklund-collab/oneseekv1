@@ -76,6 +76,78 @@ class AgentResolution(BaseModel):
     tool_namespaces: list[str] = Field(default_factory=list)
 
 
+class LlmJudgeResult(BaseModel):
+    chosen_tool: str | None = None
+    reasoning: str = ""
+    nexus_rank_of_chosen: int = -1
+    agreement: bool = False
+
+
+class LlmGateStepResult(BaseModel):
+    """Result from a single LLM gate step (intent, agent, or tool)."""
+
+    chosen: str = ""
+    reasoning: str = ""
+    candidates_shown: int = 0
+
+
+class LlmGateResult(BaseModel):
+    """Full result from the 3-step LLM-only pipeline."""
+
+    intent_step: LlmGateStepResult | None = None
+    agent_step: LlmGateStepResult | None = None
+    tool_step: LlmGateStepResult | None = None
+
+
+class LivePipelineStepResult(BaseModel):
+    """Result from a single step in the live pipeline."""
+
+    step_name: str = ""
+    chosen: str = ""
+    reasoning: str = ""
+    candidates_shown: int = 0
+    latency_ms: float = 0.0
+
+
+class LivePipelineResult(BaseModel):
+    """Full result from the live LLM-only pipeline with tool execution.
+
+    Mirrors the real LangGraph flow:
+    resolve_intent → agent_resolver → planner → tool_resolver →
+    execution_router → executor → tools → critic → synthesizer
+    """
+
+    # Routing steps (LLM replaces embeddings/reranker)
+    intent_step: LivePipelineStepResult | None = None
+    agent_step: LivePipelineStepResult | None = None
+    tool_step: LivePipelineStepResult | None = None
+
+    # Complexity classification (trivial/simple/complex)
+    complexity: str = "simple"
+
+    # Execution strategy (inline/parallel/subagent)
+    execution_strategy: str = "inline"
+
+    # Planner output (ordered steps)
+    plan: str = ""
+    plan_steps: list[dict] = Field(default_factory=list)
+
+    # Tool execution (real invocation)
+    tool_args: dict = Field(default_factory=dict)
+    tool_output: str = ""
+    tool_error: str = ""
+    tool_executed: bool = False
+
+    # Critic evaluation
+    critic_decision: str = ""  # "ok" | "needs_more" | "replan"
+    critic_reasoning: str = ""
+    critic_loops: int = 0
+
+    # Final synthesis
+    synthesis: str = ""
+    total_latency_ms: float = 0.0
+
+
 class RoutingDecision(BaseModel):
     query_analysis: QueryAnalysis
     agent_resolution: AgentResolution | None = None
@@ -89,10 +161,17 @@ class RoutingDecision(BaseModel):
     is_ood: bool = False
     schema_verified: bool = False
     latency_ms: float = 0.0
+    llm_judge: LlmJudgeResult | None = None
+    llm_gate: LlmGateResult | None = None
+    live: LivePipelineResult | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class RouteQueryRequest(BaseModel):
     query: str
+    llm_judge: bool = False
+    llm_gate: bool = False
+    live: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +254,9 @@ class SpaceHealthReport(BaseModel):
 
 class SpaceSnapshot(BaseModel):
     snapshot_at: datetime
-    points: list[dict] = Field(default_factory=list)  # {tool_id, x, y, zone, cluster}
+    points: list[dict] = Field(
+        default_factory=list
+    )  # {tool_id, x, y, zone, namespace, cluster}
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +461,89 @@ class OptimizerApplyRequest(BaseModel):
     suggestions: list[dict] = Field(
         ..., description="List of tool metadata dicts with tool_id + fields to apply"
     )
+
+
+# ---------------------------------------------------------------------------
+# Intent Layer Optimizer
+# ---------------------------------------------------------------------------
+
+
+class IntentLayerGenerateRequest(BaseModel):
+    llm_config_id: int = -24
+
+
+class IntentLayerItemSuggestion(BaseModel):
+    """A single domain or agent suggestion."""
+
+    item_id: str
+    item_type: str  # "domain" | "agent"
+    current: dict = Field(default_factory=dict)
+    suggested: dict = Field(default_factory=dict)
+    reasoning: str = ""
+    fields_changed: list[str] = Field(default_factory=list)
+
+
+class IntentLayerResultResponse(BaseModel):
+    total_domains: int = 0
+    total_agents: int = 0
+    suggestions: list[IntentLayerItemSuggestion] = Field(default_factory=list)
+    model_used: str = ""
+    error: str | None = None
+
+
+class IntentLayerApplyRequest(BaseModel):
+    suggestions: list[dict] = Field(
+        ...,
+        description="List of domain/agent dicts with item_id, item_type, + fields",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Overview Metrics
+# ---------------------------------------------------------------------------
+
+
+class OverviewMetricsResponse(BaseModel):
+    band0_rate: float = 0.0
+    ece_global: float | None = None
+    ood_rate: float = 0.0
+    namespace_purity: float = 0.0
+    platt_calibrated: bool = False
+    platt_zones_fitted: int = 0
+    total_events: int = 0
+    total_tools: int = 0
+    total_hard_negatives: int = 0
+    band_distribution: dict[str, int] = Field(default_factory=dict)
+    band_percentages: dict[str, float] = Field(default_factory=dict)
+    multi_intent_rate: float | None = None
+    schema_match_rate: float = 0.0
+    reranker_delta: float | None = None
+    silhouette_global: float | None = None
+    inter_zone_distance: float | None = None
+    hubness_rate: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Calibration Fit
+# ---------------------------------------------------------------------------
+
+
+class CalibrationFitResponse(BaseModel):
+    status: str  # "completed" | "insufficient_data" | "degenerate"
+    zone: str | None = None
+    message: str | None = None
+    fitted_on_samples: int | None = None
+    param_a: float | None = None
+    param_b: float | None = None
+    ece_score: float | None = None
+    zones_updated: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Optimizer Apply
+# ---------------------------------------------------------------------------
+
+
+class OptimizerApplyResponse(BaseModel):
+    applied: int = 0
+    skipped: int = 0

@@ -13,21 +13,8 @@ import { Loader2 } from "lucide-react";
 import {
 	nexusApiService,
 	type ZoneConfigResponse,
+	type DomainMetadata,
 } from "@/lib/apis/nexus-api.service";
-
-const ZONE_LABELS: Record<string, string> = {
-	kunskap: "Kunskap",
-	skapande: "Skapande",
-	konversation: "Konversation",
-	"jämförelse": "Jämförelse",
-};
-
-const ZONE_DESCRIPTIONS: Record<string, string> = {
-	kunskap: "SMHI, SCB, Trafikverket, Riksdagen, sök, webb, dokument, marketplace",
-	skapande: "Sandbox, podcast, bildgenerering, kartor, kod",
-	konversation: "Småprat, hälsningar, konversation",
-	"jämförelse": "Multi-modell jämförelser",
-};
 
 function MetricBar({
 	label,
@@ -65,17 +52,31 @@ function MetricBar({
 
 export function ZoneHealthCard() {
 	const [zones, setZones] = useState<ZoneConfigResponse[]>([]);
+	const [domains, setDomains] = useState<DomainMetadata[]>([]);
 	const [loading, setLoading] = useState(true);
 
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
-		nexusApiService
-			.getZones()
-			.then(setZones)
+		Promise.all([
+			nexusApiService.getZones(),
+			nexusApiService.getDomainMetadata().catch(() => ({ domains: [] })),
+		])
+			.then(([z, d]) => {
+				setZones(z);
+				setDomains(d.domains);
+			})
 			.catch((err) => setError(err.message || "Kunde inte hämta zondata"))
 			.finally(() => setLoading(false));
 	}, []);
+
+	// Build dynamic label/description lookups from domain metadata
+	const domainLabels: Record<string, string> = {};
+	const domainDescriptions: Record<string, string> = {};
+	for (const d of domains) {
+		domainLabels[d.domain_id] = d.label;
+		domainDescriptions[d.domain_id] = d.description;
+	}
 
 	if (loading) {
 		return (
@@ -102,11 +103,11 @@ export function ZoneHealthCard() {
 			<CardHeader>
 				<CardTitle>Zonhälsa</CardTitle>
 				<CardDescription>
-					Embedding-zoner med hälsometriker — 4 zoner styr precision routing
+					Embedding-zoner med hälsometriker — {zones.length} domänzoner styr precision routing
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
-				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 					{zones.map((zone) => (
 						<div
 							key={zone.zone}
@@ -114,14 +115,14 @@ export function ZoneHealthCard() {
 						>
 							<div className="flex items-center justify-between">
 								<h4 className="font-medium">
-									{ZONE_LABELS[zone.zone] || zone.zone}
+									{domainLabels[zone.zone] || zone.zone}
 								</h4>
 								<Badge variant="outline" className="text-xs font-mono">
 									{zone.prefix_token.trim()}
 								</Badge>
 							</div>
 							<p className="text-xs text-muted-foreground">
-								{ZONE_DESCRIPTIONS[zone.zone] || ""}
+								{domainDescriptions[zone.zone] || ""}
 							</p>
 
 							<div className="space-y-2">

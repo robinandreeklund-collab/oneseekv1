@@ -27,23 +27,10 @@ import {
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
 import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-
-const CATEGORY_LABELS: Record<string, string> = {
-	"": "Alla kategorier",
-	smhi: "SMHI (Vader)",
-	scb: "SCB (Statistik)",
-	kolada: "Kolada (Nyckeltal)",
-	riksdagen: "Riksdagen",
-	trafikverket: "Trafikverket",
-	bolagsverket: "Bolagsverket",
-	marketplace: "Marknadsplats",
-	skolverket: "Skolverket",
-	builtin: "Inbyggda verktyg",
-	geoapify: "Kartor (Geoapify)",
-};
 
 const BAND_LABELS = ["Band 0 (Exakt)", "Band 1 (Hog)", "Band 2 (Medel)", "Band 3 (Lag)"];
 
@@ -186,6 +173,7 @@ function ProposalCard({
 											<th className="pb-1.5 pr-2">Fraga</th>
 											<th className="pb-1.5 pr-2">Forvantad</th>
 											<th className="pb-1.5 pr-2">Fick</th>
+											<th className="pb-1.5 pr-2">LLM valde</th>
 											<th className="pb-1.5 pr-2">Intent/Zon</th>
 											<th className="pb-1.5 pr-2">Agent</th>
 											<th className="pb-1.5 pr-2">Band</th>
@@ -209,6 +197,24 @@ function ProposalCard({
 												</td>
 												<td className="py-1.5 pr-2 font-mono text-red-600">
 													{fq.got_tool}
+												</td>
+												<td
+													className="py-1.5 pr-2 font-mono"
+													title={fq.llm_judge_reasoning || ""}
+												>
+													{fq.llm_judge_tool ? (
+														<span
+															className={
+																fq.llm_judge_tool === fq.expected_tool
+																	? "text-green-700"
+																	: "text-amber-600"
+															}
+														>
+															{fq.llm_judge_tool}
+														</span>
+													) : (
+														"—"
+													)}
 												</td>
 												<td className="py-1.5 pr-2">
 													{fq.resolved_zone || "—"}
@@ -246,6 +252,7 @@ function ProposalCard({
 }
 
 export function LoopTab() {
+	const CATEGORY_LABELS = useCategoryLabels();
 	const [runs, setRuns] = useState<AutoLoopRunResponse[]>([]);
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
@@ -264,6 +271,7 @@ export function LoopTab() {
 	// New: configurable parameters + live progress
 	const [maxIterations, setMaxIterations] = useState(1);
 	const [batchSize, setBatchSize] = useState(200);
+	const [llmJudgeEnabled, setLlmJudgeEnabled] = useState(false);
 	const [streamEvents, setStreamEvents] = useState<LoopStreamEvent[]>([]);
 	const [liveProgress, setLiveProgress] = useState<LoopStreamEvent | null>(null);
 
@@ -317,6 +325,7 @@ export function LoopTab() {
 			namespace?: string;
 			batch_size?: number;
 			max_iterations?: number;
+			run_llm_judge?: boolean;
 		} = {};
 		if (filterMode === "category" && selectedCategory) {
 			request = { category: selectedCategory };
@@ -327,6 +336,7 @@ export function LoopTab() {
 		}
 		request.batch_size = batchSize;
 		request.max_iterations = maxIterations;
+		request.run_llm_judge = llmJudgeEnabled;
 
 		nexusApiService
 			.startLoopStream(request, (event) => {
@@ -558,6 +568,22 @@ export function LoopTab() {
 								Antal testfall per batch. Hogre = snabbare men mer minne.
 							</p>
 						</div>
+
+						<div className="pt-2">
+							<label className="flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									checked={llmJudgeEnabled}
+									onChange={(e) => setLlmJudgeEnabled(e.target.checked)}
+									disabled={starting}
+									className="rounded"
+								/>
+								<span className="text-sm font-medium">LLM Judge</span>
+								<span className="text-xs text-muted-foreground">
+									LLM valjer verktyg fran hela agentens namespace (langsammare)
+								</span>
+							</label>
+						</div>
 					</div>
 				</CardContent>
 			</Card>
@@ -604,6 +630,21 @@ export function LoopTab() {
 								{liveProgress.precision_at_1 != null && (
 									<span>
 										P@1: {(liveProgress.precision_at_1 * 100).toFixed(1)}%
+									</span>
+								)}
+								{liveProgress.intent_accuracy != null && (
+									<span>
+										Intent: {(liveProgress.intent_accuracy * 100).toFixed(1)}%
+									</span>
+								)}
+								{liveProgress.agent_accuracy != null && (
+									<span>
+										Agent: {(liveProgress.agent_accuracy * 100).toFixed(1)}%
+									</span>
+								)}
+								{liveProgress.llm_judge_agreement_rate != null && (
+									<span>
+										LLM-agree: {Math.round(liveProgress.llm_judge_agreement_rate * 100)}%
 									</span>
 								)}
 							</div>
@@ -894,6 +935,143 @@ export function LoopTab() {
 																</CardContent>
 															</Card>
 
+															{/* LLM Judge — dual-sided comparison */}
+															{detail.llm_judge && (
+																<Card>
+																	<CardHeader className="py-3 px-4">
+																		<CardTitle className="text-sm">
+																			LLM Judge vs NEXUS
+																		</CardTitle>
+																	</CardHeader>
+																	<CardContent className="px-4 pb-4 space-y-3">
+																		{/* Accuracy head-to-head */}
+																		<div className="grid grid-cols-2 gap-4 text-sm">
+																			<div className="rounded border p-3">
+																				<p className="text-xs text-muted-foreground mb-1">
+																					NEXUS korrekt
+																				</p>
+																				<p className="text-2xl font-bold">
+																					{Math.round(detail.llm_judge.nexus_accuracy * 100)}%
+																				</p>
+																				<p className="text-xs text-muted-foreground">
+																					{detail.llm_judge.both_correct + detail.llm_judge.nexus_only_correct}/{detail.llm_judge.total}
+																				</p>
+																			</div>
+																			<div className="rounded border p-3">
+																				<p className="text-xs text-muted-foreground mb-1">
+																					LLM korrekt
+																				</p>
+																				<p className="text-2xl font-bold">
+																					{Math.round(detail.llm_judge.llm_accuracy * 100)}%
+																				</p>
+																				<p className="text-xs text-muted-foreground">
+																					{detail.llm_judge.both_correct + detail.llm_judge.llm_only_correct}/{detail.llm_judge.total}
+																				</p>
+																			</div>
+																		</div>
+
+																		{/* Quadrant breakdown */}
+																		<div className="space-y-1.5">
+																			<p className="text-xs font-medium text-muted-foreground">
+																				Korsmatris ({detail.llm_judge.total} testfall)
+																			</p>
+																			<div className="grid grid-cols-2 gap-1.5 text-xs">
+																				<div className="rounded bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-900 p-2 text-center">
+																					<p className="font-bold text-green-700 dark:text-green-400 text-lg">
+																						{detail.llm_judge.both_correct}
+																					</p>
+																					<p className="text-green-600 dark:text-green-500">Bada ratt</p>
+																				</div>
+																				<div className="rounded bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-900 p-2 text-center">
+																					<p className="font-bold text-blue-700 dark:text-blue-400 text-lg">
+																						{detail.llm_judge.nexus_only_correct}
+																					</p>
+																					<p className="text-blue-600 dark:text-blue-500">Bara NEXUS ratt</p>
+																				</div>
+																				<div className="rounded bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-900 p-2 text-center">
+																					<p className="font-bold text-purple-700 dark:text-purple-400 text-lg">
+																						{detail.llm_judge.llm_only_correct}
+																					</p>
+																					<p className="text-purple-600 dark:text-purple-500">Bara LLM ratt</p>
+																				</div>
+																				<div className="rounded bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 p-2 text-center">
+																					<p className="font-bold text-red-700 dark:text-red-400 text-lg">
+																						{detail.llm_judge.both_wrong}
+																					</p>
+																					<p className="text-red-600 dark:text-red-500">Bada fel</p>
+																				</div>
+																			</div>
+																		</div>
+
+																		{/* Agreement rate */}
+																		<div className="flex items-center justify-between text-xs text-muted-foreground border-t pt-2">
+																			<span>Overensstammelse</span>
+																			<span className="font-mono font-medium">
+																				{detail.llm_judge.agreements}/{detail.llm_judge.total} ({Math.round(detail.llm_judge.agreement_rate * 100)}%)
+																			</span>
+																		</div>
+
+																		{/* Disagreements table */}
+																		{detail.llm_judge.disagreements.length > 0 && (
+																			<div className="space-y-1.5">
+																				<p className="text-xs font-medium text-muted-foreground">
+																					Oenigheter ({detail.llm_judge.disagreements.length})
+																				</p>
+																				<div className="max-h-48 overflow-y-auto">
+																					<table className="w-full text-xs">
+																						<thead>
+																							<tr className="border-b text-left text-muted-foreground">
+																								<th className="pb-1 pr-2">Fraga</th>
+																								<th className="pb-1 pr-2">NEXUS</th>
+																								<th className="pb-1 pr-2">LLM</th>
+																								<th className="pb-1 pr-2">Forvantad</th>
+																								<th className="pb-1 pr-2">Vinnare</th>
+																								<th className="pb-1">Motivering</th>
+																							</tr>
+																						</thead>
+																						<tbody>
+																							{detail.llm_judge.disagreements.map((d, idx) => (
+																								<tr key={`disagree-${idx}`} className="border-b last:border-0">
+																									<td className="py-1 pr-2 max-w-[140px] truncate" title={d.query}>
+																										{d.query}
+																									</td>
+																									<td className={`py-1 pr-2 font-mono ${d.winner === "nexus" ? "text-green-700 font-medium" : "text-muted-foreground"}`}>
+																										{d.nexus_tool}
+																									</td>
+																									<td className={`py-1 pr-2 font-mono ${d.winner === "llm" ? "text-green-700 font-medium" : "text-muted-foreground"}`}>
+																										{d.llm_tool}
+																									</td>
+																									<td className="py-1 pr-2 font-mono text-muted-foreground">
+																										{d.expected_tool}
+																									</td>
+																									<td className="py-1 pr-2">
+																										{d.winner === "nexus" && (
+																											<span className="text-blue-600 font-medium">NEXUS</span>
+																										)}
+																										{d.winner === "llm" && (
+																											<span className="text-purple-600 font-medium">LLM</span>
+																										)}
+																										{d.winner === "neither" && (
+																											<span className="text-red-500">Ingen</span>
+																										)}
+																										{d.winner === "tie" && (
+																											<span className="text-muted-foreground">—</span>
+																										)}
+																									</td>
+																									<td className="py-1 max-w-[180px] truncate text-muted-foreground" title={d.reasoning}>
+																										{d.reasoning}
+																									</td>
+																								</tr>
+																							))}
+																						</tbody>
+																					</table>
+																				</div>
+																			</div>
+																		)}
+																	</CardContent>
+																</Card>
+															)}
+
 															{/* Iteration details */}
 															{detail.iterations &&
 																detail.iterations.length > 0 && (
@@ -923,6 +1101,21 @@ export function LoopTab() {
 																							<span>
 																								MRR: {(iter.mrr * 100).toFixed(1)}%
 																							</span>
+																							{iter.intent_accuracy != null && (
+																								<span className="text-indigo-600">
+																									Intent: {(iter.intent_accuracy * 100).toFixed(1)}%
+																								</span>
+																							)}
+																							{iter.agent_accuracy != null && (
+																								<span className="text-violet-600">
+																									Agent: {(iter.agent_accuracy * 100).toFixed(1)}%
+																								</span>
+																							)}
+																							{iter.llm_judge_agreement_rate != null && (
+																								<span>
+																									LLM-agree: {Math.round(iter.llm_judge_agreement_rate * 100)}%
+																								</span>
+																							)}
 																						</div>
 																					</div>
 																				))}

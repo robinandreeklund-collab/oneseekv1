@@ -6,9 +6,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.agents.new_chat.routing import Route
+from app.agents.new_chat.routing import Route, domain_to_route
 from app.db import GlobalIntentDefinition, GlobalIntentDefinitionHistory
-
 
 _ROUTE_VALUES = {route.value for route in Route}
 
@@ -132,7 +131,14 @@ _DEFAULT_INTENT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "route": Route.KONVERSATION.value,
         "label": "Konversation",
         "description": "Hälsningar och enkel konversation utan verktyg.",
-        "keywords": ["hej", "tjena", "hallå", "hur mår du", "konversation", "smalltalk"],
+        "keywords": [
+            "hej",
+            "tjena",
+            "hallå",
+            "hur mår du",
+            "konversation",
+            "smalltalk",
+        ],
         "priority": 400,
         "enabled": True,
         "main_identifier": "Konversationsintent",
@@ -210,9 +216,10 @@ def normalize_intent_definition_payload(
     route_value = _COMPAT_ROUTE_MAP.get(route_value, route_value)
     if route_value not in _ROUTE_VALUES:
         route_value = Route.KUNSKAP.value
-    label = _normalize_optional_text(payload.get("label")) or resolved_intent_id.replace(
-        "_", " "
-    ).title()
+    label = (
+        _normalize_optional_text(payload.get("label"))
+        or resolved_intent_id.replace("_", " ").title()
+    )
     description = _normalize_optional_text(payload.get("description")) or ""
     keywords = _normalize_keywords(payload.get("keywords"))
     priority = _normalize_int(payload.get("priority"), default=500)
@@ -239,6 +246,47 @@ def normalize_intent_definition_payload(
 
 
 def get_default_intent_definitions() -> dict[str, dict[str, Any]]:
+    """Return default intent definitions — uses the 17-domain seed data.
+
+    Falls back to the old 4-intent _DEFAULT_INTENT_DEFINITIONS only if
+    seed data is unavailable.
+    """
+    try:
+        from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS
+
+        if DEFAULT_INTENT_DOMAINS:
+            result: dict[str, dict[str, Any]] = {}
+            for domain in DEFAULT_INTENT_DOMAINS:
+                domain_id = domain.get("domain_id", "")
+                if not domain_id:
+                    continue
+                fallback_route = domain.get("fallback_route", Route.KUNSKAP.value)
+                # Validate fallback_route against known Route values
+                if fallback_route not in _ROUTE_VALUES:
+                    fallback_route = _COMPAT_ROUTE_MAP.get(fallback_route) or Route.KUNSKAP.value
+                payload = {
+                    "intent_id": domain_id,
+                    "route": fallback_route,
+                    "label": domain.get("label", domain_id),
+                    "description": domain.get("description", ""),
+                    "keywords": domain.get("keywords", []),
+                    "priority": domain.get("priority", 500),
+                    "enabled": domain.get("enabled", True),
+                    "main_identifier": domain.get("main_identifier", ""),
+                    "core_activity": domain.get("core_activity", ""),
+                    "unique_scope": domain.get("unique_scope", ""),
+                    "geographic_scope": domain.get("geographic_scope", ""),
+                    "excludes": domain.get("excludes", []),
+                }
+                result[domain_id] = normalize_intent_definition_payload(
+                    payload, intent_id=domain_id
+                )
+            if result:
+                return result
+    except Exception:
+        pass
+
+    # Final fallback: old 4-intent system
     return {
         intent_id: normalize_intent_definition_payload(payload, intent_id=intent_id)
         for intent_id, payload in _DEFAULT_INTENT_DEFINITIONS.items()
@@ -251,8 +299,12 @@ async def get_global_intent_definition_overrides(
     result = await session.execute(select(GlobalIntentDefinition))
     overrides: dict[str, dict[str, Any]] = {}
     for row in result.scalars().all():
-        payload = row.definition_payload if isinstance(row.definition_payload, dict) else {}
-        normalized = normalize_intent_definition_payload(payload, intent_id=row.intent_id)
+        payload = (
+            row.definition_payload if isinstance(row.definition_payload, dict) else {}
+        )
+        normalized = normalize_intent_definition_payload(
+            payload, intent_id=row.intent_id
+        )
         overrides[row.intent_id] = normalized
     return overrides
 
@@ -260,16 +312,94 @@ async def get_global_intent_definition_overrides(
 async def get_effective_intent_definitions(
     session: AsyncSession,
 ) -> list[dict[str, Any]]:
+    """Return merged intent definitions.
+
+    Tries the new GraphRegistry first (17 domains).  Falls back to the
+    old 4-intent defaults + GlobalIntentDefinition overrides if the
+    registry is empty or unavailable.
+    """
+    try:
+        from app.services.graph_registry_service import load_graph_registry
+
+        registry = await load_graph_registry(session)
+        if registry.domains:
+            return domains_to_intent_definitions(registry.domains)
+    except Exception:
+        pass
+
+    # Fallback: old 4-intent system
     defaults = get_default_intent_definitions()
     overrides = await get_global_intent_definition_overrides(session)
     merged = {**defaults}
     for intent_id, payload in overrides.items():
-        merged[intent_id] = normalize_intent_definition_payload(payload, intent_id=intent_id)
+        merged[intent_id] = normalize_intent_definition_payload(
+            payload, intent_id=intent_id
+        )
     ordered = sorted(
         [payload for payload in merged.values() if payload.get("enabled", True)],
-        key=lambda item: (int(item.get("priority") or 500), str(item.get("intent_id") or "")),
+        key=lambda item: (
+            int(item.get("priority") or 500),
+            str(item.get("intent_id") or ""),
+        ),
     )
     return ordered
+
+
+def domains_to_intent_definitions(
+    domains: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert GraphRegistry domain dicts into intent-definition format.
+
+    Each domain becomes one intent definition compatible with
+    ``intent_router._score_intent()`` and ``resolve_route_from_intents()``.
+    The ``fallback_route`` field is mapped to a ``Route`` value via
+    ``domain_to_route()``.
+    """
+    definitions: list[dict[str, Any]] = []
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        domain_id = _normalize_text(domain.get("domain_id")).lower()
+        if not domain_id:
+            continue
+        if not domain.get("enabled", True):
+            continue
+        route = domain_to_route(domain_id)
+        label = (
+            _normalize_optional_text(domain.get("label"))
+            or domain_id.replace("-", " ").title()
+        )
+        description = _normalize_optional_text(domain.get("description")) or ""
+        keywords = _normalize_keywords(domain.get("keywords"))
+        priority = _normalize_int(domain.get("priority"), default=500)
+        main_identifier = _normalize_text(domain.get("main_identifier"))
+        core_activity = _normalize_text(domain.get("core_activity"))
+        unique_scope = _normalize_text(domain.get("unique_scope"))
+        geographic_scope = _normalize_text(domain.get("geographic_scope"))
+        excludes = _normalize_text_list(domain.get("excludes"))
+        definitions.append(
+            {
+                "intent_id": domain_id,
+                "route": route.value,
+                "label": label,
+                "description": description,
+                "keywords": keywords,
+                "priority": priority,
+                "enabled": True,
+                "main_identifier": main_identifier,
+                "core_activity": core_activity,
+                "unique_scope": unique_scope,
+                "geographic_scope": geographic_scope,
+                "excludes": excludes,
+            }
+        )
+    definitions.sort(
+        key=lambda item: (
+            int(item.get("priority") or 500),
+            str(item.get("intent_id") or ""),
+        ),
+    )
+    return definitions
 
 
 async def upsert_global_intent_definition_overrides(

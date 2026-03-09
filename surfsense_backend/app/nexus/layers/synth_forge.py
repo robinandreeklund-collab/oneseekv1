@@ -57,6 +57,8 @@ class GeneratedCase:
     question: str
     difficulty: str
     expected_tool: str | None = None
+    expected_intent: str | None = None
+    expected_agent: str | None = None
     expected_reason: str = ""
     roundtrip_verified: bool = False
     quality_score: float | None = None
@@ -104,7 +106,13 @@ class SynthForge:
         )
 
     def parse_llm_response(
-        self, response_text: str, tool_id: str, namespace: str
+        self,
+        response_text: str,
+        tool_id: str,
+        namespace: str,
+        *,
+        expected_intent: str | None = None,
+        expected_agent: str | None = None,
     ) -> list[GeneratedCase]:
         """Parse LLM JSON response into GeneratedCase objects."""
         cases: list[GeneratedCase] = []
@@ -141,6 +149,8 @@ class SynthForge:
                         question=str(item.get("question", "")),
                         difficulty=difficulty,
                         expected_tool=expected,
+                        expected_intent=expected_intent if expected else None,
+                        expected_agent=expected_agent if expected else None,
                         expected_reason=str(item.get("expected_reason", "")),
                     )
                 )
@@ -173,11 +183,19 @@ class SynthForge:
 
         tool_id = tool_metadata.get("tool_id", "")
         namespace = tool_metadata.get("namespace", "")
+        expected_intent = tool_metadata.get("zone")
+        expected_agent = tool_metadata.get("agent")
         prompt = self.build_prompt(tool_metadata)
 
         try:
             response = await llm_call(prompt)
-            cases = self.parse_llm_response(response, tool_id, namespace)
+            cases = self.parse_llm_response(
+                response,
+                tool_id,
+                namespace,
+                expected_intent=expected_intent,
+                expected_agent=expected_agent,
+            )
             logger.info("Generated %d cases for %s", len(cases), tool_id)
             return cases
         except Exception as e:

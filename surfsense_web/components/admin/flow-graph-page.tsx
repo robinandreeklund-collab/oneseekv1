@@ -64,57 +64,22 @@ const nodeTypes: NodeTypes = {
 // ── Routing graph layout ────────────────────────────────────────────
 
 const INTENT_X = 50;
-const AGENT_X = 450;
-const TOOL_GROUP_X = 830;
-const TOOL_X = 850;
-const ROW_GAP = 100;
-const INTENT_ROW_GAP = 120;
+const AGENT_X = 420;
+const TOOL_GROUP_X = 780;
+const TOOL_X = 800;
 const TOOL_ROW_GAP = 44;
 const TOOL_GROUP_PAD_TOP = 28;
 const TOOL_GROUP_PAD_BOTTOM = 10;
-const TOOL_GROUP_GAP = 16;
 const TOOL_NODE_WIDTH = 180;
 const COLLAPSED_GROUP_HEIGHT = 36;
 
-// Map catalog tool categories to agents by heuristic
-function _inferAgentForCatalogTool(
-	category: string,
-	agents: FlowAgentNode[],
-): string {
-	const cat = (category || "").toLowerCase();
-	for (const a of agents) {
-		if (cat.includes(a.agent_id)) return a.agent_id;
-	}
-	const categoryMap: Record<string, string> = {
-		weather: "väder",
-		smhi: "väder",
-		maps: "kartor",
-		statistics: "statistik",
-		scb: "statistik",
-		kolada: "statistik",
-		traffic: "trafik",
-		trafikverket: "trafik",
-		media: "media",
-		podcast: "media",
-		code: "kod",
-		sandbox: "kod",
-		browser: "webb",
-		web: "webb",
-		company: "bolag",
-		bolagsverket: "bolag",
-		riksdag: "riksdagen",
-		parliament: "riksdagen",
-		marketplace: "marknad",
-		blocket: "marknad",
-		tradera: "marknad",
-	};
-	for (const [key, agentId] of Object.entries(categoryMap)) {
-		if (cat.includes(key)) return agentId;
-	}
-	return "";
-}
+// Spacing for the hierarchical layout
+const INTENT_VERTICAL_GAP = 24; // gap between intent groups
+const AGENT_VERTICAL_GAP = 12; // gap between agents within one intent
+const AGENT_NODE_HEIGHT = 72; // approximate agent node height
+const INTENT_NODE_HEIGHT = 68; // approximate intent node height
 
-// ── Group tools by agent – shared helper ────────────────────────────
+// ── Group tools by agent – uses only DB-backed tool assignments ──────
 
 interface ToolGroupInfo {
 	agentId: string;
@@ -124,28 +89,9 @@ interface ToolGroupInfo {
 
 function _groupToolsByAgent(
 	data: FlowGraphResponse,
-	catalog: MetadataCatalogResponse | null,
 ): { groups: ToolGroupInfo[]; allTools: FlowToolNode[] } {
-	const flowToolIds = new Set(data.tools.map((t) => t.tool_id));
+	// Only use DB-backed tools from the graph registry — no catalog heuristic
 	const allTools: FlowToolNode[] = [...data.tools];
-
-	if (catalog) {
-		for (const cat of catalog.tool_categories) {
-			for (const tool of cat.tools) {
-				if (!flowToolIds.has(tool.tool_id)) {
-					flowToolIds.add(tool.tool_id);
-					const agentId = _inferAgentForCatalogTool(tool.category, data.agents);
-					allTools.push({
-						id: `tool:${tool.tool_id}`,
-						type: "tool",
-						tool_id: tool.tool_id,
-						label: tool.name || tool.tool_id,
-						agent_id: agentId,
-					});
-				}
-			}
-		}
-	}
 
 	const toolsByAgent: Record<string, FlowToolNode[]> = {};
 	const unassignedTools: FlowToolNode[] = [];
@@ -174,56 +120,224 @@ function _groupToolsByAgent(
 
 function buildRoutingNodes(
 	data: FlowGraphResponse,
-	catalog: MetadataCatalogResponse | null,
 	expandedGroups: Set<string>,
 ): Node[] {
 	const nodes: Node[] = [];
 
-	// ── Intent nodes ──
-	data.intents.forEach((intent, i) => {
+	// Build tool groups for sizing calculations
+	const { groups } = _groupToolsByAgent(data);
+	const groupByAgent: Record<string, ToolGroupInfo> = {};
+	for (const g of groups) {
+		groupByAgent[g.agentId] = g;
+	}
+
+	// Build intent → agent mapping from edges
+	const agentsPerIntent: Record<string, string[]> = {};
+	const agentToIntent: Record<string, string> = {};
+	for (const edge of data.intent_agent_edges) {
+		const intentId = edge.source;
+		const agentNodeId = edge.target;
+		const agent = data.agents.find((a) => a.id === agentNodeId);
+		if (!agent) continue;
+		if (!agentsPerIntent[intentId]) agentsPerIntent[intentId] = [];
+		agentsPerIntent[intentId].push(agent.agent_id);
+		agentToIntent[agent.agent_id] = intentId;
+	}
+
+	// Find agents without any intent connection
+	const unconnectedAgents = data.agents.filter(
+		(a) => !agentToIntent[a.agent_id],
+	);
+
+	// Calculate tool group height for an agent
+	const getToolGroupHeight = (agentId: string): number => {
+		const group = groupByAgent[agentId];
+		if (!group) return 0;
+		const isExpanded = expandedGroups.has(agentId);
+		return isExpanded
+			? TOOL_GROUP_PAD_TOP + group.tools.length * TOOL_ROW_GAP + TOOL_GROUP_PAD_BOTTOM
+			: COLLAPSED_GROUP_HEIGHT;
+	};
+
+	// Calculate the height needed for an agent row (agent node + its tool group)
+	const getAgentRowHeight = (agentId: string): number => {
+		const toolH = getToolGroupHeight(agentId);
+		return Math.max(AGENT_NODE_HEIGHT, toolH);
+	};
+
+	// ── Hierarchical layout: iterate intents, place agents alongside ──
+	let currentY = 40;
+
+	for (const intent of data.intents) {
+		const connectedAgentIds = agentsPerIntent[intent.id] ?? [];
+		const connectedAgents = connectedAgentIds
+			.map((aid) => data.agents.find((a) => a.agent_id === aid))
+			.filter(Boolean) as FlowAgentNode[];
+
+		// Calculate total height of this intent group
+		let groupTotalHeight = 0;
+		for (const agent of connectedAgents) {
+			groupTotalHeight += getAgentRowHeight(agent.agent_id) + AGENT_VERTICAL_GAP;
+		}
+		if (connectedAgents.length > 0) {
+			groupTotalHeight -= AGENT_VERTICAL_GAP; // remove trailing gap
+		}
+		groupTotalHeight = Math.max(INTENT_NODE_HEIGHT, groupTotalHeight);
+
+		// Place intent node vertically centered relative to its agents
+		const intentY = connectedAgents.length > 0
+			? currentY + (groupTotalHeight - INTENT_NODE_HEIGHT) / 2
+			: currentY;
+
 		nodes.push({
 			id: intent.id,
 			type: "intentNode",
-			position: { x: INTENT_X, y: 40 + i * INTENT_ROW_GAP },
+			position: { x: INTENT_X, y: intentY },
 			data: { ...intent },
 			sourcePosition: Position.Right,
 			targetPosition: Position.Left,
 		});
-	});
 
-	// ── Agent nodes ──
-	data.agents.forEach((agent, i) => {
-		nodes.push({
-			id: agent.id,
-			type: "agentNode",
-			position: { x: AGENT_X, y: 20 + i * ROW_GAP },
-			data: { ...agent },
-			sourcePosition: Position.Right,
-			targetPosition: Position.Left,
-		});
-	});
+		// Place agents and their tool groups
+		let agentY = currentY;
+		for (const agent of connectedAgents) {
+			const rowHeight = getAgentRowHeight(agent.agent_id);
 
-	// ── Build tool groups ──
-	const { groups } = _groupToolsByAgent(data, catalog);
+			// Agent node centered in its row
+			nodes.push({
+				id: agent.id,
+				type: "agentNode",
+				position: { x: AGENT_X, y: agentY + (rowHeight - AGENT_NODE_HEIGHT) / 2 },
+				data: { ...agent },
+				sourcePosition: Position.Right,
+				targetPosition: Position.Left,
+			});
 
-	let currentY = 20;
+			// Tool group for this agent
+			const group = groupByAgent[agent.agent_id];
+			if (group) {
+				const isExpanded = expandedGroups.has(agent.agent_id);
+				const toolGroupHeight = getToolGroupHeight(agent.agent_id);
 
-	for (const group of groups) {
-		const isExpanded = expandedGroups.has(group.agentId);
-		const groupHeight = isExpanded
-			? TOOL_GROUP_PAD_TOP + group.tools.length * TOOL_ROW_GAP + TOOL_GROUP_PAD_BOTTOM
+				nodes.push({
+					id: `toolgroup:${agent.agent_id}`,
+					type: "toolGroupNode",
+					position: { x: TOOL_GROUP_X, y: agentY },
+					data: {
+						label: group.label,
+						agent_id: group.agentId,
+						tool_count: group.tools.length,
+						width: TOOL_NODE_WIDTH + 40,
+						height: toolGroupHeight,
+						expanded: isExpanded,
+					},
+					draggable: false,
+					selectable: false,
+				});
+
+				if (isExpanded) {
+					for (let j = 0; j < group.tools.length; j++) {
+						const tool = group.tools[j];
+						nodes.push({
+							id: tool.id,
+							type: "toolNode",
+							position: {
+								x: TOOL_X,
+								y: agentY + TOOL_GROUP_PAD_TOP + j * TOOL_ROW_GAP,
+							},
+							data: { ...tool },
+							sourcePosition: Position.Right,
+							targetPosition: Position.Left,
+							draggable: true,
+						});
+					}
+				}
+			}
+
+			agentY += rowHeight + AGENT_VERTICAL_GAP;
+		}
+
+		currentY += groupTotalHeight + INTENT_VERTICAL_GAP;
+	}
+
+	// Place unconnected agents at the bottom
+	if (unconnectedAgents.length > 0) {
+		currentY += 20; // extra spacing before unconnected section
+		for (const agent of unconnectedAgents) {
+			const rowHeight = getAgentRowHeight(agent.agent_id);
+
+			nodes.push({
+				id: agent.id,
+				type: "agentNode",
+				position: { x: AGENT_X, y: currentY },
+				data: { ...agent },
+				sourcePosition: Position.Right,
+				targetPosition: Position.Left,
+			});
+
+			const group = groupByAgent[agent.agent_id];
+			if (group) {
+				const isExpanded = expandedGroups.has(agent.agent_id);
+				const toolGroupHeight = getToolGroupHeight(agent.agent_id);
+
+				nodes.push({
+					id: `toolgroup:${agent.agent_id}`,
+					type: "toolGroupNode",
+					position: { x: TOOL_GROUP_X, y: currentY },
+					data: {
+						label: group.label,
+						agent_id: group.agentId,
+						tool_count: group.tools.length,
+						width: TOOL_NODE_WIDTH + 40,
+						height: toolGroupHeight,
+						expanded: isExpanded,
+					},
+					draggable: false,
+					selectable: false,
+				});
+
+				if (isExpanded) {
+					for (let j = 0; j < group.tools.length; j++) {
+						const tool = group.tools[j];
+						nodes.push({
+							id: tool.id,
+							type: "toolNode",
+							position: {
+								x: TOOL_X,
+								y: currentY + TOOL_GROUP_PAD_TOP + j * TOOL_ROW_GAP,
+							},
+							data: { ...tool },
+							sourcePosition: Position.Right,
+							targetPosition: Position.Left,
+							draggable: true,
+						});
+					}
+				}
+			}
+
+			currentY += rowHeight + AGENT_VERTICAL_GAP;
+		}
+	}
+
+	// Place "Övriga" tool group (unassigned tools) at the very bottom
+	const unassignedGroup = groupByAgent["__unassigned"];
+	if (unassignedGroup) {
+		currentY += 20;
+		const isExpanded = expandedGroups.has("__unassigned");
+		const toolGroupHeight = isExpanded
+			? TOOL_GROUP_PAD_TOP + unassignedGroup.tools.length * TOOL_ROW_GAP + TOOL_GROUP_PAD_BOTTOM
 			: COLLAPSED_GROUP_HEIGHT;
 
 		nodes.push({
-			id: `toolgroup:${group.agentId}`,
+			id: "toolgroup:__unassigned",
 			type: "toolGroupNode",
 			position: { x: TOOL_GROUP_X, y: currentY },
 			data: {
-				label: group.label,
-				agent_id: group.agentId,
-				tool_count: group.tools.length,
+				label: unassignedGroup.label,
+				agent_id: "__unassigned",
+				tool_count: unassignedGroup.tools.length,
 				width: TOOL_NODE_WIDTH + 40,
-				height: groupHeight,
+				height: toolGroupHeight,
 				expanded: isExpanded,
 			},
 			draggable: false,
@@ -231,8 +345,8 @@ function buildRoutingNodes(
 		});
 
 		if (isExpanded) {
-			for (let j = 0; j < group.tools.length; j++) {
-				const tool = group.tools[j];
+			for (let j = 0; j < unassignedGroup.tools.length; j++) {
+				const tool = unassignedGroup.tools[j];
 				nodes.push({
 					id: tool.id,
 					type: "toolNode",
@@ -247,8 +361,6 @@ function buildRoutingNodes(
 				});
 			}
 		}
-
-		currentY += groupHeight + TOOL_GROUP_GAP;
 	}
 
 	return nodes;
@@ -257,6 +369,7 @@ function buildRoutingNodes(
 function buildRoutingEdges(data: FlowGraphResponse, expandedGroups: Set<string>): Edge[] {
 	const edges: Edge[] = [];
 
+	// Intent → Agent edges (purple/primary, more visible)
 	data.intent_agent_edges.forEach((edge, i) => {
 		edges.push({
 			id: `ia-${i}`,
@@ -264,24 +377,28 @@ function buildRoutingEdges(data: FlowGraphResponse, expandedGroups: Set<string>)
 			target: edge.target,
 			type: "smoothstep",
 			animated: false,
-			style: { stroke: "hsl(var(--primary))", strokeWidth: 1.5, opacity: 0.5 },
+			style: { stroke: "hsl(263 70% 55%)", strokeWidth: 2, opacity: 0.7 },
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
-				color: "hsl(var(--primary))",
+				color: "hsl(263 70% 55%)",
 				width: 14,
 				height: 14,
 			},
 		});
 	});
 
-	// Only show agent→tool edges when the target tool's group is expanded
+	// Agent → Tool edges
+	// Track which agents have expanded tool groups and which don't
 	const expandedToolIds = new Set<string>();
+	const agentHasExpandedGroup = new Set<string>();
 	for (const tool of data.tools) {
 		if (expandedGroups.has(tool.agent_id)) {
 			expandedToolIds.add(tool.id);
+			agentHasExpandedGroup.add(tool.agent_id);
 		}
 	}
 
+	// When tool group is expanded: show individual agent→tool edges
 	data.agent_tool_edges.forEach((edge, i) => {
 		if (!expandedToolIds.has(edge.target)) return;
 		edges.push({
@@ -290,15 +407,44 @@ function buildRoutingEdges(data: FlowGraphResponse, expandedGroups: Set<string>)
 			target: edge.target,
 			type: "smoothstep",
 			animated: false,
-			style: { stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, opacity: 0.35 },
+			style: { stroke: "hsl(160 84% 39%)", strokeWidth: 1.5, opacity: 0.5 },
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
-				color: "hsl(var(--muted-foreground))",
+				color: "hsl(160 84% 39%)",
 				width: 10,
 				height: 10,
 			},
 		});
 	});
+
+	// When tool group is collapsed: show agent→toolgroup edge
+	const agentsWithCollapsedGroups = new Set<string>();
+	for (const agent of data.agents) {
+		if (!agentHasExpandedGroup.has(agent.agent_id)) {
+			// Check if agent has any tools at all
+			const hasTools = data.tools.some((t) => t.agent_id === agent.agent_id);
+			if (hasTools) agentsWithCollapsedGroups.add(agent.agent_id);
+		}
+	}
+	let collapsedIdx = 0;
+	for (const agentId of agentsWithCollapsedGroups) {
+		const agent = data.agents.find((a) => a.agent_id === agentId);
+		if (!agent) continue;
+		edges.push({
+			id: `atg-${collapsedIdx++}`,
+			source: agent.id,
+			target: `toolgroup:${agentId}`,
+			type: "smoothstep",
+			animated: false,
+			style: { stroke: "hsl(160 84% 39%)", strokeWidth: 1.5, opacity: 0.4, strokeDasharray: "4 3" },
+			markerEnd: {
+				type: MarkerType.ArrowClosed,
+				color: "hsl(160 84% 39%)",
+				width: 10,
+				height: 10,
+			},
+		});
+	}
 
 	return edges;
 }
@@ -580,10 +726,10 @@ export function FlowGraphPage() {
 			setNodes(buildPipelineNodes(graphData.pipeline_nodes));
 			setEdges(buildPipelineEdges(graphData.pipeline_edges, graphData.pipeline_nodes));
 		} else {
-			setNodes(buildRoutingNodes(graphData, catalogData, expandedGroups));
+			setNodes(buildRoutingNodes(graphData, expandedGroups));
 			setEdges(buildRoutingEdges(graphData, expandedGroups));
 		}
-	}, [graphData, catalogData, viewMode, expandedGroups, setNodes, setEdges]);
+	}, [graphData, viewMode, expandedGroups, setNodes, setEdges]);
 
 	// Close detail panel when data source or view mode changes (but NOT on expand/collapse)
 	useEffect(() => {
@@ -688,14 +834,14 @@ export function FlowGraphPage() {
 
 			// If dropped outside any group, or same group, snap back
 			if (!targetAgentId || targetAgentId === currentAgentId) {
-				setNodes(buildRoutingNodes(graphData, catalogData, expandedGroups));
+				setNodes(buildRoutingNodes(graphData, expandedGroups));
 				setEdges(buildRoutingEdges(graphData, expandedGroups));
 				return;
 			}
 
 			// Don't allow dropping into the unassigned group
 			if (targetAgentId === "__unassigned") {
-				setNodes(buildRoutingNodes(graphData, catalogData, expandedGroups));
+				setNodes(buildRoutingNodes(graphData, expandedGroups));
 				setEdges(buildRoutingEdges(graphData, expandedGroups));
 				toast.error("Kan inte flytta till 'Övriga' – tilldela en agent istället");
 				return;
@@ -739,11 +885,11 @@ export function FlowGraphPage() {
 				await fetchData();
 			} catch {
 				toast.error("Kunde inte flytta verktyg");
-				setNodes(buildRoutingNodes(graphData, catalogData, expandedGroups));
+				setNodes(buildRoutingNodes(graphData, expandedGroups));
 				setEdges(buildRoutingEdges(graphData, expandedGroups));
 			}
 		},
-		[graphData, catalogData, nodes, expandedGroups, fetchData, setNodes, setEdges],
+		[graphData, nodes, expandedGroups, fetchData, setNodes, setEdges],
 	);
 
 	const onPaneClick = useCallback(() => {

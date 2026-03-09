@@ -171,8 +171,8 @@ class AutoLoop:
     ) -> list[MetadataProposal]:
         """Create metadata change proposals (steps 4-5).
 
-        In production, each cluster would get LLM root-cause analysis
-        and the proposed fix would be tested for embedding delta.
+        Looks up the current tool description from the platform registry
+        so that embedding delta can be calculated.
 
         Args:
             clusters: Failure clusters from step 3.
@@ -181,7 +181,18 @@ class AutoLoop:
         Returns:
             List of metadata proposals.
         """
+        # Build tool description lookup from platform registry
+        tool_descriptions: dict[str, str] = {}
+        try:
+            from app.nexus.platform_bridge import get_platform_tools
+
+            for pt in get_platform_tools():
+                tool_descriptions[pt.tool_id] = pt.description
+        except Exception:
+            pass
+
         proposals: list[MetadataProposal] = []
+        seen_tool_ids: set[str] = set()
 
         for i, cluster in enumerate(clusters):
             if not cluster.tool_ids:
@@ -195,12 +206,22 @@ class AutoLoop:
 
             # Create a proposal for the primary tool in the confusion pair
             tool_id = cluster.tool_ids[0]
+            if tool_id in seen_tool_ids:
+                continue
+            seen_tool_ids.add(tool_id)
+
+            confused_with = (
+                cluster.tool_ids[1] if len(cluster.tool_ids) > 1 else "unknown"
+            )
+            current_desc = tool_descriptions.get(tool_id, "")
+
             proposals.append(
                 MetadataProposal(
                     tool_id=tool_id,
                     field_name="description",
-                    reason=root_cause
-                    or f"Confusion with {cluster.tool_ids[1] if len(cluster.tool_ids) > 1 else 'unknown'}",
+                    current_value=current_desc,
+                    proposed_value="",  # Populated after optimizer runs
+                    reason=root_cause or f"Confusion with {confused_with}",
                     embedding_delta=cluster.embedding_delta,
                 )
             )

@@ -155,7 +155,15 @@ def _get_sample_queries(catalog: list[dict]) -> list[tuple]:
         )
 
     # Riksdagen queries
-    riks_tools = by_cat.get("riksdagen", [])
+    riks_tools = (
+        by_cat.get("riksdagen", [])
+        + by_cat.get("riksdagen_dokument", [])
+        + by_cat.get("riksdagen_anforanden", [])
+        + by_cat.get("riksdagen_voteringar", [])
+        + by_cat.get("riksdagen_ledamoter", [])
+        + by_cat.get("riksdagen_kalender", [])
+        + by_cat.get("riksdagen_status", [])
+    )
     if riks_tools:
         dok = next(
             (t for t in riks_tools if t["tool_id"] == "riksdag_dokument"), riks_tools[0]
@@ -298,17 +306,17 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
     now = datetime.now(tz=UTC)
     counts: dict[str, int] = {}
 
-    # 1. Zone configs (aligned with real platform intents)
-    # Remove old/stale zone configs that don't match current ZONE_PREFIXES
+    # 1. Zone configs (all 17 domain zones)
+    from app.nexus.config import get_all_zone_prefixes
 
-    from app.nexus.config import ZONE_PREFIXES
+    all_zone_prefixes = get_all_zone_prefixes()
 
     old_zones = await session.execute(select(NexusZoneConfig))
     for old_zone in old_zones.scalars().all():
-        if old_zone.zone not in ZONE_PREFIXES:
+        if old_zone.zone not in all_zone_prefixes:
             await session.delete(old_zone)
 
-    for zone, prefix in ZONE_PREFIXES.items():
+    for zone, prefix in all_zone_prefixes.items():
         zc = NexusZoneConfig(
             zone=zone,
             prefix_token=prefix,
@@ -320,7 +328,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             last_reindexed=now - timedelta(hours=random.randint(1, 48)),
         )
         await session.merge(zc)
-    counts["zone_configs"] = len(ZONE_PREFIXES)
+    counts["zone_configs"] = len(all_zone_prefixes)
 
     # 2. Load real tool catalog
     tool_catalog = _get_tool_catalog()
@@ -349,12 +357,9 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
     counts["routing_events"] = n_events
 
     # 4. Space snapshots — ALL real tools (not just a sample)
-    zone_centers = {
-        "kunskap": (-1.0, 1.5),
-        "skapande": (2.0, -1.0),
-        "jämförelse": (3.0, 2.0),
-        "konversation": (-3.0, -2.0),
-    }
+    from app.nexus.service import _all_zone_centers
+
+    zone_centers = _all_zone_centers()
     # Exclude external_model tools from space snapshots
     snapshot_tools = [t for t in tool_catalog if t.get("category") != "external_model"]
     for tool in snapshot_tools:
@@ -431,8 +436,8 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
         session.add(metric)
     counts["pipeline_metrics"] = len(stages)
 
-    # 7. Calibration params (per real zone/intent)
-    for zone in ZONE_PREFIXES:
+    # 7. Calibration params (per zone — all 17 domains)
+    for zone in all_zone_prefixes:
         cal = NexusCalibrationParam(
             zone=zone,
             calibration_method="platt",
@@ -445,7 +450,7 @@ async def seed_nexus_data(session: AsyncSession) -> dict:
             is_active=True,
         )
         session.add(cal)
-    counts["calibration_params"] = len(ZONE_PREFIXES)
+    counts["calibration_params"] = len(all_zone_prefixes)
 
     # 8. Dark matter queries
     for q_text, energy in OOD_QUERIES:

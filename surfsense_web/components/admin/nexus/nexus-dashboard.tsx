@@ -26,6 +26,13 @@ import {
 } from "@/lib/apis/nexus-api.service";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { ThumbsUp, ThumbsDown, ExternalLink, Settings } from "lucide-react";
 import Link from "next/link";
 import { DarkMatterPanel } from "@/components/admin/nexus/shared/dark-matter-panel";
@@ -336,7 +343,7 @@ function OverviewTab() {
 								/>
 								<StatusCard
 									label="Reranker Delta"
-									value={metrics.reranker_delta != null ? `+${(metrics.reranker_delta * 100).toFixed(1)}pp` : "—"}
+									value={metrics.reranker_delta != null ? `${metrics.reranker_delta >= 0 ? "+" : ""}${(metrics.reranker_delta * 100).toFixed(1)}pp` : "—"}
 									color={metrics.reranker_delta != null && metrics.reranker_delta > 0.12 ? "green" : undefined}
 								/>
 								<StatusCard
@@ -673,6 +680,7 @@ function CalibrationPanel() {
 	const [params, setParams] = useState<CalibrationParamsResponse[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [fitting, setFitting] = useState(false);
+	const [fitZone, setFitZone] = useState<string>("__all__");
 
 	const fetchData = () => {
 		setLoading(true);
@@ -694,32 +702,50 @@ function CalibrationPanel() {
 
 	const handleFit = () => {
 		setFitting(true);
+		const opts = fitZone === "__all__" ? {} : { zone: fitZone };
 		nexusApiService
-			.fitCalibration()
+			.fitCalibration(opts)
 			.then(() => fetchData())
 			.catch(() => {})
 			.finally(() => setFitting(false));
 	};
 
+	const availableZones = ece ? Object.keys(ece.per_zone).sort() : [];
+
 	return (
 		<Card>
 			<CardHeader className="flex flex-row items-center justify-between">
 				<CardTitle>Kalibrering</CardTitle>
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={handleFit}
-					disabled={fitting}
-				>
-					{fitting ? (
-						<>
-							<Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-							Kalibrerar...
-						</>
-					) : (
-						"Kalibrera Platt"
-					)}
-				</Button>
+				<div className="flex items-center gap-2">
+					<Select value={fitZone} onValueChange={setFitZone}>
+						<SelectTrigger className="w-[160px] h-8 text-xs">
+							<SelectValue placeholder="Välj zon" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="__all__">Alla (global)</SelectItem>
+							{availableZones.map((z) => (
+								<SelectItem key={z} value={z}>
+									{z}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={handleFit}
+						disabled={fitting}
+					>
+						{fitting ? (
+							<>
+								<Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+								Kalibrerar...
+							</>
+						) : (
+							"Kalibrera Platt"
+						)}
+					</Button>
+				</div>
 			</CardHeader>
 			<CardContent>
 				{loading ? (

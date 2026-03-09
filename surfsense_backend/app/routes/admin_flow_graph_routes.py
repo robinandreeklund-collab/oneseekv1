@@ -1,26 +1,33 @@
-"""Admin endpoint that returns the LangGraph pipeline graph and routing data."""
+"""Admin endpoint that returns the LangGraph pipeline graph and routing data.
+
+All routing data (intents, agents, tools) is served from the DB-backed
+``GraphRegistry`` hierarchy.  Mutations write to the new IntentDomain /
+DomainAgentDefinition / AgentToolDefinition tables, bump the registry
+version, and send PG NOTIFY so all workers pick up the change.
+"""
 
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.db import (
-    SearchSpaceMembership,
-    User,
-    get_async_session,
+from app.db import SearchSpaceMembership, User, get_async_session
+from app.services.agent_definition_service import (
+    delete_agent as delete_agent_def,
+    get_agent as get_agent_def,
+    upsert_agent as upsert_agent_def,
 )
-from app.services.agent_metadata_service import (
-    get_effective_agent_metadata,
-    upsert_global_agent_metadata_overrides,
+from app.services.graph_holder import GraphHolder
+from app.services.graph_registry_service import RegistryCache, load_graph_registry
+from app.services.intent_domain_service import (
+    delete_intent_domain,
+    upsert_intent_domain,
 )
-from app.services.intent_definition_service import (
-    get_effective_intent_definitions,
-    upsert_global_intent_definition_overrides,
-)
+from app.services.registry_events import bump_registry_version, notify_registry_changed
+from app.services.tool_definition_service import upsert_tool as upsert_tool_def
 from app.users import current_active_user
 
 logger = logging.getLogger(__name__)
@@ -470,103 +477,411 @@ _PIPELINE_NODES: list[dict[str, Any]] = [
 
 _PIPELINE_EDGES: list[dict[str, Any]] = [
     # ── Main flow ──
-    {"source": "node:resolve_intent", "target": "node:memory_context", "type": "normal"},
+    {
+        "source": "node:resolve_intent",
+        "target": "node:memory_context",
+        "type": "normal",
+    },
     # ── Conditional from memory_context (route_after_intent) ──
-    {"source": "node:memory_context", "target": "node:smalltalk", "type": "conditional", "label": "konversation"},
-    {"source": "node:memory_context", "target": "node:multi_query_decomposer", "type": "conditional", "label": "komplex"},
-    {"source": "node:memory_context", "target": "node:agent_resolver", "type": "conditional", "label": "default"},
-    {"source": "node:memory_context", "target": "node:tool_resolver", "type": "conditional", "label": "enkel"},
-    {"source": "node:memory_context", "target": "node:synthesis_hitl", "type": "conditional", "label": "finalize"},
+    {
+        "source": "node:memory_context",
+        "target": "node:smalltalk",
+        "type": "conditional",
+        "label": "konversation",
+    },
+    {
+        "source": "node:memory_context",
+        "target": "node:multi_query_decomposer",
+        "type": "conditional",
+        "label": "komplex",
+    },
+    {
+        "source": "node:memory_context",
+        "target": "node:agent_resolver",
+        "type": "conditional",
+        "label": "default",
+    },
+    {
+        "source": "node:memory_context",
+        "target": "node:tool_resolver",
+        "type": "conditional",
+        "label": "enkel",
+    },
+    {
+        "source": "node:memory_context",
+        "target": "node:synthesis_hitl",
+        "type": "conditional",
+        "label": "finalize",
+    },
     # ── Multi-query decomposer → speculative ──
-    {"source": "node:multi_query_decomposer", "target": "node:speculative", "type": "normal"},
+    {
+        "source": "node:multi_query_decomposer",
+        "target": "node:speculative",
+        "type": "normal",
+    },
     # ── Speculative → planning ──
     {"source": "node:speculative", "target": "node:agent_resolver", "type": "normal"},
     # ── Planning flow ──
     {"source": "node:agent_resolver", "target": "node:planner", "type": "normal"},
     {"source": "node:planner", "target": "node:planner_hitl_gate", "type": "normal"},
-    {"source": "node:planner_hitl_gate", "target": "node:tool_resolver", "type": "conditional", "label": "godkänd"},
+    {
+        "source": "node:planner_hitl_gate",
+        "target": "node:tool_resolver",
+        "type": "conditional",
+        "label": "godkänd",
+    },
     # ── Tool resolution → domain planner → execution ──
-    {"source": "node:tool_resolver", "target": "node:speculative_merge", "type": "normal"},
-    {"source": "node:speculative_merge", "target": "node:execution_router", "type": "normal"},
-    {"source": "node:execution_router", "target": "node:domain_planner", "type": "normal"},
-    {"source": "node:domain_planner", "target": "node:execution_hitl_gate", "type": "normal"},
-    {"source": "node:execution_hitl_gate", "target": "node:executor", "type": "conditional", "label": "godkänd"},
+    {
+        "source": "node:tool_resolver",
+        "target": "node:speculative_merge",
+        "type": "normal",
+    },
+    {
+        "source": "node:speculative_merge",
+        "target": "node:execution_router",
+        "type": "normal",
+    },
+    {
+        "source": "node:execution_router",
+        "target": "node:domain_planner",
+        "type": "normal",
+    },
+    {
+        "source": "node:domain_planner",
+        "target": "node:execution_hitl_gate",
+        "type": "normal",
+    },
+    {
+        "source": "node:execution_hitl_gate",
+        "target": "node:executor",
+        "type": "conditional",
+        "label": "godkänd",
+    },
     # ── Executor loop ──
-    {"source": "node:executor", "target": "node:tools", "type": "conditional", "label": "tool_calls"},
-    {"source": "node:executor", "target": "node:critic", "type": "conditional", "label": "svar klart"},
+    {
+        "source": "node:executor",
+        "target": "node:tools",
+        "type": "conditional",
+        "label": "tool_calls",
+    },
+    {
+        "source": "node:executor",
+        "target": "node:critic",
+        "type": "conditional",
+        "label": "svar klart",
+    },
     # ── Tool processing chain ──
     {"source": "node:tools", "target": "node:post_tools", "type": "normal"},
     {"source": "node:post_tools", "target": "node:artifact_indexer", "type": "normal"},
-    {"source": "node:artifact_indexer", "target": "node:context_compactor", "type": "normal"},
-    {"source": "node:context_compactor", "target": "node:orchestration_guard", "type": "normal"},
+    {
+        "source": "node:artifact_indexer",
+        "target": "node:context_compactor",
+        "type": "normal",
+    },
+    {
+        "source": "node:context_compactor",
+        "target": "node:orchestration_guard",
+        "type": "normal",
+    },
     {"source": "node:orchestration_guard", "target": "node:critic", "type": "normal"},
     # ── P4: Subagent Mini-Graph edges ──
-    {"source": "node:domain_planner", "target": "node:subagent_spawner", "type": "conditional", "label": "P4 subagent"},
-    {"source": "node:subagent_spawner", "target": "node:mini_planner", "type": "normal"},
+    {
+        "source": "node:domain_planner",
+        "target": "node:subagent_spawner",
+        "type": "conditional",
+        "label": "P4 subagent",
+    },
+    {
+        "source": "node:subagent_spawner",
+        "target": "node:mini_planner",
+        "type": "normal",
+    },
     {"source": "node:mini_planner", "target": "node:semantic_cache", "type": "normal"},
-    {"source": "node:semantic_cache", "target": "node:mini_synthesizer", "type": "conditional", "label": "cache hit"},
-    {"source": "node:semantic_cache", "target": "node:mini_executor", "type": "conditional", "label": "cache miss"},
+    {
+        "source": "node:semantic_cache",
+        "target": "node:mini_synthesizer",
+        "type": "conditional",
+        "label": "cache hit",
+    },
+    {
+        "source": "node:semantic_cache",
+        "target": "node:mini_executor",
+        "type": "conditional",
+        "label": "cache miss",
+    },
     {"source": "node:mini_executor", "target": "node:mini_critic", "type": "normal"},
     {"source": "node:mini_critic", "target": "node:adaptive_guard", "type": "normal"},
-    {"source": "node:adaptive_guard", "target": "node:mini_synthesizer", "type": "conditional", "label": "ok / budget slut"},
-    {"source": "node:adaptive_guard", "target": "node:mini_executor", "type": "conditional", "label": "retry"},
-    {"source": "node:mini_critic", "target": "node:pev_verify", "type": "conditional", "label": "PEV aktivt"},
-    {"source": "node:pev_verify", "target": "node:mini_synthesizer", "type": "conditional", "label": "verified"},
-    {"source": "node:pev_verify", "target": "node:mini_executor", "type": "conditional", "label": "deviation"},
-    {"source": "node:mini_synthesizer", "target": "node:convergence_node", "type": "normal"},
+    {
+        "source": "node:adaptive_guard",
+        "target": "node:mini_synthesizer",
+        "type": "conditional",
+        "label": "ok / budget slut",
+    },
+    {
+        "source": "node:adaptive_guard",
+        "target": "node:mini_executor",
+        "type": "conditional",
+        "label": "retry",
+    },
+    {
+        "source": "node:mini_critic",
+        "target": "node:pev_verify",
+        "type": "conditional",
+        "label": "PEV aktivt",
+    },
+    {
+        "source": "node:pev_verify",
+        "target": "node:mini_synthesizer",
+        "type": "conditional",
+        "label": "verified",
+    },
+    {
+        "source": "node:pev_verify",
+        "target": "node:mini_executor",
+        "type": "conditional",
+        "label": "deviation",
+    },
+    {
+        "source": "node:mini_synthesizer",
+        "target": "node:convergence_node",
+        "type": "normal",
+    },
     {"source": "node:convergence_node", "target": "node:critic", "type": "normal"},
     # ── Compare Supervisor v2 edges ──
     # Flow: Intent → Planner → Spawner → [Domain Pods × 8 parallel] → [Criterion Pods × 4 per domain] → Convergence → Synthesizer
-    {"source": "node:resolve_intent", "target": "node:compare_domain_planner", "type": "conditional", "label": "jämförelse"},
-    {"source": "node:compare_domain_planner", "target": "node:compare_subagent_spawner", "type": "normal"},
+    {
+        "source": "node:resolve_intent",
+        "target": "node:compare_domain_planner",
+        "type": "conditional",
+        "label": "jämförelse",
+    },
+    {
+        "source": "node:compare_domain_planner",
+        "target": "node:compare_subagent_spawner",
+        "type": "normal",
+    },
     # Spawner creates 8 domain pods in parallel (asyncio.gather)
-    {"source": "node:compare_subagent_spawner", "target": "node:compare_domain_pod", "type": "normal", "label": "×8 parallel"},
-    {"source": "node:compare_subagent_spawner", "target": "node:compare_research", "type": "normal", "label": "parallel"},
-    {"source": "node:compare_subagent_spawner", "target": "node:compare_mini_critic", "type": "normal"},
-    {"source": "node:compare_mini_critic", "target": "node:compare_subagent_spawner", "type": "conditional", "label": "retry"},
-    {"source": "node:compare_mini_critic", "target": "node:compare_convergence", "type": "conditional", "label": "ok"},
+    {
+        "source": "node:compare_subagent_spawner",
+        "target": "node:compare_domain_pod",
+        "type": "normal",
+        "label": "×8 parallel",
+    },
+    {
+        "source": "node:compare_subagent_spawner",
+        "target": "node:compare_research",
+        "type": "normal",
+        "label": "parallel",
+    },
+    {
+        "source": "node:compare_subagent_spawner",
+        "target": "node:compare_mini_critic",
+        "type": "normal",
+    },
+    {
+        "source": "node:compare_mini_critic",
+        "target": "node:compare_subagent_spawner",
+        "type": "conditional",
+        "label": "retry",
+    },
+    {
+        "source": "node:compare_mini_critic",
+        "target": "node:compare_convergence",
+        "type": "conditional",
+        "label": "ok",
+    },
     # Domain pod → model_response_ready → 4 criterion pods (parallel)
-    {"source": "node:compare_domain_pod", "target": "node:compare_eval_relevans", "type": "normal", "label": "spawn pod"},
-    {"source": "node:compare_domain_pod", "target": "node:compare_eval_djup", "type": "normal", "label": "spawn pod"},
-    {"source": "node:compare_domain_pod", "target": "node:compare_eval_klarhet", "type": "normal", "label": "spawn pod"},
-    {"source": "node:compare_domain_pod", "target": "node:compare_eval_korrekthet", "type": "normal", "label": "spawn pod"},
+    {
+        "source": "node:compare_domain_pod",
+        "target": "node:compare_eval_relevans",
+        "type": "normal",
+        "label": "spawn pod",
+    },
+    {
+        "source": "node:compare_domain_pod",
+        "target": "node:compare_eval_djup",
+        "type": "normal",
+        "label": "spawn pod",
+    },
+    {
+        "source": "node:compare_domain_pod",
+        "target": "node:compare_eval_klarhet",
+        "type": "normal",
+        "label": "spawn pod",
+    },
+    {
+        "source": "node:compare_domain_pod",
+        "target": "node:compare_eval_korrekthet",
+        "type": "normal",
+        "label": "spawn pod",
+    },
     # Criterion pods complete → convergence
-    {"source": "node:compare_eval_relevans", "target": "node:compare_convergence", "type": "normal"},
-    {"source": "node:compare_eval_djup", "target": "node:compare_convergence", "type": "normal"},
-    {"source": "node:compare_eval_klarhet", "target": "node:compare_convergence", "type": "normal"},
-    {"source": "node:compare_eval_korrekthet", "target": "node:compare_convergence", "type": "normal"},
-    {"source": "node:compare_research", "target": "node:compare_convergence", "type": "normal"},
-    {"source": "node:compare_convergence", "target": "node:compare_synthesizer", "type": "normal"},
+    {
+        "source": "node:compare_eval_relevans",
+        "target": "node:compare_convergence",
+        "type": "normal",
+    },
+    {
+        "source": "node:compare_eval_djup",
+        "target": "node:compare_convergence",
+        "type": "normal",
+    },
+    {
+        "source": "node:compare_eval_klarhet",
+        "target": "node:compare_convergence",
+        "type": "normal",
+    },
+    {
+        "source": "node:compare_eval_korrekthet",
+        "target": "node:compare_convergence",
+        "type": "normal",
+    },
+    {
+        "source": "node:compare_research",
+        "target": "node:compare_convergence",
+        "type": "normal",
+    },
+    {
+        "source": "node:compare_convergence",
+        "target": "node:compare_synthesizer",
+        "type": "normal",
+    },
     # ── Debate Supervisor v1 edges ──
     # Flow: Intent → Domain Planner → Round Executor → Convergence → Synthesizer → END
-    {"source": "node:resolve_intent", "target": "node:debate_domain_planner", "type": "conditional", "label": "debatt"},
-    {"source": "node:debate_domain_planner", "target": "node:debate_round_executor", "type": "normal"},
-    {"source": "node:debate_domain_planner", "target": "node:debate_oneseek_agent", "type": "normal", "label": "OneSeek"},
-    {"source": "node:debate_oneseek_agent", "target": "node:debate_round_1", "type": "normal", "label": "deltar i rundor"},
+    {
+        "source": "node:resolve_intent",
+        "target": "node:debate_domain_planner",
+        "type": "conditional",
+        "label": "debatt",
+    },
+    {
+        "source": "node:debate_domain_planner",
+        "target": "node:debate_round_executor",
+        "type": "normal",
+    },
+    {
+        "source": "node:debate_domain_planner",
+        "target": "node:debate_oneseek_agent",
+        "type": "normal",
+        "label": "OneSeek",
+    },
+    {
+        "source": "node:debate_oneseek_agent",
+        "target": "node:debate_round_1",
+        "type": "normal",
+        "label": "deltar i rundor",
+    },
     # Round executor runs 4 sequential sub-rounds internally
-    {"source": "node:debate_round_executor", "target": "node:debate_round_1", "type": "normal", "label": "runda 1"},
-    {"source": "node:debate_round_1", "target": "node:debate_round_2", "type": "normal"},
-    {"source": "node:debate_round_2", "target": "node:debate_round_3", "type": "normal"},
-    {"source": "node:debate_round_3", "target": "node:debate_round_4_voting", "type": "normal"},
-    {"source": "node:debate_round_4_voting", "target": "node:debate_convergence", "type": "normal"},
-    {"source": "node:debate_convergence", "target": "node:debate_synthesizer", "type": "normal"},
+    {
+        "source": "node:debate_round_executor",
+        "target": "node:debate_round_1",
+        "type": "normal",
+        "label": "runda 1",
+    },
+    {
+        "source": "node:debate_round_1",
+        "target": "node:debate_round_2",
+        "type": "normal",
+    },
+    {
+        "source": "node:debate_round_2",
+        "target": "node:debate_round_3",
+        "type": "normal",
+    },
+    {
+        "source": "node:debate_round_3",
+        "target": "node:debate_round_4_voting",
+        "type": "normal",
+    },
+    {
+        "source": "node:debate_round_4_voting",
+        "target": "node:debate_convergence",
+        "type": "normal",
+    },
+    {
+        "source": "node:debate_convergence",
+        "target": "node:debate_synthesizer",
+        "type": "normal",
+    },
     # Voice pipeline runs inline during rounds (Strategy B pipelining)
-    {"source": "node:debate_round_executor", "target": "node:debate_voice_pipeline", "type": "conditional", "label": "/dvoice"},
+    {
+        "source": "node:debate_round_executor",
+        "target": "node:debate_voice_pipeline",
+        "type": "conditional",
+        "label": "/dvoice",
+    },
     # ── Critic decisions ──
-    {"source": "node:critic", "target": "node:synthesis_hitl", "type": "conditional", "label": "ok"},
-    {"source": "node:critic", "target": "node:tool_resolver", "type": "conditional", "label": "needs_more"},
-    {"source": "node:critic", "target": "node:planner", "type": "conditional", "label": "replan"},
+    {
+        "source": "node:critic",
+        "target": "node:synthesis_hitl",
+        "type": "conditional",
+        "label": "ok",
+    },
+    {
+        "source": "node:critic",
+        "target": "node:tool_resolver",
+        "type": "conditional",
+        "label": "needs_more",
+    },
+    {
+        "source": "node:critic",
+        "target": "node:planner",
+        "type": "conditional",
+        "label": "replan",
+    },
     # ── Synthesis → response layer ──
-    {"source": "node:synthesis_hitl", "target": "node:progressive_synthesizer", "type": "conditional", "label": "komplex"},
-    {"source": "node:synthesis_hitl", "target": "node:synthesizer", "type": "conditional", "label": "enkel"},
-    {"source": "node:progressive_synthesizer", "target": "node:synthesizer", "type": "normal"},
-    {"source": "node:synthesizer", "target": "node:response_layer_router", "type": "normal"},
-    {"source": "node:response_layer_router", "target": "node:response_layer", "type": "normal"},
+    {
+        "source": "node:synthesis_hitl",
+        "target": "node:progressive_synthesizer",
+        "type": "conditional",
+        "label": "komplex",
+    },
+    {
+        "source": "node:synthesis_hitl",
+        "target": "node:synthesizer",
+        "type": "conditional",
+        "label": "enkel",
+    },
+    {
+        "source": "node:progressive_synthesizer",
+        "target": "node:synthesizer",
+        "type": "normal",
+    },
+    {
+        "source": "node:synthesizer",
+        "target": "node:response_layer_router",
+        "type": "normal",
+    },
+    {
+        "source": "node:response_layer_router",
+        "target": "node:response_layer",
+        "type": "normal",
+    },
     # ── Response Layer → per-mode nodes (conditional) ──
-    {"source": "node:response_layer", "target": "node:response_layer_kunskap", "type": "conditional", "label": "kunskap"},
-    {"source": "node:response_layer", "target": "node:response_layer_analys", "type": "conditional", "label": "analys"},
-    {"source": "node:response_layer", "target": "node:response_layer_syntes", "type": "conditional", "label": "syntes"},
-    {"source": "node:response_layer", "target": "node:response_layer_visualisering", "type": "conditional", "label": "visualisering"},
+    {
+        "source": "node:response_layer",
+        "target": "node:response_layer_kunskap",
+        "type": "conditional",
+        "label": "kunskap",
+    },
+    {
+        "source": "node:response_layer",
+        "target": "node:response_layer_analys",
+        "type": "conditional",
+        "label": "analys",
+    },
+    {
+        "source": "node:response_layer",
+        "target": "node:response_layer_syntes",
+        "type": "conditional",
+        "label": "syntes",
+    },
+    {
+        "source": "node:response_layer",
+        "target": "node:response_layer_visualisering",
+        "type": "conditional",
+        "label": "visualisering",
+    },
 ]
 
 # Stage metadata for frontend grouping and coloring
@@ -613,87 +928,106 @@ async def get_flow_graph(
     """Return the LangGraph pipeline graph and intent → agent → tool routing data.
 
     All routing data (intents, agents, tools, edges) is built dynamically from
-    DB-backed services — nothing is hardcoded.
+    the DB-backed GraphRegistry hierarchy.
     """
     await _require_admin(session, user)
 
-    # ── Read from DB ──
-    intents = await get_effective_intent_definitions(session)
-    agents = await get_effective_agent_metadata(session)
+    registry = await load_graph_registry(session)
 
-    # ── Build intent nodes ──
+    # ── Build intent nodes from registry domains ──
     intent_nodes: list[dict[str, Any]] = []
-    for intent in intents:
-        intent_id = intent.get("intent_id", "")
-        intent_nodes.append({
-            "id": f"intent:{intent_id}",
-            "type": "intent",
-            "intent_id": intent_id,
-            "label": intent.get("label", intent_id),
-            "description": intent.get("description", ""),
-            "route": intent.get("route", ""),
-            "keywords": intent.get("keywords", []),
-            "priority": intent.get("priority", 500),
-            "enabled": intent.get("enabled", True),
-            "main_identifier": intent.get("main_identifier", ""),
-            "core_activity": intent.get("core_activity", ""),
-            "unique_scope": intent.get("unique_scope", ""),
-            "geographic_scope": intent.get("geographic_scope", ""),
-            "excludes": intent.get("excludes", []),
-        })
-    intent_ids = {intent.get("intent_id", "") for intent in intents}
+    intent_ids: set[str] = set()
+    for domain in registry.domains:
+        domain_id = domain.get("domain_id", "")
+        if not domain_id:
+            continue
+        intent_ids.add(domain_id)
+        # Each domain IS its own route in the new system.
+        # fallback_route is kept for backward compat with the 4-route enum.
+        intent_nodes.append(
+            {
+                "id": f"intent:{domain_id}",
+                "type": "intent",
+                "intent_id": domain_id,
+                "label": domain.get("label", domain_id),
+                "description": domain.get("description", ""),
+                "route": domain_id,
+                "keywords": domain.get("keywords", []),
+                "priority": domain.get("priority", 500),
+                "enabled": domain.get("enabled", True),
+                "main_identifier": domain.get("main_identifier", ""),
+                "core_activity": domain.get("core_activity", ""),
+                "unique_scope": domain.get("unique_scope", ""),
+                "geographic_scope": domain.get("geographic_scope", ""),
+                "excludes": domain.get("excludes", []),
+            }
+        )
 
-    # ── Build agent nodes & intent→agent edges from agent.routes ──
+    # ── Build agent nodes & intent→agent edges ──
     agent_nodes: list[dict[str, Any]] = []
     intent_agent_edges: list[dict[str, str]] = []
-    for agent in agents:
-        agent_id = agent.get("agent_id", "")
-        agent_nodes.append({
-            "id": f"agent:{agent_id}",
-            "type": "agent",
-            "agent_id": agent_id,
-            "label": agent.get("label", agent_id),
-            "description": agent.get("description", ""),
-            "keywords": agent.get("keywords", []),
-            "prompt_key": agent.get("prompt_key", ""),
-            "namespace": agent.get("namespace", []),
-            "routes": agent.get("routes", []),
-            "main_identifier": agent.get("main_identifier", ""),
-            "core_activity": agent.get("core_activity", ""),
-            "unique_scope": agent.get("unique_scope", ""),
-            "geographic_scope": agent.get("geographic_scope", ""),
-            "excludes": agent.get("excludes", []),
-        })
-        for route_id in agent.get("routes", []):
-            if route_id in intent_ids:
-                intent_agent_edges.append({
-                    "source": f"intent:{route_id}",
-                    "target": f"agent:{agent_id}",
-                })
+    for domain_id, agents in (registry.agents_by_domain or {}).items():
+        for agent in agents:
+            agent_id = agent.get("agent_id", "")
+            if not agent_id:
+                continue
+            # In the new system, domain_id is the single route association
+            routes = [domain_id] if domain_id else []
+            # Flatten primary_namespaces to a flat list for the UI
+            raw_ns = agent.get("primary_namespaces") or []
+            namespace = raw_ns[0] if raw_ns else ["agents", agent_id]
+            agent_nodes.append(
+                {
+                    "id": f"agent:{agent_id}",
+                    "type": "agent",
+                    "agent_id": agent_id,
+                    "label": agent.get("label", agent_id),
+                    "description": agent.get("description", ""),
+                    "keywords": agent.get("keywords", []),
+                    "prompt_key": agent.get("prompt_key", ""),
+                    "namespace": namespace,
+                    "routes": routes,
+                    "main_identifier": agent.get("main_identifier", ""),
+                    "core_activity": agent.get("core_activity", ""),
+                    "unique_scope": agent.get("unique_scope", ""),
+                    "geographic_scope": agent.get("geographic_scope", ""),
+                    "excludes": agent.get("excludes", []),
+                }
+            )
+            if domain_id in intent_ids:
+                intent_agent_edges.append(
+                    {
+                        "source": f"intent:{domain_id}",
+                        "target": f"agent:{agent_id}",
+                    }
+                )
 
-    # ── Build tool nodes & agent→tool edges from agent.flow_tools ──
+    # ── Build tool nodes & agent→tool edges from registry ──
     tool_nodes: list[dict[str, Any]] = []
     agent_tool_edges: list[dict[str, str]] = []
     seen_tools: set[str] = set()
-    for agent in agents:
-        agent_id = agent.get("agent_id", "")
-        for tool_entry in agent.get("flow_tools", []):
-            tool_id = tool_entry.get("tool_id", "")
+    for agent_id, tools in (registry.tools_by_agent or {}).items():
+        for tool in tools:
+            tool_id = tool.get("tool_id", "")
             if not tool_id:
                 continue
             if tool_id not in seen_tools:
                 seen_tools.add(tool_id)
-                tool_nodes.append({
-                    "id": f"tool:{tool_id}",
-                    "type": "tool",
-                    "tool_id": tool_id,
-                    "label": tool_entry.get("label", tool_id),
-                    "agent_id": agent_id,
-                })
-            agent_tool_edges.append({
-                "source": f"agent:{agent_id}",
-                "target": f"tool:{tool_id}",
-            })
+                tool_nodes.append(
+                    {
+                        "id": f"tool:{tool_id}",
+                        "type": "tool",
+                        "tool_id": tool_id,
+                        "label": tool.get("label", tool_id),
+                        "agent_id": agent_id,
+                    }
+                )
+            agent_tool_edges.append(
+                {
+                    "source": f"agent:{agent_id}",
+                    "target": f"tool:{tool_id}",
+                }
+            )
 
     return {
         # Pipeline (LangGraph execution flow)
@@ -766,15 +1100,35 @@ class DeleteIntentRequest(BaseModel):
     intent_id: str
 
 
+async def _bump_and_invalidate(session: AsyncSession) -> None:
+    """Bump registry version, commit, notify, and invalidate caches."""
+    new_version = await bump_registry_version(session)
+    await session.commit()
+    await notify_registry_changed(session, new_version)
+    await RegistryCache.invalidate()
+    await GraphHolder.invalidate()
+
+
 @router.put("/flow-graph/agent")
 async def upsert_agent(
     request: UpsertAgentRequest,
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Create or update an agent definition."""
+    """Create or update an agent definition in the registry."""
     await _require_admin(session, user)
-    payload: dict[str, Any] = {}
+
+    # Resolve domain_id from routes (first route = primary domain)
+    domain_id = ""
+    if request.routes:
+        domain_id = request.routes[0]
+    else:
+        # Check existing agent for its current domain_id
+        existing = await get_agent_def(session, request.agent_id)
+        if existing:
+            domain_id = existing.get("domain_id", "")
+
+    payload: dict[str, Any] = {"domain_id": domain_id}
     if request.label is not None:
         payload["label"] = request.label
     if request.description is not None:
@@ -784,11 +1138,7 @@ async def upsert_agent(
     if request.prompt_key is not None:
         payload["prompt_key"] = request.prompt_key
     if request.namespace is not None:
-        payload["namespace"] = request.namespace
-    if request.routes is not None:
-        payload["routes"] = request.routes
-    if request.flow_tools is not None:
-        payload["flow_tools"] = [t.model_dump() for t in request.flow_tools]
+        payload["primary_namespaces"] = [request.namespace] if request.namespace else []
     if request.main_identifier is not None:
         payload["main_identifier"] = request.main_identifier
     if request.core_activity is not None:
@@ -799,12 +1149,25 @@ async def upsert_agent(
         payload["geographic_scope"] = request.geographic_scope
     if request.excludes is not None:
         payload["excludes"] = request.excludes
-    await upsert_global_agent_metadata_overrides(
-        session,
-        [(request.agent_id, payload)],
-        updated_by_id=str(user.id),
+
+    await upsert_agent_def(
+        session, request.agent_id, payload, updated_by_id=str(user.id)
     )
-    await session.commit()
+
+    # Sync flow_tools → tool definitions table
+    if request.flow_tools is not None:
+        for tool_entry in request.flow_tools:
+            await upsert_tool_def(
+                session,
+                tool_entry.tool_id,
+                {
+                    "agent_id": request.agent_id,
+                    "label": tool_entry.label,
+                },
+                updated_by_id=str(user.id),
+            )
+
+    await _bump_and_invalidate(session)
     return {"status": "ok"}
 
 
@@ -814,14 +1177,31 @@ async def delete_agent(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Delete an agent definition override (reverts to default if exists)."""
+    """Delete an agent definition from the registry.
+
+    If the agent is a seed default, insert a disabled override.
+    """
     await _require_admin(session, user)
-    await upsert_global_agent_metadata_overrides(
-        session,
-        [(request.agent_id, None)],
-        updated_by_id=str(user.id),
+    deleted = await delete_agent_def(
+        session, request.agent_id, updated_by_id=str(user.id)
     )
-    await session.commit()
+    if not deleted:
+        # Seed default — disable it via an override row
+        from app.seeds.agent_definitions import get_default_agent_definitions
+
+        defaults = get_default_agent_definitions()
+        if request.agent_id not in defaults:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent '{request.agent_id}' not found",
+            )
+        await upsert_agent_def(
+            session,
+            request.agent_id,
+            {"enabled": False},
+            updated_by_id=str(user.id),
+        )
+    await _bump_and_invalidate(session)
     return {"status": "ok"}
 
 
@@ -831,14 +1211,16 @@ async def update_agent_routes(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Update which routes/intents an agent is assigned to."""
+    """Update which domain/intent an agent is assigned to."""
     await _require_admin(session, user)
-    await upsert_global_agent_metadata_overrides(
+    domain_id = request.routes[0] if request.routes else ""
+    await upsert_agent_def(
         session,
-        [(request.agent_id, {"routes": request.routes})],
+        request.agent_id,
+        {"domain_id": domain_id},
         updated_by_id=str(user.id),
     )
-    await session.commit()
+    await _bump_and_invalidate(session)
     return {"status": "ok"}
 
 
@@ -848,17 +1230,19 @@ async def update_agent_tools(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Update which tools belong to an agent in the flow graph."""
+    """Update which tools belong to an agent via tool definitions table."""
     await _require_admin(session, user)
-    await upsert_global_agent_metadata_overrides(
-        session,
-        [(
-            request.agent_id,
-            {"flow_tools": [t.model_dump() for t in request.flow_tools]},
-        )],
-        updated_by_id=str(user.id),
-    )
-    await session.commit()
+    for tool_entry in request.flow_tools:
+        await upsert_tool_def(
+            session,
+            tool_entry.tool_id,
+            {
+                "agent_id": request.agent_id,
+                "label": tool_entry.label,
+            },
+            updated_by_id=str(user.id),
+        )
+    await _bump_and_invalidate(session)
     return {"status": "ok"}
 
 
@@ -868,13 +1252,13 @@ async def upsert_intent(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Create or update an intent definition."""
+    """Create or update an intent (domain) in the registry."""
     await _require_admin(session, user)
     payload: dict[str, Any] = {}
     if request.label is not None:
         payload["label"] = request.label
     if request.route is not None:
-        payload["route"] = request.route
+        payload["fallback_route"] = request.route
     if request.description is not None:
         payload["description"] = request.description
     if request.keywords is not None:
@@ -893,12 +1277,10 @@ async def upsert_intent(
         payload["geographic_scope"] = request.geographic_scope
     if request.excludes is not None:
         payload["excludes"] = request.excludes
-    await upsert_global_intent_definition_overrides(
-        session,
-        [(request.intent_id, payload)],
-        updated_by_id=str(user.id),
+    await upsert_intent_domain(
+        session, request.intent_id, payload, updated_by_id=str(user.id)
     )
-    await session.commit()
+    await _bump_and_invalidate(session)
     return {"status": "ok"}
 
 
@@ -908,12 +1290,30 @@ async def delete_intent(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, str]:
-    """Delete an intent definition override (reverts to default if exists)."""
+    """Delete an intent (domain) from the registry.
+
+    If the domain is a seed default (not in DB yet), we insert a
+    disabled override so it won't appear in the effective list.
+    """
     await _require_admin(session, user)
-    await upsert_global_intent_definition_overrides(
-        session,
-        [(request.intent_id, None)],
-        updated_by_id=str(user.id),
+    deleted = await delete_intent_domain(
+        session, request.intent_id, updated_by_id=str(user.id)
     )
-    await session.commit()
+    if not deleted:
+        # Seed default — not in DB table. Insert a disabled override.
+        from app.seeds.intent_domains import get_default_intent_domains
+
+        defaults = get_default_intent_domains()
+        if request.intent_id not in defaults:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Intent '{request.intent_id}' not found",
+            )
+        await upsert_intent_domain(
+            session,
+            request.intent_id,
+            {"enabled": False},
+            updated_by_id=str(user.id),
+        )
+    await _bump_and_invalidate(session)
     return {"status": "ok"}

@@ -33,19 +33,7 @@ import {
 	type GateStatusResponse,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
-
-const CATEGORY_LABELS: Record<string, string> = {
-	smhi: "SMHI (Väder)",
-	scb: "SCB (Statistik)",
-	kolada: "Kolada (Nyckeltal)",
-	riksdagen: "Riksdagen",
-	trafikverket: "Trafikverket",
-	bolagsverket: "Bolagsverket",
-	marketplace: "Marknadsplats",
-	skolverket: "Skolverket",
-	builtin: "Inbyggda verktyg",
-	geoapify: "Kartor (Geoapify)",
-};
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
 const STAGE_LABELS: Record<string, string> = {
 	review: "REVIEW",
@@ -80,6 +68,7 @@ const GATE_REQUIREMENTS: Record<number, { requirement: string; thresholdExplanat
 };
 
 export function DeployTab() {
+	const CATEGORY_LABELS = useCategoryLabels();
 	const [toolId, setToolId] = useState("");
 	const [gateStatus, setGateStatus] = useState<GateStatusResponse | null>(null);
 	const [loading, setLoading] = useState(false);

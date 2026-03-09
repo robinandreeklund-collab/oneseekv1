@@ -1,8 +1,16 @@
 """Tests for NEXUS OOD (Out-of-Distribution) detection."""
 
 import numpy as np
+import pytest
 
 from app.nexus.routing.ood_detector import DarkMatterDetector
+
+try:
+    import faiss  # noqa: F401
+
+    HAS_FAISS = True
+except ImportError:
+    HAS_FAISS = False
 
 
 class TestEnergyScore:
@@ -51,12 +59,14 @@ class TestDetection:
 
 
 class TestKNNBackup:
+    @pytest.mark.skipif(not HAS_FAISS, reason="faiss-cpu not installed")
     def test_build_knn_index(self):
         detector = DarkMatterDetector()
         embeddings = np.random.randn(100, 64).tolist()
         detector.build_knn_index(embeddings)
         assert detector.has_knn_index
 
+    @pytest.mark.skipif(not HAS_FAISS, reason="faiss-cpu not installed")
     def test_knn_score(self):
         detector = DarkMatterDetector()
         embeddings = np.random.randn(100, 64).tolist()

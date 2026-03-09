@@ -80,3 +80,55 @@ ROUTE_CITATIONS_ENABLED: dict[Route, bool] = {
     Route.KONVERSATION: False,
     Route.JAMFORELSE: True,
 }
+
+
+# ── Domain-to-Route mapping ──────────────────────────────────────────
+# Maps domain_id to a legacy Route enum value.  The 4 broad routes and
+# a small backward-compat set are defined here; all other domains get
+# their ``fallback_route`` from the DB seed data (intent_domains).
+
+_DOMAIN_ROUTE_MAP: dict[str, Route] = {
+    "kunskap": Route.KUNSKAP,
+    "skapande": Route.SKAPANDE,
+    "konversation": Route.KONVERSATION,
+    "jämförelse": Route.JAMFORELSE,
+}
+
+# Populated at import time from seed data when available.  This avoids
+# a hardcoded list that must be kept in sync with the DB.
+try:
+    from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS as _SEED_DOMAINS
+
+    for _domain in _SEED_DOMAINS:
+        _did = str(_domain.get("domain_id") or "").strip().lower()
+        _fr = str(_domain.get("fallback_route") or "").strip().lower()
+        if _did and _fr:
+            try:
+                _DOMAIN_ROUTE_MAP[_did] = Route(_fr)
+            except (ValueError, KeyError):
+                pass
+except Exception:
+    pass
+
+
+def domain_to_route(domain_id: str) -> Route:
+    """Map a domain_id to a legacy Route enum value.
+
+    Uses seed data / DB fallback_route when available.  Returns
+    ``Route.KUNSKAP`` only as an ultimate fallback for truly unknown
+    domains.
+    """
+    normalized = str(domain_id or "").strip().lower()
+    return _DOMAIN_ROUTE_MAP.get(normalized, Route.KUNSKAP)
+
+
+def route_to_domains(route: Route) -> list[str]:
+    """Return all domain_ids that map to the given Route.
+
+    Useful for expanding a legacy route hint into domain candidates.
+    """
+    return [
+        domain_id
+        for domain_id, mapped_route in _DOMAIN_ROUTE_MAP.items()
+        if mapped_route == route
+    ]

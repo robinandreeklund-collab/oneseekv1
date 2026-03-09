@@ -13,7 +13,8 @@ class TestZonePrefixEmbeddings:
 
     def test_embed_tool_with_zone_known_namespace(self):
         result = self.zm.embed_tool_with_zone("Väderprognos", "tools/weather/smhi")
-        assert result.startswith("[KUNSK] ")
+        # tools/weather maps to "väder-och-klimat" → prefix [VÄDER]
+        assert result.startswith("[VÄDER] ")
         assert "Väderprognos" in result
 
     def test_embed_tool_with_zone_unknown_namespace(self):

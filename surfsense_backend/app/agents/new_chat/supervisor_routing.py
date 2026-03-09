@@ -1,4 +1,5 @@
 """Intent detection, routing, and agent aliasing functions for supervisor agent."""
+
 from __future__ import annotations
 
 import re
@@ -9,6 +10,7 @@ from app.agents.new_chat.supervisor_constants import (
     _AGENT_NAME_ALIAS_MAP,
     _AGENT_STOPWORDS,
     _AGENT_TOOL_PROFILES,
+    _ALTERNATIVE_RESPONSE_MARKERS,
     _DYNAMIC_TOOL_QUERY_MARKERS,
     _FILESYSTEM_INTENT_RE,
     _MAP_INTENT_RE,
@@ -18,7 +20,6 @@ from app.agents.new_chat.supervisor_constants import (
     _TRAFFIC_INTENT_RE,
     _TRAFFIC_STRICT_INTENT_RE,
     _UNAVAILABLE_RESPONSE_MARKERS,
-    _ALTERNATIVE_RESPONSE_MARKERS,
     _WEATHER_INTENT_RE,
     AgentToolProfile,
 )
@@ -78,29 +79,58 @@ def _route_allowed_agents(route_hint: str | None) -> set[str]:
     return set(_ROUTE_STRICT_AGENT_POLICIES.get(route, set()))
 
 
-def _route_default_agent(route_hint: str | None, allowed: set[str] | None = None) -> str:
+def _route_default_agent(
+    route_hint: str | None, allowed: set[str] | None = None
+) -> str:
     route = _normalize_route_hint_value(route_hint)
+    # Minimal defaults for the 4 broad routes + backward compat aliases.
+    # Domain-specific agent selection is handled by the registry-aware
+    # ``resolve_default_agent_with_registry()`` — this function is only
+    # the final fallback when no registry is available.
     defaults = {
-        # New Swedish route values
-        "kunskap": "kunskap",
         "skapande": "åtgärd",
         "jämförelse": "syntes",
-        "konversation": "kunskap",
+        "konversation": "konversation",
         # Backward compat
         "action": "åtgärd",
-        "knowledge": "kunskap",
-        "statistics": "statistik",
         "compare": "syntes",
-        "trafik": "trafik",
-        "mixed": "kunskap",
+        "smalltalk": "konversation",
+        # Domain-specific routes that already have a matching agent name
+        "trafik": "trafik-vag",
+        "trafik-tag": "trafik-tag",
+        "trafik-vag": "trafik-vag",
+        "trafik-vagvader": "trafik-vagvader",
+        "statistik": "statistik-ekonomi",
+        "statistik-ekonomi": "statistik-ekonomi",
+        "statistik-befolkning": "statistik-befolkning",
+        "statistik-arbetsmarknad": "statistik-arbetsmarknad",
+        "statistik-utbildning": "statistik-utbildning",
+        "statistik-halsa": "statistik-halsa",
+        "statistik-miljo": "statistik-miljo",
+        "statistik-fastighet": "statistik-fastighet",
+        "statistik-naringsliv": "statistik-naringsliv",
+        "statistik-samhalle": "statistik-samhalle",
+        "väder": "väder",
+        "väder-vatten": "väder-vatten",
+        "väder-risk": "väder-risk",
+        "marknad": "marknad",
+        "bolag": "bolag",
+        "riksdagen": "riksdagen-dokument",
+        "riksdagen-dokument": "riksdagen-dokument",
+        "riksdagen-debatt": "riksdagen-debatt",
+        "riksdagen-ledamoter": "riksdagen-ledamoter",
+        "kartor": "kartor",
+        "media": "media",
+        "kod": "kod",
+        "webb": "webb",
     }
-    preferred = defaults.get(route, "kunskap")
+    # If the route/domain itself is a valid agent name, use it directly
+    preferred = defaults.get(route, route if route else "kunskap")
     if allowed:
         if preferred in allowed:
             return preferred
-        for name in ("statistik", "syntes", "kunskap", "åtgärd", "trafik"):
-            if name in allowed:
-                return name
+        for name in allowed:
+            return name
     return preferred
 
 
@@ -119,7 +149,9 @@ def _tokenize_focus_terms(text: str) -> set[str]:
     return {token for token in tokens if token not in _AGENT_STOPWORDS}
 
 
-def _score_tool_profile(profile: AgentToolProfile, query_norm: str, tokens: set[str]) -> int:
+def _score_tool_profile(
+    profile: AgentToolProfile, query_norm: str, tokens: set[str]
+) -> int:
     score = 0
     if profile.tool_id and profile.tool_id.lower() in query_norm:
         score += 6
@@ -166,12 +198,22 @@ def _select_focused_tool_profiles(
     return profiles[: max(1, int(limit))]
 
 
-def _focused_tool_ids_for_agent(agent_name: str, task: str, *, limit: int = 5) -> list[str]:
+def _focused_tool_ids_for_agent(
+    agent_name: str, task: str, *, limit: int = 5
+) -> list[str]:
     normalized_task = _normalize_text(task)
     normalized_agent_name = str(agent_name or "").strip().lower()
-    if normalized_agent_name in {"kunskap", "statistik", "åtgärd", "knowledge", "statistics", "action"} and any(
-        marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
-    ):
+    if (
+        normalized_agent_name
+        in {
+            "kunskap",
+            "åtgärd",
+            "knowledge",
+            "statistics",
+            "action",
+        }
+        or normalized_agent_name.startswith("statistik-")
+    ) and any(marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS):
         # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
         # instead of locking the worker to static profile IDs.
         return []
@@ -194,13 +236,47 @@ def _guess_agent_from_alias(alias: str) -> str | None:
     if direct:
         return direct
     token_rules: list[tuple[tuple[str, ...], str]] = [
-        (("smhi", "weather", "vader", "väder", "temperatur", "regn", "sno", "snö", "vind"), "väder"),
-        (("trafik", "traffic", "road", "vag", "väg", "rail", "train"), "trafik"),
+        (
+            (
+                "smhi",
+                "weather",
+                "vader",
+                "väder",
+                "temperatur",
+                "regn",
+                "sno",
+                "snö",
+                "vind",
+            ),
+            "väder",
+        ),
+        (("trafik", "traffic", "road", "vag", "väg"), "trafik-vag"),
+        (("rail", "train", "tåg", "tag", "järnväg"), "trafik-tag"),
         (("map", "kart", "geo"), "kartor"),
-        (("stat", "scb", "data"), "statistik"),
-        (("riks", "parliament", "politik"), "riksdagen"),
+        (("stat", "scb", "data"), "statistik-ekonomi"),
+        (("befolkning", "folkmangd", "invånare"), "statistik-befolkning"),
+        (("arbetsmarknad", "arbetslöshet", "sysselsättning", "lön"), "statistik-arbetsmarknad"),
+        (("utbildning", "skola", "förskola", "grundskola", "gymnasium"), "statistik-utbildning"),
+        (("omsorg", "äldreomsorg", "hemtjänst", "lss", "ifo"), "statistik-halsa"),
+        (("utsläpp", "miljöstatistik", "energistatistik"), "statistik-miljo"),
+        (("bygglov", "nybyggnation", "bostadsbestånd"), "statistik-fastighet"),
+        (("nyföretagande", "företagsstatistik", "näringsverksamhet"), "statistik-naringsliv"),
+        (("riks", "parliament", "politik", "proposition", "motion", "lagforslag"), "riksdagen-dokument"),
+        (("debatt", "votering", "omrostning", "anforande", "fragestund"), "riksdagen-debatt"),
+        (("ledamot", "ledamoter", "valkrets", "riksdagskalender"), "riksdagen-ledamoter"),
         (("bolag", "company", "business", "org"), "bolag"),
-        (("blocket", "tradera", "annons", "begagnat", "köp", "sälj", "marknadsplats"), "marknad"),
+        (
+            (
+                "blocket",
+                "tradera",
+                "annons",
+                "begagnat",
+                "köp",
+                "sälj",
+                "marknadsplats",
+            ),
+            "marknad",
+        ),
         (("browser", "web", "scrape", "search"), "webb"),
         (("media", "podcast", "image", "video"), "media"),
         (("code", "python", "calc", "kod"), "kod"),
@@ -212,3 +288,110 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         if any(token in normalized for token in tokens):
             return resolved
     return None
+
+
+# ── Registry-aware agent + tool resolution ────────────────────────────
+
+
+def resolve_default_agent_with_registry(
+    route_hint: str | None,
+    query: str,
+    registry: Any | None,
+) -> str:
+    """Pick the best agent for a route, using registry if available.
+
+    Falls back to the legacy ``_route_default_agent`` when no registry
+    is provided or the domain has no agents.
+    """
+    if registry is not None:
+        try:
+            from app.agents.new_chat.routing import Route, route_to_domains
+            from app.services.agent_resolver_service import (
+                resolve_default_agent_for_domain,
+            )
+
+            route_value = _normalize_route_hint_value(route_hint)
+            try:
+                route_enum = Route(route_value)
+            except (ValueError, KeyError):
+                route_enum = None
+            if route_enum is not None:
+                domain_ids = route_to_domains(route_enum)
+                for domain_id in domain_ids:
+                    agent_id = resolve_default_agent_for_domain(
+                        query=query,
+                        domain_id=domain_id,
+                        registry=registry,
+                    )
+                    if agent_id:
+                        return agent_id
+        except Exception:
+            pass
+    allowed = _route_allowed_agents(route_hint)
+    return _route_default_agent(route_hint, allowed)
+
+
+def resolve_allowed_agents_with_registry(
+    route_hint: str | None,
+    registry: Any | None,
+) -> set[str]:
+    """Return allowed agent IDs for a route, using registry if available.
+
+    Falls back to ``_route_allowed_agents`` when no registry is available.
+    """
+    if registry is not None:
+        try:
+            from app.agents.new_chat.routing import Route, route_to_domains
+
+            route_value = _normalize_route_hint_value(route_hint)
+            try:
+                route_enum = Route(route_value)
+            except (ValueError, KeyError):
+                route_enum = None
+            if route_enum is not None:
+                domain_ids = route_to_domains(route_enum)
+                agent_ids: set[str] = set()
+                for domain_id in domain_ids:
+                    agents = list(
+                        (registry.agents_by_domain or {}).get(domain_id) or []
+                    )
+                    for agent in agents:
+                        agent_id = str(agent.get("agent_id") or "").strip().lower()
+                        if agent_id and agent.get("enabled", True):
+                            agent_ids.add(agent_id)
+                if agent_ids:
+                    return agent_ids
+        except Exception:
+            pass
+    return _route_allowed_agents(route_hint)
+
+
+def resolve_focused_tool_ids_with_registry(
+    agent_id: str,
+    query: str,
+    registry: Any | None,
+    *,
+    limit: int = 5,
+) -> list[str]:
+    """Return focused tool IDs for an agent, using registry if available.
+
+    Falls back to ``_focused_tool_ids_for_agent`` when no registry is
+    available.
+    """
+    if registry is not None:
+        try:
+            from app.services.tool_resolver_service import (
+                resolve_tool_ids_for_agent,
+            )
+
+            tool_ids = resolve_tool_ids_for_agent(
+                query=query,
+                agent_id=agent_id,
+                registry=registry,
+                top_k=limit,
+            )
+            if tool_ids:
+                return tool_ids
+        except Exception:
+            pass
+    return _focused_tool_ids_for_agent(agent_id, query, limit=limit)

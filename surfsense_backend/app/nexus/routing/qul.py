@@ -15,7 +15,6 @@ from app.nexus.config import (
     DOMAIN_HINTS,
     MULTI_INTENT_MARGIN_THRESHOLD,
     SWEDISH_NORMALIZATION_BANK,
-    Zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -182,16 +181,29 @@ class QueryUnderstandingLayer:
 
         # 4. Domain hint scoring (use dynamic hints from DB if provided)
         domain_hints = self._score_domain_hints(
-            normalized, entities,
+            normalized,
+            entities,
             domain_hints_map=domain_hints_map,
             category_hints_map=category_hints_map,
         )
 
         # 5. Zone candidate scoring
-        zone_candidates = self._resolve_zones(domain_hints, entities)
+        zone_candidates = self._resolve_zones(
+            domain_hints,
+            entities,
+            domain_hints_map=domain_hints_map,
+        )
 
         # 6. Complexity classification
         complexity = self._classify_complexity(normalized, is_multi, entities)
+
+        # 7. OOD risk estimation — no matching domains = likely out-of-domain
+        if not domain_hints:
+            ood_risk = 0.8
+        elif len(domain_hints) == 1:
+            ood_risk = 0.1
+        else:
+            ood_risk = 0.0
 
         return QueryAnalysisResult(
             original_query=query,
@@ -202,6 +214,7 @@ class QueryUnderstandingLayer:
             zone_candidates=zone_candidates,
             complexity=complexity,
             is_multi_intent=is_multi,
+            ood_risk=ood_risk,
         )
 
     def should_decompose(self, top_score: float, second_score: float) -> bool:
@@ -304,8 +317,12 @@ class QueryUnderstandingLayer:
             domain_hints_map: Dynamic zone→keywords map from DB. Falls back to static config.
             category_hints_map: Dynamic agent→keywords map from DB. Falls back to static config.
         """
-        _domain_hints = domain_hints_map if domain_hints_map is not None else DOMAIN_HINTS
-        _category_hints = category_hints_map if category_hints_map is not None else CATEGORY_HINTS
+        _domain_hints = (
+            domain_hints_map if domain_hints_map is not None else DOMAIN_HINTS
+        )
+        _category_hints = (
+            category_hints_map if category_hints_map is not None else CATEGORY_HINTS
+        )
 
         lower = query.lower()
         hints: list[str] = []
@@ -338,20 +355,36 @@ class QueryUnderstandingLayer:
         return hints
 
     def _resolve_zones(
-        self, domain_hints: list[str], entities: QueryEntities
+        self,
+        domain_hints: list[str],
+        entities: QueryEntities,
+        *,
+        domain_hints_map: dict[str, list[str]] | None = None,
     ) -> list[str]:
-        """Determine candidate zones from domain hints and entities."""
-        # Only include actual zone values, not category hints
-        valid_zones = {z.value for z in Zone}
+        """Determine candidate zones from domain hints and entities.
+
+        Valid zones are derived from the domain_hints_map keys (which may
+        include fine-grained domain IDs like "väder-och-klimat") plus the
+        legacy Zone enum values.
+        """
+        # Build valid zone set from all domain zones + hints map keys
+        from app.nexus.config import get_all_zone_prefixes
+
+        valid_zones = set(get_all_zone_prefixes().keys())
+        if domain_hints_map:
+            valid_zones.update(domain_hints_map.keys())
+        else:
+            # Fall back to static DOMAIN_HINTS keys
+            valid_zones.update(DOMAIN_HINTS.keys())
+
         zones: list[str] = [h for h in domain_hints if h in valid_zones]
 
-        # Location entities boost kunskap zone (government/statistics data)
-        if entities.locations and Zone.KUNSKAP not in zones:
-            zones.append(Zone.KUNSKAP)
-
-        # If no hints at all, return broad search
+        # If no hints at all, return the first few available domain zones
+        # (NOT hardcoded to old legacy zones)
         if not zones:
-            zones = [Zone.KUNSKAP, Zone.SKAPANDE]
+            all_domain_keys = list((domain_hints_map or DOMAIN_HINTS).keys())
+            # Use first domain as general fallback
+            zones = all_domain_keys[:1] if all_domain_keys else ["kunskap"]
 
         return zones
 

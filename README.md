@@ -21,12 +21,13 @@ Projektet har historiskt hetat SurfSense, vilket fortfarande syns i vissa katalo
 12. [LangSmith + full transparens (trace)](#langsmith--full-transparens-trace)
 13. [Memory och feedback-loopar](#memory-och-feedback-loopar)
 14. [Eval-systemet](#eval-systemet)
-15. [SSE/Data Stream-events](#ssedata-stream-events)
-16. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
-17. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
-18. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
-19. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
-20. [Teststatus for Fas 1-4 + eval + P1-P4](#teststatus-for-fas-1-4--eval--loop-fix-p1-p4)
+15. [NEXUS — Retrieval Intelligence Platform](#nexus--retrieval-intelligence-platform)
+16. [SSE/Data Stream-events](#ssedata-stream-events)
+17. [Kodstruktur (viktigaste filer)](#kodstruktur-viktigaste-filer)
+18. [Konfiguration och feature flags](#konfiguration-och-feature-flags)
+19. [Sandbox step-by-step guide](#sandbox-step-by-step-guide)
+20. [Copy-paste only quickstart (Docker + K8s)](#copy-paste-only-quickstart-docker--k8s)
+21. [Teststatus for Fas 1-4 + eval + P1-P4](#teststatus-for-fas-1-4--eval--loop-fix-p1-p4)
 
 ---
 
@@ -1058,6 +1059,70 @@ Evalsystemet kan generera:
 - stage-jamforelse med trend/guidance
 - **namespace confusion matrix** (per-namespace expected-vs-predicted matris)
 - **kontrastiva probes** (auto-genererade hard-negative testfall for namespace-grannar)
+
+---
+
+## NEXUS — Retrieval Intelligence Platform
+
+NEXUS ar ett fristaende retrieval intelligence-system (v2.2.0) med 5 lager for kontinuerlig kvalitetssäkring av verktygsrouting.
+
+> Fullstandig dokumentation: [`surfsense_backend/app/nexus/README.md`](surfsense_backend/app/nexus/README.md)
+
+### Arkitektur
+
+```
+NEXUS 5 Lager:
+  1. SPACE AUDITOR  — Embedding-rymd-halsa (silhouette, confusion, hubness, UMAP)
+  2. SYNTH FORGE    — LLM-genererade testfragor (4 svarighetsnivaer, expected intent/agent/tool)
+  3. AUTO LOOP      — 7-stegs sjalvforbattrande pipeline + LLM Tool Judge
+  4. EVAL LEDGER    — Pipeline-metriker (MRR@10, nDCG@5, P@1, P@5)
+  5. DEPLOY CONTROL — Triple-gate lifecycle (separation, eval, LLM-judge)
+```
+
+### 3-niva pipeline-matning (Intent → Agent → Tool)
+
+Auto-loop mater alla tre nivaer i NEXUS routing-pipeline:
+
+| Niva | Matning | Beskrivning |
+|------|---------|-------------|
+| **Intent/Zon** | `intent_accuracy` | Korrekt zon-resolution (t.ex. "kunskap", "skapande") |
+| **Agent** | `agent_accuracy` | Korrekt agent-val inom zon (t.ex. "weather_agent", "scb_agent") |
+| **Tool** | `precision_at_1` | Korrekt verktygsval (embedding-baserat) |
+
+Varje syntetiskt testfall har `expected_intent`, `expected_agent` och `expected_tool` — deriverat fran verktygets metadata.
+Kaskadeffekter synliggors: fel intent → troligen fel agent → troligen fel tool.
+
+### LLM Tool Judge
+
+Kor parallellt med NEXUS embedding-baserade scoring:
+
+- Skickar top-5 kandidater till LLM som valjer basta verktyg med motivering
+- **Dubbelsidigt**: jamfor NEXUS accuracy vs LLM accuracy mot `expected_tool`
+- **2x2 korsmatris**: bada ratt, bara NEXUS ratt, bara LLM ratt, bada fel
+- Oenigheter loggas med winner-klassificering (`nexus` / `llm` / `neither` / `tie`)
+- SSE-streaming visar LLM-agree% live under loop-korning
+
+### Space Auditor — Namespace-filtrering
+
+UMAP-visualiseringen stodjer nu:
+- **Namespace-filter** — valj ett namespace (t.ex. `tools/weather`) for att isolera den delen av rymden
+- **Zon-filter** — valj en specifik zon for att fokusera visualiseringen
+- **Ghost points** — ofiltrerade verktyg visas som bakgrundskontext (10% opacity)
+- **Hover-tooltips** — visa tool_id, zon och namespace vid hover
+- **Zon-legend** med antal verktyg per zon
+
+### Frontend — Admin UI
+
+NEXUS administreras via `/admin/nexus` med flikar:
+
+| Flik | Innehall |
+|------|----------|
+| **Oversikt** | Band-0 throughput, ECE, OOD rate, namespace purity |
+| **Rymd** | UMAP 2D med namespace/zon-filter, hubness-varningar, confusion-matris |
+| **Forge** | Generera syntetiska testfragor per verktyg/kategori/namespace |
+| **Loop** | Auto-loop med 3-niva metrics, LLM Judge korsmatris, SSE-progress |
+| **Ledger** | 5-stage pipeline-metriker med trender |
+| **Deploy** | Triple-gate per verktyg, promote/rollback |
 
 ---
 

@@ -3,7 +3,7 @@
 Single source of truth for all NEXUS-specific configuration values.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 
 # ---------------------------------------------------------------------------
@@ -37,20 +37,42 @@ ZONE_PREFIXES: dict[str, str] = {
     Zone.KONVERSATION: "[KONV] ",
 }
 
+
+def get_all_zone_prefixes() -> dict[str, str]:
+    """Return zone prefixes for ALL domains (seed + legacy).
+
+    New domains get a prefix derived from the first 5 chars of their id.
+    """
+    from app.seeds.intent_domains import get_default_intent_domains
+
+    prefixes = dict(ZONE_PREFIXES)
+    for domain_id in get_default_intent_domains():
+        if domain_id not in prefixes:
+            tag = domain_id[:5].upper().replace("-", "")
+            prefixes[domain_id] = f"[{tag}] "
+    return prefixes
+
+
 # Namespace prefix → zone mapping (aligned with platform routing)
-NAMESPACE_ZONE_MAP: dict[str, Zone] = {
+NAMESPACE_ZONE_MAP: dict[str, str] = {
     "tools/knowledge": Zone.KUNSKAP,
-    "tools/weather": Zone.KUNSKAP,
-    "tools/politik": Zone.KUNSKAP,
-    "tools/statistics": Zone.KUNSKAP,
-    "tools/trafik": Zone.KUNSKAP,
-    "tools/bolag": Zone.KUNSKAP,
-    "tools/marketplace": Zone.KUNSKAP,
+    # SMHI sub-agent namespaces (all map to same domain)
+    "tools/weather": "väder-och-klimat",
+    # Trafikverket sub-agent namespaces (all map to same domain)
+    "tools/trafik": "trafik-och-transport",
+    # Other domains
+    "tools/politik": "politik-och-beslut",
+    "tools/statistics": "ekonomi-och-skatter",
+    "tools/bolag": "näringsliv-och-bolag",
+    "tools/marketplace": "handel-och-marknad",
     "tools/action": Zone.SKAPANDE,
     "tools/code": Zone.SKAPANDE,
     "tools/kartor": Zone.SKAPANDE,
     "tools/compare": Zone.JAMFORELSE,
     "tools/general": Zone.KUNSKAP,
+    "tools/web": Zone.KUNSKAP,
+    "tools/media": Zone.SKAPANDE,
+    "tools/map": Zone.SKAPANDE,
 }
 
 
@@ -63,131 +85,68 @@ NAMESPACE_ZONE_MAP: dict[str, Zone] = {
 class NexusAgent:
     """An agent definition for NEXUS routing.
 
-    Each agent belongs to a zone (intent) and owns a set of tool namespace
-    prefixes.  Routing: Intent → Agent → Tool.
+    Each agent belongs to a zone (domain/intent) and owns a set of tool
+    namespace prefixes.  Routing: Intent → Agent → Tool.
+
+    ``zone`` is a string that can be any domain_id (e.g. "väder-och-klimat")
+    or a legacy Zone enum value (e.g. "kunskap").
     """
 
     name: str
-    zone: Zone
+    zone: str
     description: str
     primary_namespaces: tuple[str, ...] = ()
     keywords: tuple[str, ...] = ()
 
 
-# 13 agents aligned with production supervisor_agent.py AgentDefinition list.
+def _build_nexus_agents_from_seeds() -> tuple[NexusAgent, ...]:
+    """Build NexusAgent list from seed agent definitions.
+
+    Each agent's zone is its domain_id from the seed data.
+    """
+    from app.seeds.agent_definitions import DEFAULT_AGENT_DEFINITIONS
+
+    agents: list[NexusAgent] = []
+    for agent_def in DEFAULT_AGENT_DEFINITIONS:
+        agent_id = agent_def.get("agent_id", "")
+        if not agent_id:
+            continue
+        domain_id = agent_def.get("domain_id", "kunskap")
+        keywords = agent_def.get("keywords", [])
+        ns_raw = agent_def.get("primary_namespaces", [])
+        # Use full namespace depth so sub-agents within the same domain
+        # (e.g. statistik-befolkning vs statistik-ekonomi) get distinct
+        # tool sets instead of all collapsing to "tools/statistics".
+        prefixes: list[str] = []
+        for ns in ns_raw:
+            if isinstance(ns, list) and len(ns) >= 2:
+                prefix = "/".join(ns)
+            elif isinstance(ns, list) and len(ns) == 1:
+                prefix = ns[0]
+            else:
+                prefix = str(ns)
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+        ns_tuple = tuple(prefixes)
+        agents.append(
+            NexusAgent(
+                name=agent_id,
+                zone=domain_id,
+                description=agent_def.get("description", ""),
+                primary_namespaces=ns_tuple,
+                keywords=tuple(str(k) for k in keywords),
+            )
+        )
+    return tuple(agents)
+
+
+# 13 agents built from seed definitions.
 # primary_namespaces control which tools belong to each agent.
-NEXUS_AGENTS: tuple[NexusAgent, ...] = (
-    NexusAgent(
-        name="åtgärd",
-        zone=Zone.KUNSKAP,
-        description="Generella uppgifter, realtidsåtgärder och verktygsexekvering",
-        primary_namespaces=("tools/action", "tools/general"),
-        keywords=("åtgärd", "gör", "utför", "verktyg"),
-    ),
-    NexusAgent(
-        name="väder",
-        zone=Zone.KUNSKAP,
-        description="SMHI väderdata, prognoser och Trafikverket vägväder",
-        primary_namespaces=("tools/weather",),
-        keywords=(
-            "väder", "vädret", "smhi", "temperatur", "regn", "prognos",
-            "snö", "vind", "vägväder",
-        ),
-    ),
-    NexusAgent(
-        name="kartor",
-        zone=Zone.SKAPANDE,
-        description="Kartgenerering via Geoapify",
-        primary_namespaces=("tools/kartor",),
-        keywords=("karta", "kartbild", "geoapify", "plats", "visa på karta"),
-    ),
-    NexusAgent(
-        name="media",
-        zone=Zone.SKAPANDE,
-        description="Podcast- och mediagenerering",
-        primary_namespaces=(),
-        keywords=("podcast", "media", "ljud", "bild", "generera"),
-    ),
-    NexusAgent(
-        name="kunskap",
-        zone=Zone.KUNSKAP,
-        description="Intern kunskapsbas, SurfSense-docs och webbsökning via Tavily",
-        primary_namespaces=("tools/knowledge",),
-        keywords=(
-            "dokument", "docs", "kunskap", "sök", "search", "notion",
-            "slack", "github", "sammanfatta",
-        ),
-    ),
-    NexusAgent(
-        name="webb",
-        zone=Zone.KUNSKAP,
-        description="Webbskrapning och länkförhandsgranskning",
-        primary_namespaces=(),
-        keywords=("webb", "länk", "url", "nyheter", "scrape"),
-    ),
-    NexusAgent(
-        name="kod",
-        zone=Zone.SKAPANDE,
-        description="Sandbox-kodexekvering och beräkningar",
-        primary_namespaces=("tools/code",),
-        keywords=("kod", "python", "script", "sandbox", "exekvera", "kör"),
-    ),
-    NexusAgent(
-        name="bolag",
-        zone=Zone.KUNSKAP,
-        description="Bolagsverket företagsinformation",
-        primary_namespaces=("tools/bolag",),
-        keywords=("bolag", "bolagsverket", "företag", "org", "organisationsnummer"),
-    ),
-    NexusAgent(
-        name="statistik",
-        zone=Zone.KUNSKAP,
-        description="SCB, Kolada, Skolverket statistik och nyckeltal",
-        primary_namespaces=("tools/statistics",),
-        keywords=(
-            "statistik", "scb", "kolada", "befolkning", "nyckeltal",
-            "skolverket", "utbildning", "kommun",
-        ),
-    ),
-    NexusAgent(
-        name="trafik",
-        zone=Zone.KUNSKAP,
-        description="Trafikverket realtidstrafik, tåg och vägdata",
-        primary_namespaces=("tools/trafik",),
-        keywords=(
-            "trafik", "trafiken", "trafikverket", "tåg", "väg", "kamera",
-            "järnväg", "störning",
-        ),
-    ),
-    NexusAgent(
-        name="riksdagen",
-        zone=Zone.KUNSKAP,
-        description="Riksdagsdokument, voteringar och propositioner",
-        primary_namespaces=("tools/politik",),
-        keywords=(
-            "riksdagen", "proposition", "betänkande", "motion", "votering",
-            "ledamot", "politik",
-        ),
-    ),
-    NexusAgent(
-        name="marknad",
-        zone=Zone.KUNSKAP,
-        description="Blocket, Tradera och marknadsplatser",
-        primary_namespaces=("tools/marketplace",),
-        keywords=("blocket", "tradera", "marknadsplats", "annons", "begagnat"),
-    ),
-    NexusAgent(
-        name="syntes",
-        zone=Zone.KUNSKAP,
-        description="Sammanfattning och syntes av resultat",
-        primary_namespaces=(),
-        keywords=("sammanfatta", "syntes", "summera"),
-    ),
-)
+NEXUS_AGENTS: tuple[NexusAgent, ...] = _build_nexus_agents_from_seeds()
 
 # Lookup helpers (static fallbacks — overridden at runtime by DB agents)
 AGENT_BY_NAME: dict[str, NexusAgent] = {a.name: a for a in NEXUS_AGENTS}
-AGENTS_BY_ZONE: dict[Zone, list[NexusAgent]] = {}
+AGENTS_BY_ZONE: dict[str, list[NexusAgent]] = {}
 for _a in NEXUS_AGENTS:
     AGENTS_BY_ZONE.setdefault(_a.zone, []).append(_a)
 
@@ -200,13 +159,14 @@ def _resolve_namespaces_from_flow_tools(
     Admin flow stores tool-to-agent mappings as flow_tools.  The actual
     namespace for each tool comes from bigtool_store / platform_bridge, not
     from the agent's own namespace field.  This function collects the unique
-    namespace *prefixes* (first two segments, e.g. "tools/knowledge") that
-    the agent's tools actually belong to.
+    namespace prefixes (full depth, e.g. "tools/statistics/scb/befolkning")
+    that the agent's tools actually belong to.
 
     Falls back to an empty tuple if no tools can be resolved.
     """
     try:
         from app.nexus.platform_bridge import get_platform_tools
+
         tools_by_id = {t.tool_id: t for t in get_platform_tools()}
     except Exception:
         return ()
@@ -216,7 +176,7 @@ def _resolve_namespaces_from_flow_tools(
         tid = ft.get("tool_id", "")
         pt = tools_by_id.get(tid)
         if pt and len(pt.namespace) >= 2:
-            prefix = f"{pt.namespace[0]}/{pt.namespace[1]}"
+            prefix = "/".join(pt.namespace)
             if prefix not in prefixes:
                 prefixes.append(prefix)
     return tuple(prefixes)
@@ -224,11 +184,15 @@ def _resolve_namespaces_from_flow_tools(
 
 def build_agents_from_metadata(
     agent_metadata_list: list[dict],
-) -> tuple[dict[str, NexusAgent], dict[Zone, list[NexusAgent]]]:
+) -> tuple[dict[str, NexusAgent], dict[str, list[NexusAgent]]]:
     """Build NEXUS agent lookups from DB-backed agent metadata.
 
     Converts the output of get_effective_agent_metadata() into NexusAgent
     objects and lookup dicts, enabling dynamic agent resolution.
+
+    Each agent's zone is its domain_id (from ``routes``), which may be a
+    fine-grained domain like "väder-och-klimat" or a legacy zone like
+    "kunskap".
 
     Args:
         agent_metadata_list: List of agent metadata dicts from
@@ -244,21 +208,11 @@ def build_agents_from_metadata(
         if not agent_id:
             continue
 
-        # Map routes (intent names) to Zone enum values
+        # Use domain_id (from routes) directly as zone — no enum restriction
         routes = meta.get("routes", [])
-        zone = Zone.KUNSKAP  # default
-        for route_name in routes:
-            try:
-                zone = Zone(route_name)
-                break  # Use first valid zone
-            except ValueError:
-                continue
+        zone = routes[0] if routes else "kunskap"
 
         # Build namespace prefixes from the agent's actual flow_tools.
-        # This resolves to the REAL namespaces (e.g. "tools/knowledge",
-        # "tools/statistics") instead of the simplified admin-flow
-        # namespace field (e.g. ["agents", "skolverket"] → "tools/skolverket"
-        # which doesn't match any real tool namespace).
         flow_tools = meta.get("flow_tools", [])
         primary_namespaces: tuple[str, ...] = ()
         if flow_tools:
@@ -268,8 +222,10 @@ def build_agents_from_metadata(
         if not primary_namespaces:
             ns_parts = meta.get("namespace", [])
             if isinstance(ns_parts, list) and len(ns_parts) >= 2:
-                ns_prefix = ns_parts[0] if ns_parts[0] != "agents" else "tools"
-                primary_namespaces = (f"{ns_prefix}/{ns_parts[1]}",)
+                parts = list(ns_parts)
+                if parts[0] == "agents":
+                    parts[0] = "tools"
+                primary_namespaces = ("/".join(parts),)
             elif isinstance(ns_parts, str) and ns_parts:
                 primary_namespaces = (ns_parts,)
 
@@ -292,7 +248,7 @@ def build_agents_from_metadata(
 
     # Build lookup dicts
     by_name: dict[str, NexusAgent] = {a.name: a for a in agents}
-    by_zone: dict[Zone, list[NexusAgent]] = {}
+    by_zone: dict[str, list[NexusAgent]] = {}
     for a in agents:
         by_zone.setdefault(a.zone, []).append(a)
 
@@ -304,8 +260,15 @@ def build_hints_from_metadata(
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Build dynamic DOMAIN_HINTS and CATEGORY_HINTS from DB agent metadata.
 
-    Generates zone-level and agent-level keyword lookups from the effective
+    Generates domain-level and agent-level keyword lookups from the effective
     agent metadata, so QUL keyword matching reflects admin flow changes.
+
+    Each agent's domain_id (from ``routes``) is used directly as the zone
+    key, preserving fine-grained domain separation.
+
+    IMPORTANT: Starts with seed domain keywords as the base, then merges
+    agent-level keywords on top. This ensures domains without dedicated
+    agents still have their seed keywords for QUL matching.
 
     Args:
         agent_metadata_list: List of agent metadata dicts from
@@ -313,10 +276,11 @@ def build_hints_from_metadata(
 
     Returns:
         Tuple of (domain_hints, category_hints) dicts.
-        - domain_hints: zone_name → list of keywords (union of all agents in that zone)
+        - domain_hints: domain_id → list of keywords
         - category_hints: agent_name → list of keywords
     """
-    domain_hints: dict[str, list[str]] = {}
+    # Start with seed domain keywords as the base
+    domain_hints: dict[str, list[str]] = dict(DOMAIN_HINTS)
     category_hints: dict[str, list[str]] = {}
 
     for meta in agent_metadata_list:
@@ -334,32 +298,21 @@ def build_hints_from_metadata(
         if kw_list:
             category_hints[agent_id] = kw_list
 
-        # Determine zone from routes
+        # Use domain_id from routes directly — no Zone enum restriction
         routes = meta.get("routes", [])
-        zone_name: str | None = None
-        for route_name in routes:
-            try:
-                zone_name = Zone(route_name).value
-                break
-            except ValueError:
-                continue
+        zone_name = routes[0] if routes else "kunskap"
 
-        if zone_name is None:
-            zone_name = Zone.KUNSKAP.value
-
-        # Add keywords to the zone's domain hints
+        # Add keywords to the domain's hints (merge with seed base)
         if zone_name not in domain_hints:
             domain_hints[zone_name] = []
         for kw in kw_list:
             if kw not in domain_hints[zone_name]:
                 domain_hints[zone_name].append(kw)
 
-        # Also add description-derived terms: main_identifier, core_activity
-        # and the excludes list as negative signals
+        # Also add description-derived terms
         for extra_field in ("main_identifier", "core_activity", "unique_scope"):
             val = meta.get(extra_field, "")
             if val and isinstance(val, str):
-                # Extract meaningful words (>3 chars) as additional zone hints
                 for word in val.lower().split():
                     if len(word) > 3 and word not in domain_hints[zone_name]:
                         domain_hints[zone_name].append(word)
@@ -439,107 +392,30 @@ SWEDISH_NORMALIZATION_BANK: dict[str, str] = {
     "cph": "Köpenhamn",
 }
 
-# Domain hints — keywords that suggest specific zones.
-# Aligned with real intent_definition_service.py keywords.
-DOMAIN_HINTS: dict[str, list[str]] = {
-    Zone.KUNSKAP: [
-        # From real intent_definition_service "kunskap" keywords
-        "dokument",
-        "docs",
-        "kunskap",
-        "sök",
-        "search",
-        "notion",
-        "slack",
-        "github",
-        "sammanfatta",
-        # Weather / SMHI
-        "väder",
-        "vädret",
-        "vader",
-        "vadret",
-        "smhi",
-        "temperatur",
-        "regn",
-        "prognos",
-        # Traffic
-        "trafik",
-        "trafiken",
-        "trafikverket",
-        "tåg",
-        "väg",
-        # Statistics
-        "statistik",
-        "scb",
-        "befolkning",
-        "kolada",
-        "nyckeltal",
-        # Company
-        "bolag",
-        "bolagsverket",
-        # Parliament
-        "riksdagen",
-        "proposition",
-        "betänkande",
-        "motion",
-        # Marketplace
-        "blocket",
-        "tradera",
-        "marknadsplats",
-        "annons",
-        "begagnat",
-        # Web
-        "webb",
-        "länk",
-        "nyheter",
-        # Education
-        "skola",
-        "utbildning",
-        "kursplan",
-        "skolverket",
-        # Municipality
-        "kommun",
-        "region",
-    ],
-    Zone.SKAPANDE: [
-        # From real intent_definition_service "skapande" keywords
-        "skapa",
-        "generera",
-        "rita",
-        "podcast",
-        "karta",
-        "kartbild",
-        "kod",
-        "script",
-        "python",
-        "sandbox",
-        "exekvera",
-        "skriv kod",
-    ],
-    Zone.JAMFORELSE: [
-        # From real intent_definition_service "jämförelse" keywords
-        "/compare",
-        "compare",
-        "jämför",
-        "jamfor",
-        "jämförelse",
-        "modeller",
-        "ai",
-        "gpt",
-        "claude",
-        "grok",
-        "gemini",
-    ],
-    Zone.KONVERSATION: [
-        # From real intent_definition_service "konversation" keywords
-        "hej",
-        "tjena",
-        "hallå",
-        "hur mår du",
-        "konversation",
-        "smalltalk",
-    ],
-}
+
+def _build_domain_hints_from_seeds() -> dict[str, list[str]]:
+    """Build DOMAIN_HINTS dynamically from seed domain data.
+
+    Each domain_id becomes its own zone key with its own keyword list,
+    replacing the old 4-zone system where everything was lumped under
+    "kunskap".
+    """
+    from app.seeds.intent_domains import DEFAULT_INTENT_DOMAINS
+
+    hints: dict[str, list[str]] = {}
+    for domain in DEFAULT_INTENT_DOMAINS:
+        domain_id = domain.get("domain_id", "")
+        if not domain_id:
+            continue
+        keywords = domain.get("keywords", [])
+        if keywords:
+            hints[domain_id] = list(keywords)
+    return hints
+
+
+# Domain hints — keywords that suggest specific zones/domains.
+# Built dynamically from seed data so each domain has distinct keywords.
+DOMAIN_HINTS: dict[str, list[str]] = _build_domain_hints_from_seeds()
 
 
 # ---------------------------------------------------------------------------
@@ -548,19 +424,21 @@ DOMAIN_HINTS: dict[str, list[str]] = {
 # the agent *within* that zone so the AgentResolver can boost the right one.
 # ---------------------------------------------------------------------------
 
-CATEGORY_HINTS: dict[str, list[str]] = {
-    "väder": ["väder", "vädret", "vader", "vadret", "smhi", "temperatur", "regn", "prognos", "väderleksrapport"],
-    "statistik": ["statistik", "scb", "befolkning", "kolada", "nyckeltal", "skolverket", "skola", "kursplan"],
-    "trafik": ["trafik", "trafiken", "trafikverket", "tåg", "väg", "vägarbete", "förseningar"],
-    "bolag": ["bolag", "bolagsverket", "företag", "organisationsnummer"],
-    "riksdagen": ["riksdagen", "proposition", "betänkande", "motion", "votering"],
-    "marknad": ["blocket", "tradera", "marknadsplats", "annons", "begagnat"],
-    "kunskap": ["dokument", "docs", "kunskap", "sök", "search", "notion", "slack", "github", "sammanfatta"],
-    "webb": ["webb", "länk", "nyheter", "url", "scrape"],
-    "kartor": ["karta", "kartbild", "geoapify", "visa på karta"],
-    "kod": ["kod", "python", "script", "sandbox", "exekvera"],
-    "media": ["podcast", "media", "ljud", "generera bild"],
-}
+
+def _build_category_hints_from_seeds() -> dict[str, list[str]]:
+    """Build CATEGORY_HINTS from seed agent definitions."""
+    from app.seeds.agent_definitions import DEFAULT_AGENT_DEFINITIONS
+
+    hints: dict[str, list[str]] = {}
+    for agent in DEFAULT_AGENT_DEFINITIONS:
+        agent_id = agent.get("agent_id", "")
+        keywords = agent.get("keywords", [])
+        if agent_id and keywords:
+            hints[agent_id] = list(keywords)
+    return hints
+
+
+CATEGORY_HINTS: dict[str, list[str]] = _build_category_hints_from_seeds()
 
 
 # ---------------------------------------------------------------------------
