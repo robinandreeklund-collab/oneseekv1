@@ -256,13 +256,13 @@ export default function OnboardPage() {
 						transition={{ delay: 0.5 }}
 						className="text-center text-sm text-muted-foreground"
 					>
-					Du kan lägga till fler konfigurationer och anpassa inställningar när som helst i{" "}
+						Du kan lägga till fler konfigurationer och anpassa inställningar när som helst i{" "}
 						<button
 							type="button"
 							onClick={() => router.push(`/dashboard/${searchSpaceId}/settings`)}
 							className="text-violet-500 hover:underline"
 						>
-						Inställningar
+							Inställningar
 						</button>
 					</motion.p>
 				</motion.div>

@@ -74,8 +74,8 @@ export const TavilyApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitt
 				<div className="-ml-1">
 					<AlertTitle className="text-xs sm:text-sm">API-nyckel krävs</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						Du behöver en Tavily API-nyckel för att använda denna anslutning. Du kan få en genom
-						att registrera dig på{" "}
+						Du behöver en Tavily API-nyckel för att använda denna anslutning. Du kan få en genom att
+						registrera dig på{" "}
 						<a
 							href="https://tavily.com"
 							target="_blank"

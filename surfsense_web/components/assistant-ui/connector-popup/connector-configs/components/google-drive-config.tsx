@@ -316,7 +316,8 @@ export const GoogleDriveConfig: FC<ConnectorConfigProps> = ({ connector, onConfi
 							Inkrementell synk
 						</Label>
 						<p className="text-xs text-muted-foreground">
-							Synka endast ändringar sedan senaste indexering (snabbare). Inaktivera för fullständig omindexering.
+							Synka endast ändringar sedan senaste indexering (snabbare). Inaktivera för fullständig
+							omindexering.
 						</p>
 					</div>
 					<Switch

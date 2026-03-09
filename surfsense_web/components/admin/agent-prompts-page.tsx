@@ -27,7 +27,14 @@ import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { cn } from "@/lib/utils";
 
 type PromptViewMode = "all" | "agent" | "system" | "node";
-type PromptNodeGroup = "router" | "supervisor" | "subagent" | "compare" | "compare_mini" | "system" | "other";
+type PromptNodeGroup =
+	| "router"
+	| "supervisor"
+	| "subagent"
+	| "compare"
+	| "compare_mini"
+	| "system"
+	| "other";
 
 const NODE_GROUP_ORDER: PromptNodeGroup[] = [
 	"router",

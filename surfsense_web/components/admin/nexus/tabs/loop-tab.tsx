@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
 import {
 	AlertCircle,
 	Beaker,
@@ -10,27 +9,28 @@ import {
 	Clock,
 	Loader2,
 	Play,
-	ThumbsUp,
 	ThumbsDown,
+	ThumbsUp,
 	XCircle,
 } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-	nexusApiService,
-	type AutoLoopRunResponse,
-	type LoopRunDetail,
-	type LoopProposal,
-	type LoopStreamEvent,
-	type PlatformToolResponse,
-} from "@/lib/apis/nexus-api.service";
+import { useCallback, useEffect, useState } from "react";
 import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
 import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
-import { Slider } from "@/components/ui/slider";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Slider } from "@/components/ui/slider";
+import {
+	type AutoLoopRunResponse,
+	type LoopProposal,
+	type LoopRunDetail,
+	type LoopStreamEvent,
+	nexusApiService,
+	type PlatformToolResponse,
+} from "@/lib/apis/nexus-api.service";
 
 const BAND_LABELS = ["Band 0 (Exakt)", "Band 1 (Hog)", "Band 2 (Medel)", "Band 3 (Lag)"];
 
@@ -48,13 +48,7 @@ const BAND_COLORS: Record<number, string> = {
 // ProposalCard — enriched proposal with diff + failed queries
 // ---------------------------------------------------------------------------
 
-function ProposalCard({
-	proposal,
-	showActions,
-}: {
-	proposal: LoopProposal;
-	showActions: boolean;
-}) {
+function ProposalCard({ proposal, showActions }: { proposal: LoopProposal; showActions: boolean }) {
 	const [expanded, setExpanded] = useState(false);
 	const hasDiff = proposal.current_value || proposal.proposed_value;
 	const hasQueries = proposal.failed_queries && proposal.failed_queries.length > 0;
@@ -69,9 +63,7 @@ function ProposalCard({
 			>
 				<div className="space-y-1 flex-1 min-w-0">
 					<div className="flex items-center gap-2 flex-wrap">
-						<span className="font-mono font-medium text-xs">
-							{proposal.tool_id}
-						</span>
+						<span className="font-mono font-medium text-xs">{proposal.tool_id}</span>
 						<Badge variant="outline" className="text-xs py-0">
 							{proposal.field}
 						</Badge>
@@ -93,9 +85,7 @@ function ProposalCard({
 							</span>
 						)}
 					</div>
-					<p className="text-muted-foreground text-xs truncate">
-						{proposal.reason}
-					</p>
+					<p className="text-muted-foreground text-xs truncate">{proposal.reason}</p>
 				</div>
 				<div className="flex items-center gap-1 shrink-0">
 					{showActions && (
@@ -138,12 +128,8 @@ function ProposalCard({
 							<div className="grid grid-cols-2 gap-2">
 								{proposal.current_value && (
 									<div className="rounded border border-red-200 bg-red-50 p-2 text-xs dark:border-red-900 dark:bg-red-950">
-										<p className="text-red-600 dark:text-red-400 font-medium mb-0.5">
-											Nuvarande
-										</p>
-										<p className="break-words whitespace-pre-wrap">
-											{proposal.current_value}
-										</p>
+										<p className="text-red-600 dark:text-red-400 font-medium mb-0.5">Nuvarande</p>
+										<p className="break-words whitespace-pre-wrap">{proposal.current_value}</p>
 									</div>
 								)}
 								{proposal.proposed_value && (
@@ -151,9 +137,7 @@ function ProposalCard({
 										<p className="text-green-600 dark:text-green-400 font-medium mb-0.5">
 											Foreslagen
 										</p>
-										<p className="break-words whitespace-pre-wrap">
-											{proposal.proposed_value}
-										</p>
+										<p className="break-words whitespace-pre-wrap">{proposal.proposed_value}</p>
 									</div>
 								)}
 							</div>
@@ -182,26 +166,13 @@ function ProposalCard({
 									</thead>
 									<tbody>
 										{proposal.failed_queries.map((fq, fqIdx) => (
-											<tr
-												key={`fq-${fqIdx}`}
-												className="border-b last:border-0"
-											>
-												<td
-													className="py-1.5 pr-2 max-w-[200px] truncate"
-													title={fq.query}
-												>
+											<tr key={`fq-${fqIdx}`} className="border-b last:border-0">
+												<td className="py-1.5 pr-2 max-w-[200px] truncate" title={fq.query}>
 													{fq.query}
 												</td>
-												<td className="py-1.5 pr-2 font-mono text-green-700">
-													{fq.expected_tool}
-												</td>
-												<td className="py-1.5 pr-2 font-mono text-red-600">
-													{fq.got_tool}
-												</td>
-												<td
-													className="py-1.5 pr-2 font-mono"
-													title={fq.llm_judge_reasoning || ""}
-												>
+												<td className="py-1.5 pr-2 font-mono text-green-700">{fq.expected_tool}</td>
+												<td className="py-1.5 pr-2 font-mono text-red-600">{fq.got_tool}</td>
+												<td className="py-1.5 pr-2 font-mono" title={fq.llm_judge_reasoning || ""}>
 													{fq.llm_judge_tool ? (
 														<span
 															className={
@@ -216,9 +187,7 @@ function ProposalCard({
 														"—"
 													)}
 												</td>
-												<td className="py-1.5 pr-2">
-													{fq.resolved_zone || "—"}
-												</td>
+												<td className="py-1.5 pr-2">{fq.resolved_zone || "—"}</td>
 												<td className="py-1.5 pr-2">
 													{fq.selected_agent ? (
 														<span className="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1 py-0.5">
@@ -235,9 +204,7 @@ function ProposalCard({
 														{fq.band}
 													</span>
 												</td>
-												<td className="py-1.5 tabular-nums">
-													{fq.confidence?.toFixed(3) ?? "—"}
-												</td>
+												<td className="py-1.5 tabular-nums">{fq.confidence?.toFixed(3) ?? "—"}</td>
 											</tr>
 										))}
 									</tbody>
@@ -283,8 +250,8 @@ export function LoopTab() {
 					const parts = t.namespace.split("/");
 					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
 				})
-				.filter(Boolean),
-		),
+				.filter(Boolean)
+		)
 	).sort();
 
 	const loadRuns = () => {
@@ -386,7 +353,7 @@ export function LoopTab() {
 					.finally(() => setDetailLoading(null));
 			}
 		},
-		[expandedRunId, runDetails],
+		[expandedRunId, runDetails]
 	);
 
 	const handleApprove = useCallback((runId: string) => {
@@ -407,10 +374,7 @@ export function LoopTab() {
 			.finally(() => setApproving(null));
 	}, []);
 
-	const totalHardNegatives = runs.reduce(
-		(sum, r) => sum + (r.failures || 0),
-		0,
-	);
+	const totalHardNegatives = runs.reduce((sum, r) => sum + (r.failures || 0), 0);
 
 	if (loading) {
 		return (
@@ -485,8 +449,7 @@ export function LoopTab() {
 							<option value="">Valj namespace...</option>
 							{namespaces.map((ns) => (
 								<option key={ns} value={ns}>
-									{ns} (
-									{platformTools.filter((t) => t.namespace.startsWith(ns)).length})
+									{ns} ({platformTools.filter((t) => t.namespace.startsWith(ns)).length})
 								</option>
 							))}
 						</select>
@@ -517,11 +480,7 @@ export function LoopTab() {
 						) : (
 							<Play className="h-4 w-4 mr-2" />
 						)}
-						{starting
-							? "Kor loop..."
-							: filterLabel
-								? `Kor loop for ${filterLabel}`
-								: "Starta loop"}
+						{starting ? "Kor loop..." : filterLabel ? `Kor loop for ${filterLabel}` : "Starta loop"}
 					</Button>
 				</div>
 			</div>
@@ -533,9 +492,7 @@ export function LoopTab() {
 						<div className="space-y-2">
 							<div className="flex items-center justify-between">
 								<Label className="text-sm">Max iterationer</Label>
-								<span className="text-sm font-mono font-medium tabular-nums">
-									{maxIterations}
-								</span>
+								<span className="text-sm font-mono font-medium tabular-nums">{maxIterations}</span>
 							</div>
 							<Slider
 								min={1}
@@ -552,9 +509,7 @@ export function LoopTab() {
 						<div className="space-y-2">
 							<div className="flex items-center justify-between">
 								<Label className="text-sm">Batch-storlek</Label>
-								<span className="text-sm font-mono font-medium tabular-nums">
-									{batchSize}
-								</span>
+								<span className="text-sm font-mono font-medium tabular-nums">{batchSize}</span>
 							</div>
 							<Slider
 								min={10}
@@ -594,9 +549,7 @@ export function LoopTab() {
 					<CardContent className="pt-4 pb-4 space-y-3">
 						<div className="flex items-center gap-2">
 							<Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-							<span className="text-sm font-medium">
-								{liveProgress.detail || "Kor loop..."}
-							</span>
+							<span className="text-sm font-medium">{liveProgress.detail || "Kor loop..."}</span>
 						</div>
 						{liveProgress.total_cases != null && liveProgress.cases_processed != null && (
 							<div className="space-y-1">
@@ -628,24 +581,16 @@ export function LoopTab() {
 									</span>
 								)}
 								{liveProgress.precision_at_1 != null && (
-									<span>
-										P@1: {(liveProgress.precision_at_1 * 100).toFixed(1)}%
-									</span>
+									<span>P@1: {(liveProgress.precision_at_1 * 100).toFixed(1)}%</span>
 								)}
 								{liveProgress.intent_accuracy != null && (
-									<span>
-										Intent: {(liveProgress.intent_accuracy * 100).toFixed(1)}%
-									</span>
+									<span>Intent: {(liveProgress.intent_accuracy * 100).toFixed(1)}%</span>
 								)}
 								{liveProgress.agent_accuracy != null && (
-									<span>
-										Agent: {(liveProgress.agent_accuracy * 100).toFixed(1)}%
-									</span>
+									<span>Agent: {(liveProgress.agent_accuracy * 100).toFixed(1)}%</span>
 								)}
 								{liveProgress.llm_judge_agreement_rate != null && (
-									<span>
-										LLM-agree: {Math.round(liveProgress.llm_judge_agreement_rate * 100)}%
-									</span>
+									<span>LLM-agree: {Math.round(liveProgress.llm_judge_agreement_rate * 100)}%</span>
 								)}
 							</div>
 						)}
@@ -672,18 +617,10 @@ export function LoopTab() {
 				<StatCard label="Totalt korningar" value={String(runs.length)} />
 				<StatCard
 					label="Godkanda forslag"
-					value={String(
-						runs.reduce((sum, r) => sum + (r.approved_proposals || 0), 0),
-					)}
+					value={String(runs.reduce((sum, r) => sum + (r.approved_proposals || 0), 0))}
 				/>
-				<StatCard
-					label="Hard negatives"
-					value={String(totalHardNegatives)}
-				/>
-				<StatCard
-					label="Senaste status"
-					value={runs.length > 0 ? runs[0].status : "--"}
-				/>
+				<StatCard label="Hard negatives" value={String(totalHardNegatives)} />
+				<StatCard label="Senaste status" value={runs.length > 0 ? runs[0].status : "--"} />
 			</div>
 
 			{/* Run history */}
@@ -711,9 +648,7 @@ export function LoopTab() {
 										<div className="flex items-center gap-3">
 											<StatusIcon status={run.status} />
 											<div>
-												<p className="text-sm font-medium">
-													Loop #{run.loop_number}
-												</p>
+												<p className="text-sm font-medium">Loop #{run.loop_number}</p>
 												<p className="text-xs text-muted-foreground">
 													{run.started_at
 														? new Date(run.started_at).toLocaleString("sv-SE")
@@ -725,23 +660,21 @@ export function LoopTab() {
 											{run.total_tests !== null && (
 												<span className="text-muted-foreground">
 													{run.failures || 0}/{run.total_tests} fel
-										{run.total_cases_available != null &&
-											run.total_cases_available > 0 &&
-											` (av ${run.total_cases_available})`}
+													{run.total_cases_available != null &&
+														run.total_cases_available > 0 &&
+														` (av ${run.total_cases_available})`}
 												</span>
 											)}
-											{run.iterations_completed != null &&
-												run.iterations_completed > 1 && (
-													<span className="text-blue-600 text-xs">
-														{run.iterations_completed} iterationer
-													</span>
-												)}
-											{run.approved_proposals !== null &&
-												run.approved_proposals > 0 && (
-													<span className="text-green-600 font-medium">
-														{run.approved_proposals} godkanda
-													</span>
-												)}
+											{run.iterations_completed != null && run.iterations_completed > 1 && (
+												<span className="text-blue-600 text-xs">
+													{run.iterations_completed} iterationer
+												</span>
+											)}
+											{run.approved_proposals !== null && run.approved_proposals > 0 && (
+												<span className="text-green-600 font-medium">
+													{run.approved_proposals} godkanda
+												</span>
+											)}
 											<StatusBadge status={run.status} />
 											{isExpanded ? (
 												<ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -768,7 +701,8 @@ export function LoopTab() {
 																Loop #{detail.loop_number}
 																{detail.total_cases_available != null && (
 																	<span className="text-xs font-normal text-muted-foreground ml-2">
-																		({detail.total_tests}/{detail.total_cases_available} testfall utvärderade)
+																		({detail.total_tests}/{detail.total_cases_available} testfall
+																		utvärderade)
 																	</span>
 																)}
 															</h5>
@@ -782,8 +716,7 @@ export function LoopTab() {
 																				: "bg-muted text-muted-foreground"
 																	}`}
 																>
-																	Embedding delta:{" "}
-																	{detail.embedding_delta > 0 ? "+" : ""}
+																	Embedding delta: {detail.embedding_delta > 0 ? "+" : ""}
 																	{(detail.embedding_delta * 100).toFixed(2)}pp
 																</span>
 															)}
@@ -794,10 +727,7 @@ export function LoopTab() {
 																e.stopPropagation();
 																handleApprove(run.id);
 															}}
-															disabled={
-																run.status !== "review" ||
-																approving === run.id
-															}
+															disabled={run.status !== "review" || approving === run.id}
 														>
 															{approving === run.id ? (
 																<Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -839,54 +769,42 @@ export function LoopTab() {
 														<div className="space-y-4">
 															<Card>
 																<CardHeader className="py-3 px-4">
-																	<CardTitle className="text-sm">
-																		Band-fordelning
-																	</CardTitle>
+																	<CardTitle className="text-sm">Band-fordelning</CardTitle>
 																</CardHeader>
 																<CardContent className="px-4 pb-4">
 																	{detail.band_distribution.length === 0 ? (
-																		<p className="text-sm text-muted-foreground">
-																			Ingen data.
-																		</p>
+																		<p className="text-sm text-muted-foreground">Ingen data.</p>
 																	) : (
 																		<div className="space-y-2">
-																			{detail.band_distribution.map(
-																				(count, bandIdx) => {
-																					const total =
-																						detail.band_distribution.reduce(
-																							(a, b) => a + b,
-																							0,
-																						);
-																					const pct =
-																						total > 0
-																							? Math.round(
-																									(count / total) * 100,
-																								)
-																							: 0;
-																					return (
-																						<div
-																							key={bandIdx}
-																							className="flex items-center gap-3 text-sm"
-																						>
-																							<span className="w-28 text-muted-foreground">
-																								{BAND_LABELS[bandIdx] ||
-																									`Band ${bandIdx}`}
-																							</span>
-																							<div className="flex-1 h-4 bg-muted rounded overflow-hidden">
-																								<div
-																									className="h-full bg-primary rounded"
-																									style={{
-																										width: `${pct}%`,
-																									}}
-																								/>
-																							</div>
-																							<span className="w-16 text-right tabular-nums">
-																								{count} ({pct}%)
-																							</span>
+																			{detail.band_distribution.map((count, bandIdx) => {
+																				const total = detail.band_distribution.reduce(
+																					(a, b) => a + b,
+																					0
+																				);
+																				const pct =
+																					total > 0 ? Math.round((count / total) * 100) : 0;
+																				return (
+																					<div
+																						key={bandIdx}
+																						className="flex items-center gap-3 text-sm"
+																					>
+																						<span className="w-28 text-muted-foreground">
+																							{BAND_LABELS[bandIdx] || `Band ${bandIdx}`}
+																						</span>
+																						<div className="flex-1 h-4 bg-muted rounded overflow-hidden">
+																							<div
+																								className="h-full bg-primary rounded"
+																								style={{
+																									width: `${pct}%`,
+																								}}
+																							/>
 																						</div>
-																					);
-																				},
-																			)}
+																						<span className="w-16 text-right tabular-nums">
+																							{count} ({pct}%)
+																						</span>
+																					</div>
+																				);
+																			})}
 																		</div>
 																	)}
 																</CardContent>
@@ -894,24 +812,18 @@ export function LoopTab() {
 
 															<Card>
 																<CardHeader className="py-3 px-4">
-																	<CardTitle className="text-sm">
-																		Plattformsjamforelse
-																	</CardTitle>
+																	<CardTitle className="text-sm">Plattformsjamforelse</CardTitle>
 																</CardHeader>
 																<CardContent className="px-4 pb-4">
 																	<div className="grid grid-cols-2 gap-4 text-sm">
 																		<div>
-																			<p className="text-muted-foreground">
-																				Jamforelser
-																			</p>
+																			<p className="text-muted-foreground">Jamforelser</p>
 																			<p className="text-lg font-bold">
 																				{detail.platform_comparisons}
 																			</p>
 																		</div>
 																		<div>
-																			<p className="text-muted-foreground">
-																				Overensstammelser
-																			</p>
+																			<p className="text-muted-foreground">Overensstammelser</p>
 																			<p className="text-lg font-bold">
 																				{detail.platform_agreements}
 																			</p>
@@ -925,7 +837,7 @@ export function LoopTab() {
 																					{Math.round(
 																						(detail.platform_agreements /
 																							detail.platform_comparisons) *
-																							100,
+																							100
 																					)}
 																					%
 																				</p>
@@ -939,9 +851,7 @@ export function LoopTab() {
 															{detail.llm_judge && (
 																<Card>
 																	<CardHeader className="py-3 px-4">
-																		<CardTitle className="text-sm">
-																			LLM Judge vs NEXUS
-																		</CardTitle>
+																		<CardTitle className="text-sm">LLM Judge vs NEXUS</CardTitle>
 																	</CardHeader>
 																	<CardContent className="px-4 pb-4 space-y-3">
 																		{/* Accuracy head-to-head */}
@@ -954,7 +864,9 @@ export function LoopTab() {
 																					{Math.round(detail.llm_judge.nexus_accuracy * 100)}%
 																				</p>
 																				<p className="text-xs text-muted-foreground">
-																					{detail.llm_judge.both_correct + detail.llm_judge.nexus_only_correct}/{detail.llm_judge.total}
+																					{detail.llm_judge.both_correct +
+																						detail.llm_judge.nexus_only_correct}
+																					/{detail.llm_judge.total}
 																				</p>
 																			</div>
 																			<div className="rounded border p-3">
@@ -965,7 +877,9 @@ export function LoopTab() {
 																					{Math.round(detail.llm_judge.llm_accuracy * 100)}%
 																				</p>
 																				<p className="text-xs text-muted-foreground">
-																					{detail.llm_judge.both_correct + detail.llm_judge.llm_only_correct}/{detail.llm_judge.total}
+																					{detail.llm_judge.both_correct +
+																						detail.llm_judge.llm_only_correct}
+																					/{detail.llm_judge.total}
 																				</p>
 																			</div>
 																		</div>
@@ -980,19 +894,25 @@ export function LoopTab() {
 																					<p className="font-bold text-green-700 dark:text-green-400 text-lg">
 																						{detail.llm_judge.both_correct}
 																					</p>
-																					<p className="text-green-600 dark:text-green-500">Bada ratt</p>
+																					<p className="text-green-600 dark:text-green-500">
+																						Bada ratt
+																					</p>
 																				</div>
 																				<div className="rounded bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-900 p-2 text-center">
 																					<p className="font-bold text-blue-700 dark:text-blue-400 text-lg">
 																						{detail.llm_judge.nexus_only_correct}
 																					</p>
-																					<p className="text-blue-600 dark:text-blue-500">Bara NEXUS ratt</p>
+																					<p className="text-blue-600 dark:text-blue-500">
+																						Bara NEXUS ratt
+																					</p>
 																				</div>
 																				<div className="rounded bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-900 p-2 text-center">
 																					<p className="font-bold text-purple-700 dark:text-purple-400 text-lg">
 																						{detail.llm_judge.llm_only_correct}
 																					</p>
-																					<p className="text-purple-600 dark:text-purple-500">Bara LLM ratt</p>
+																					<p className="text-purple-600 dark:text-purple-500">
+																						Bara LLM ratt
+																					</p>
 																				</div>
 																				<div className="rounded bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 p-2 text-center">
 																					<p className="font-bold text-red-700 dark:text-red-400 text-lg">
@@ -1007,7 +927,8 @@ export function LoopTab() {
 																		<div className="flex items-center justify-between text-xs text-muted-foreground border-t pt-2">
 																			<span>Overensstammelse</span>
 																			<span className="font-mono font-medium">
-																				{detail.llm_judge.agreements}/{detail.llm_judge.total} ({Math.round(detail.llm_judge.agreement_rate * 100)}%)
+																				{detail.llm_judge.agreements}/{detail.llm_judge.total} (
+																				{Math.round(detail.llm_judge.agreement_rate * 100)}%)
 																			</span>
 																		</div>
 
@@ -1031,14 +952,24 @@ export function LoopTab() {
 																						</thead>
 																						<tbody>
 																							{detail.llm_judge.disagreements.map((d, idx) => (
-																								<tr key={`disagree-${idx}`} className="border-b last:border-0">
-																									<td className="py-1 pr-2 max-w-[140px] truncate" title={d.query}>
+																								<tr
+																									key={`disagree-${idx}`}
+																									className="border-b last:border-0"
+																								>
+																									<td
+																										className="py-1 pr-2 max-w-[140px] truncate"
+																										title={d.query}
+																									>
 																										{d.query}
 																									</td>
-																									<td className={`py-1 pr-2 font-mono ${d.winner === "nexus" ? "text-green-700 font-medium" : "text-muted-foreground"}`}>
+																									<td
+																										className={`py-1 pr-2 font-mono ${d.winner === "nexus" ? "text-green-700 font-medium" : "text-muted-foreground"}`}
+																									>
 																										{d.nexus_tool}
 																									</td>
-																									<td className={`py-1 pr-2 font-mono ${d.winner === "llm" ? "text-green-700 font-medium" : "text-muted-foreground"}`}>
+																									<td
+																										className={`py-1 pr-2 font-mono ${d.winner === "llm" ? "text-green-700 font-medium" : "text-muted-foreground"}`}
+																									>
 																										{d.llm_tool}
 																									</td>
 																									<td className="py-1 pr-2 font-mono text-muted-foreground">
@@ -1046,19 +977,28 @@ export function LoopTab() {
 																									</td>
 																									<td className="py-1 pr-2">
 																										{d.winner === "nexus" && (
-																											<span className="text-blue-600 font-medium">NEXUS</span>
+																											<span className="text-blue-600 font-medium">
+																												NEXUS
+																											</span>
 																										)}
 																										{d.winner === "llm" && (
-																											<span className="text-purple-600 font-medium">LLM</span>
+																											<span className="text-purple-600 font-medium">
+																												LLM
+																											</span>
 																										)}
 																										{d.winner === "neither" && (
 																											<span className="text-red-500">Ingen</span>
 																										)}
 																										{d.winner === "tie" && (
-																											<span className="text-muted-foreground">—</span>
+																											<span className="text-muted-foreground">
+																												—
+																											</span>
 																										)}
 																									</td>
-																									<td className="py-1 max-w-[180px] truncate text-muted-foreground" title={d.reasoning}>
+																									<td
+																										className="py-1 max-w-[180px] truncate text-muted-foreground"
+																										title={d.reasoning}
+																									>
 																										{d.reasoning}
 																									</td>
 																								</tr>
@@ -1073,63 +1013,59 @@ export function LoopTab() {
 															)}
 
 															{/* Iteration details */}
-															{detail.iterations &&
-																detail.iterations.length > 0 && (
-																	<Card>
-																		<CardHeader className="py-3 px-4">
-																			<CardTitle className="text-sm">
-																				Iterationer ({detail.iterations.length})
-																			</CardTitle>
-																		</CardHeader>
-																		<CardContent className="px-4 pb-4">
-																			<div className="space-y-2">
-																				{detail.iterations.map((iter) => (
-																					<div
-																						key={iter.iteration}
-																						className="flex items-center justify-between text-sm rounded-md border bg-background p-2"
-																					>
-																						<span className="font-medium">
-																							Iteration {iter.iteration}
+															{detail.iterations && detail.iterations.length > 0 && (
+																<Card>
+																	<CardHeader className="py-3 px-4">
+																		<CardTitle className="text-sm">
+																			Iterationer ({detail.iterations.length})
+																		</CardTitle>
+																	</CardHeader>
+																	<CardContent className="px-4 pb-4">
+																		<div className="space-y-2">
+																			{detail.iterations.map((iter) => (
+																				<div
+																					key={iter.iteration}
+																					className="flex items-center justify-between text-sm rounded-md border bg-background p-2"
+																				>
+																					<span className="font-medium">
+																						Iteration {iter.iteration}
+																					</span>
+																					<div className="flex items-center gap-3 text-xs text-muted-foreground">
+																						<span>
+																							{iter.failures}/{iter.total_tests} fel
 																						</span>
-																						<div className="flex items-center gap-3 text-xs text-muted-foreground">
-																							<span>
-																								{iter.failures}/{iter.total_tests} fel
+																						<span>
+																							P@1: {(iter.precision_at_1 * 100).toFixed(1)}%
+																						</span>
+																						<span>MRR: {(iter.mrr * 100).toFixed(1)}%</span>
+																						{iter.intent_accuracy != null && (
+																							<span className="text-indigo-600">
+																								Intent: {(iter.intent_accuracy * 100).toFixed(1)}%
 																							</span>
-																							<span>
-																								P@1: {(iter.precision_at_1 * 100).toFixed(1)}%
+																						)}
+																						{iter.agent_accuracy != null && (
+																							<span className="text-violet-600">
+																								Agent: {(iter.agent_accuracy * 100).toFixed(1)}%
 																							</span>
+																						)}
+																						{iter.llm_judge_agreement_rate != null && (
 																							<span>
-																								MRR: {(iter.mrr * 100).toFixed(1)}%
+																								LLM-agree:{" "}
+																								{Math.round(iter.llm_judge_agreement_rate * 100)}%
 																							</span>
-																							{iter.intent_accuracy != null && (
-																								<span className="text-indigo-600">
-																									Intent: {(iter.intent_accuracy * 100).toFixed(1)}%
-																								</span>
-																							)}
-																							{iter.agent_accuracy != null && (
-																								<span className="text-violet-600">
-																									Agent: {(iter.agent_accuracy * 100).toFixed(1)}%
-																								</span>
-																							)}
-																							{iter.llm_judge_agreement_rate != null && (
-																								<span>
-																									LLM-agree: {Math.round(iter.llm_judge_agreement_rate * 100)}%
-																								</span>
-																							)}
-																						</div>
+																						)}
 																					</div>
-																				))}
-																			</div>
-																		</CardContent>
-																	</Card>
-																)}
+																				</div>
+																			))}
+																		</div>
+																	</CardContent>
+																</Card>
+															)}
 														</div>
 													</div>
 												</>
 											) : (
-												<p className="text-sm text-muted-foreground">
-													Kunde inte ladda detaljer.
-												</p>
+												<p className="text-sm text-muted-foreground">Kunde inte ladda detaljer.</p>
 											)}
 										</div>
 									)}
@@ -1183,7 +1119,5 @@ function StatusBadge({ status }: { status: string }) {
 	};
 	const color = colors[status] || "bg-gray-100 text-gray-700";
 
-	return (
-		<span className={`text-xs px-2 py-0.5 rounded ${color}`}>{status}</span>
-	);
+	return <span className={`text-xs px-2 py-0.5 rounded ${color}`}>{status}</span>;
 }

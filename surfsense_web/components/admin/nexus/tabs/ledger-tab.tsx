@@ -1,17 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, BookOpen, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import {
-	nexusApiService,
 	type MetricsTrend,
+	nexusApiService,
 	type PipelineMetricsSummary,
 	type StageMetrics,
 } from "@/lib/apis/nexus-api.service";
@@ -124,10 +119,7 @@ export function LedgerTab() {
 			{/* Namespace Filter */}
 			{namespaces.length > 0 && (
 				<div className="flex items-center gap-3">
-					<label
-						htmlFor="namespace-filter"
-						className="text-sm font-medium text-muted-foreground"
-					>
+					<label htmlFor="namespace-filter" className="text-sm font-medium text-muted-foreground">
 						Filtrera namespace:
 					</label>
 					<select
@@ -162,13 +154,7 @@ export function LedgerTab() {
 	);
 }
 
-function TrendChart({
-	trend,
-	loading,
-}: {
-	trend: MetricsTrend | null;
-	loading: boolean;
-}) {
+function TrendChart({ trend, loading }: { trend: MetricsTrend | null; loading: boolean }) {
 	if (loading) {
 		return (
 			<Card>
@@ -194,9 +180,7 @@ function TrendChart({
 					<CardTitle className="text-base">30-dagars trend</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<p className="text-sm text-muted-foreground">
-						Ingen trenddata tillgänglig
-					</p>
+					<p className="text-sm text-muted-foreground">Ingen trenddata tillgänglig</p>
 				</CardContent>
 			</Card>
 		);
@@ -225,9 +209,7 @@ function TrendChart({
 					<CardTitle className="text-base">30-dagars trend</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<p className="text-sm text-muted-foreground">
-						Ingen trenddata tillgänglig
-					</p>
+					<p className="text-sm text-muted-foreground">Ingen trenddata tillgänglig</p>
 				</CardContent>
 			</Card>
 		);
@@ -346,7 +328,7 @@ function TrendChart({
 								r={3}
 								fill={pl.color}
 							/>
-						)),
+						))
 					)}
 				</svg>
 
@@ -358,9 +340,7 @@ function TrendChart({
 								className="inline-block h-2.5 w-2.5 rounded-full"
 								style={{ backgroundColor: pl.color }}
 							/>
-							<span className="text-muted-foreground">
-								{STAGE_LABELS[pl.stage] ?? pl.stage}
-							</span>
+							<span className="text-muted-foreground">{STAGE_LABELS[pl.stage] ?? pl.stage}</span>
 						</div>
 					))}
 				</div>
@@ -377,9 +357,7 @@ function StageCard({ stage }: { stage: StageMetrics }) {
 			<div className="flex items-center justify-between mb-3">
 				<h4 className="font-semibold text-sm">{label}</h4>
 				{stage.namespace && (
-					<span className="text-xs text-muted-foreground font-mono">
-						{stage.namespace}
-					</span>
+					<span className="text-xs text-muted-foreground font-mono">{stage.namespace}</span>
 				)}
 			</div>
 			<div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -388,11 +366,7 @@ function StageCard({ stage }: { stage: StageMetrics }) {
 				<MetricValue label="MRR@10" value={stage.mrr_at_10} />
 				<MetricValue label="nDCG@5" value={stage.ndcg_at_5} />
 				{stage.reranker_delta !== null && (
-					<MetricValue
-						label="Reranker Delta"
-						value={stage.reranker_delta}
-						showSign
-					/>
+					<MetricValue label="Reranker Delta" value={stage.reranker_delta} showSign />
 				)}
 			</div>
 		</div>
@@ -419,19 +393,14 @@ function MetricValue({
 
 	const pct = (value * 100).toFixed(1);
 	const prefix = showSign && value > 0 ? "+" : "";
-	const color = showSign
-		? value > 0
-			? "text-green-600"
-			: value < 0
-				? "text-red-600"
-				: ""
-		: "";
+	const color = showSign ? (value > 0 ? "text-green-600" : value < 0 ? "text-red-600" : "") : "";
 
 	return (
 		<div>
 			<p className="text-xs text-muted-foreground">{label}</p>
 			<p className={`text-lg font-mono font-semibold ${color}`}>
-				{prefix}{pct}%
+				{prefix}
+				{pct}%
 			</p>
 		</div>
 	);

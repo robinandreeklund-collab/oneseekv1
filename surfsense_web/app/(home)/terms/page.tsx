@@ -56,10 +56,10 @@ export default function TermsOfService() {
 						aktiviteter som sker under ditt lösenord.
 					</p>
 					<p className="mt-4">
-						Du måste lämna korrekta och fullständiga uppgifter när du skapar ditt konto. Du samtycker
-						till att uppdatera dina uppgifter för att hålla dem korrekta och fullständiga. Du ansvarar
-						för att upprätthålla sekretessen för ditt konto och lösenord, inklusive att begränsa
-						åtkomst till din dator och/eller ditt konto.
+						Du måste lämna korrekta och fullständiga uppgifter när du skapar ditt konto. Du
+						samtycker till att uppdatera dina uppgifter för att hålla dem korrekta och fullständiga.
+						Du ansvarar för att upprätthålla sekretessen för ditt konto och lösenord, inklusive att
+						begränsa åtkomst till din dator och/eller ditt konto.
 					</p>
 					<p className="mt-4">
 						Vi förbehåller oss rätten att vägra tjänst, avsluta konton, ta bort eller redigera
@@ -104,12 +104,14 @@ export default function TermsOfService() {
 				</section>
 
 				<section className="mb-8">
-					<h2 className="text-2xl font-semibold mb-4">6. Ändring och upphörande av våra tjänster</h2>
+					<h2 className="text-2xl font-semibold mb-4">
+						6. Ändring och upphörande av våra tjänster
+					</h2>
 					<p>
 						Vi förändrar och förbättrar ständigt våra tjänster. Vi kan lägga till eller ta bort
 						funktioner, och vi kan tillfälligt eller permanent upphöra med en tjänst. Du kan sluta
-						använda våra tjänster när som helst. Oneseek kan också sluta tillhandahålla tjänster till
-						dig, eller införa nya begränsningar, när som helst.
+						använda våra tjänster när som helst. Oneseek kan också sluta tillhandahålla tjänster
+						till dig, eller införa nya begränsningar, när som helst.
 					</p>
 					<p className="mt-4">
 						Vi anser att du äger din data och att det är viktigt att bevara din åtkomst till sådan
@@ -119,8 +121,8 @@ export default function TermsOfService() {
 					<p className="mt-4">
 						Vi förbehåller oss rätten att ändra dessa villkor när som helst. Om vi gör väsentliga
 						ändringar kommer vi att informera dig via e-post eller genom att publicera en notis på
-						vår webbplats innan ändringarna träder i kraft. Din fortsatta användning av våra tjänster
-						efter ikraftträdandet innebär att du accepterar de ändrade villkoren.
+						vår webbplats innan ändringarna träder i kraft. Din fortsatta användning av våra
+						tjänster efter ikraftträdandet innebär att du accepterar de ändrade villkoren.
 					</p>
 				</section>
 
@@ -128,8 +130,8 @@ export default function TermsOfService() {
 					<h2 className="text-2xl font-semibold mb-4">7. Garantier och ansvarsfriskrivningar</h2>
 					<p>
 						Vi tillhandahåller våra tjänster med en kommersiellt rimlig nivå av skicklighet och
-						omsorg och hoppas att du ska ha nytta av dem. Men det finns vissa saker vi inte lovar
-						om våra tjänster.
+						omsorg och hoppas att du ska ha nytta av dem. Men det finns vissa saker vi inte lovar om
+						våra tjänster.
 					</p>
 					<p className="mt-4 uppercase font-bold">
 						UTÖVER VAD SOM UTTRYCKLIGEN ANGES I DESSA VILLKOR ELLER TILLÄGGSVILLKOR GER VARKEN
@@ -140,8 +142,8 @@ export default function TermsOfService() {
 					</p>
 					<p className="mt-4 uppercase font-bold">
 						VISSA JURISDIKTIONER FÖRESKRIVER VISSA GARANTIER, SÅSOM UNDERFÖRSTÅDDA GARANTIER OM
-						SÄLJBARHET, LÄMPLIGHET FÖR ETT SÄRSKILT ÄNDAMÅL OCH ICKE-INTRÅNG. I DEN UTSTRÄCKNING
-						SOM LAGEN TILLÅTER UTESLUTER VI ALLA GARANTIER.
+						SÄLJBARHET, LÄMPLIGHET FÖR ETT SÄRSKILT ÄNDAMÅL OCH ICKE-INTRÅNG. I DEN UTSTRÄCKNING SOM
+						LAGEN TILLÅTER UTESLUTER VI ALLA GARANTIER.
 					</p>
 				</section>
 

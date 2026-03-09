@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle, Ghost, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-	nexusApiService,
-	type DarkMatterCluster,
-} from "@/lib/apis/nexus-api.service";
+import { type DarkMatterCluster, nexusApiService } from "@/lib/apis/nexus-api.service";
 
 export function DarkMatterPanel() {
 	const [clusters, setClusters] = useState<DarkMatterCluster[]>([]);
@@ -28,9 +25,7 @@ export function DarkMatterPanel() {
 		try {
 			await nexusApiService.reviewDarkMatter(clusterId);
 			setClusters((prev) =>
-				prev.map((c) =>
-					c.cluster_id === clusterId ? { ...c, reviewed: true } : c,
-				),
+				prev.map((c) => (c.cluster_id === clusterId ? { ...c, reviewed: true } : c))
 			);
 		} catch {
 			// ignore
@@ -74,21 +69,16 @@ export function DarkMatterPanel() {
 					Dark Matter — OOD-kluster
 				</h3>
 				<p className="text-sm text-muted-foreground">
-					Frågor som inte matchar något verktyg, grupperade efter liknande
-					mönster
+					Frågor som inte matchar något verktyg, grupperade efter liknande mönster
 				</p>
 			</div>
 			<div className="divide-y">
 				{clusters.map((cluster) => (
 					<div key={cluster.cluster_id} className="p-4">
 						<div className="flex items-center justify-between mb-2">
-							<span className="text-sm font-medium">
-								Kluster #{cluster.cluster_id}
-							</span>
+							<span className="text-sm font-medium">Kluster #{cluster.cluster_id}</span>
 							<div className="flex items-center gap-2">
-								<span className="text-xs text-muted-foreground">
-									{cluster.query_count} frågor
-								</span>
+								<span className="text-xs text-muted-foreground">{cluster.query_count} frågor</span>
 								{cluster.suggested_tool && (
 									<span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
 										Föreslaget: {cluster.suggested_tool}

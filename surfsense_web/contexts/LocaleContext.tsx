@@ -2,10 +2,10 @@
 
 import type React from "react";
 import { createContext, useContext, useEffect, useState } from "react";
+import { DEFAULT_LOCALE, type LocaleCode } from "@/lib/locale";
 import enMessages from "../messages/en.json";
 import svMessages from "../messages/sv.json";
 import zhMessages from "../messages/zh.json";
-import { DEFAULT_LOCALE, type LocaleCode } from "@/lib/locale";
 
 type Locale = LocaleCode;
 

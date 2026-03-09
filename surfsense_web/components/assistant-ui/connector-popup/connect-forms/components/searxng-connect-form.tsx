@@ -280,7 +280,8 @@ export const SearxngConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmittin
 											/>
 										</FormControl>
 										<FormDescription className="text-[10px] sm:text-xs">
-											IETF-språktagg (t.ex. en, en-US). Lämna tomt för att använda standardinställningar.
+											IETF-språktagg (t.ex. en, en-US). Lämna tomt för att använda
+											standardinställningar.
 										</FormDescription>
 										<FormMessage />
 									</FormItem>
@@ -292,9 +293,7 @@ export const SearxngConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmittin
 								name="safesearch"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel className="text-xs sm:text-sm">
-											SafeSearch-nivå (valfritt)
-										</FormLabel>
+										<FormLabel className="text-xs sm:text-sm">SafeSearch-nivå (valfritt)</FormLabel>
 										<FormControl>
 											<Input
 												placeholder="0 (av), 1 (måttlig), 2 (strikt)"

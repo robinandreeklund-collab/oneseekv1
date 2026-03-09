@@ -5,18 +5,18 @@ import { AlertCircleIcon, ChevronDownIcon } from "lucide-react";
 import { useContext, useState } from "react";
 import { z } from "zod";
 import { SpotlightArenaActiveContext } from "@/components/tool-ui/spotlight-arena";
-import {
-	MODEL_LOGOS,
-	ENERGY_WH_PER_1K_TOKENS,
-	CO2G_PER_1K_TOKENS,
-	formatLatency,
-	estimateTokensFromText,
-} from "@/lib/compare-constants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+	CO2G_PER_1K_TOKENS,
+	ENERGY_WH_PER_1K_TOKENS,
+	estimateTokensFromText,
+	formatLatency,
+	MODEL_LOGOS,
+} from "@/lib/compare-constants";
 
 // ============================================================================
 // Zod Schemas
@@ -116,9 +116,7 @@ function resolveTokenEstimate(
 	return { totalTokens: total, isEstimated: true };
 }
 
-function estimateImpact(
-	tokenEstimate?: { totalTokens: number; isEstimated: boolean } | null
-) {
+function estimateImpact(tokenEstimate?: { totalTokens: number; isEstimated: boolean } | null) {
 	if (!tokenEstimate) return null;
 	const totalTokens = tokenEstimate.totalTokens;
 
@@ -378,13 +376,7 @@ function createExternalModelToolUI(toolName: string, label: string) {
 			if (isInArena) return null;
 
 			return (
-				<ModelCard
-					label={label}
-					toolName={toolName}
-					args={args}
-					result={result}
-					status={status}
-				/>
+				<ModelCard label={label} toolName={toolName} args={args} result={result} status={status} />
 			);
 		},
 	});
@@ -395,9 +387,6 @@ export const ClaudeToolUI = createExternalModelToolUI("call_claude", "Claude");
 export const GptToolUI = createExternalModelToolUI("call_gpt", "ChatGPT");
 export const GeminiToolUI = createExternalModelToolUI("call_gemini", "Gemini");
 export const DeepSeekToolUI = createExternalModelToolUI("call_deepseek", "DeepSeek");
-export const PerplexityToolUI = createExternalModelToolUI(
-	"call_perplexity",
-	"Perplexity"
-);
+export const PerplexityToolUI = createExternalModelToolUI("call_perplexity", "Perplexity");
 export const QwenToolUI = createExternalModelToolUI("call_qwen", "Qwen");
 export const OneseekToolUI = createExternalModelToolUI("call_oneseek", "Oneseek");

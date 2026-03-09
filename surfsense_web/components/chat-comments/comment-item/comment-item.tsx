@@ -74,12 +74,10 @@ function formatTimestamp(
 		day: "numeric",
 		year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
 	});
-	return (
-		t("date_at", {
-			date: formattedDate,
-			time: timeStr,
-		})
-	);
+	return t("date_at", {
+		date: formattedDate,
+		time: timeStr,
+	});
 }
 
 export function convertRenderedToDisplay(contentRendered: string): string {

@@ -2,33 +2,14 @@
 
 /** Överblick tab — Nyckeltal, Trenddiagram, Lifecycle, Eval-historik, Audit Trail */
 
-import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
+import { CheckCircle2, Loader2, Search, ShieldAlert } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
-import {
-	Search,
-	CheckCircle2,
-	ShieldAlert,
-	Loader2,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
+import { AuditTrail, type AuditTrailEntry } from "@/components/admin/shared/audit-trail";
+import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -39,23 +20,27 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "sonner";
-import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
-import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
-	ToolLifecycleStatusResponse as ToolLifecycleStatus,
 	ToolLifecycleListResponse,
+	ToolLifecycleStatusResponse as ToolLifecycleStatus,
 } from "@/contracts/types/admin-tool-lifecycle.types";
 import type { ToolEvaluationStageHistoryResponse } from "@/contracts/types/admin-tool-settings.types";
-import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
-import { AuditTrail, type AuditTrailEntry } from "@/components/admin/shared/audit-trail";
+import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
 // Helpers
 
@@ -130,14 +115,13 @@ function StageHistorySection({
 		history?.items && history.items.length > 0
 			? history.items[history.items.length - 1]
 			: undefined;
-	const categoryOptions =
-		history?.category_series?.map((series) => series.category_id) ?? [];
+	const categoryOptions = history?.category_series?.map((series) => series.category_id) ?? [];
 	const effectiveCategory =
 		categoryOptions.includes(selectedCategory) && selectedCategory
 			? selectedCategory
-			: categoryOptions[0] ?? "";
+			: (categoryOptions[0] ?? "");
 	const selectedSeries = history?.category_series?.find(
-		(series) => series.category_id === effectiveCategory,
+		(series) => series.category_id === effectiveCategory
 	);
 
 	useEffect(() => {
@@ -152,12 +136,8 @@ function StageHistorySection({
 				<span className="text-muted-foreground">
 					Senaste: {latest?.run_at ? new Date(latest.run_at).toLocaleString("sv-SE") : "-"}
 				</span>
-				<span className="text-muted-foreground">
-					Rate: {formatPercent(latest?.success_rate)}
-				</span>
-				<span className="text-muted-foreground">
-					Korningar: {history?.items?.length ?? 0}
-				</span>
+				<span className="text-muted-foreground">Rate: {formatPercent(latest?.success_rate)}</span>
+				<span className="text-muted-foreground">Korningar: {history?.items?.length ?? 0}</span>
 			</div>
 
 			{categoryOptions.length > 0 && (
@@ -233,14 +213,11 @@ export function OverviewTab() {
 	const { data: currentUser } = useAtomValue(currentUserAtom);
 
 	// Lifecycle state
-	const [lifecycleData, setLifecycleData] =
-		useState<ToolLifecycleListResponse | null>(null);
+	const [lifecycleData, setLifecycleData] = useState<ToolLifecycleListResponse | null>(null);
 	const [lifecycleLoading, setLifecycleLoading] = useState(true);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState<"all" | "live" | "review" | "ready">("all");
-	const [rollbackTool, setRollbackTool] = useState<ToolLifecycleStatus | null>(
-		null,
-	);
+	const [rollbackTool, setRollbackTool] = useState<ToolLifecycleStatus | null>(null);
 	const [rollbackNotes, setRollbackNotes] = useState("");
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -260,31 +237,19 @@ export function OverviewTab() {
 
 	const { data: agentEvalHistory } = useQuery({
 		queryKey: ["admin-tool-eval-history", searchSpaceId, "agent"],
-		queryFn: () =>
-			adminToolSettingsApiService.getToolEvaluationHistory(
-				"agent",
-				searchSpaceId,
-			),
+		queryFn: () => adminToolSettingsApiService.getToolEvaluationHistory("agent", searchSpaceId),
 		enabled: !!currentUser && typeof searchSpaceId === "number",
 	});
 
 	const { data: toolEvalHistory } = useQuery({
 		queryKey: ["admin-tool-eval-history", searchSpaceId, "tool"],
-		queryFn: () =>
-			adminToolSettingsApiService.getToolEvaluationHistory(
-				"tool",
-				searchSpaceId,
-			),
+		queryFn: () => adminToolSettingsApiService.getToolEvaluationHistory("tool", searchSpaceId),
 		enabled: !!currentUser && typeof searchSpaceId === "number",
 	});
 
 	const { data: apiInputEvalHistory } = useQuery({
 		queryKey: ["admin-tool-eval-history", searchSpaceId, "api_input"],
-		queryFn: () =>
-			adminToolSettingsApiService.getToolEvaluationHistory(
-				"api_input",
-				searchSpaceId,
-			),
+		queryFn: () => adminToolSettingsApiService.getToolEvaluationHistory("api_input", searchSpaceId),
 		enabled: !!currentUser && typeof searchSpaceId === "number",
 	});
 
@@ -315,8 +280,7 @@ export function OverviewTab() {
 			: null;
 	const latestApiInputRate =
 		apiInputEvalHistory?.items && apiInputEvalHistory.items.length > 0
-			? apiInputEvalHistory.items[apiInputEvalHistory.items.length - 1]
-					.success_rate
+			? apiInputEvalHistory.items[apiInputEvalHistory.items.length - 1].success_rate
 			: null;
 
 	const prevAgentRate =
@@ -329,18 +293,13 @@ export function OverviewTab() {
 			: null;
 	const prevApiInputRate =
 		apiInputEvalHistory?.items && apiInputEvalHistory.items.length > 1
-			? apiInputEvalHistory.items[apiInputEvalHistory.items.length - 2]
-					.success_rate
+			? apiInputEvalHistory.items[apiInputEvalHistory.items.length - 2].success_rate
 			: null;
 
 	const agentDelta =
-		latestAgentRate != null && prevAgentRate != null
-			? latestAgentRate - prevAgentRate
-			: null;
+		latestAgentRate != null && prevAgentRate != null ? latestAgentRate - prevAgentRate : null;
 	const toolDelta =
-		latestToolRate != null && prevToolRate != null
-			? latestToolRate - prevToolRate
-			: null;
+		latestToolRate != null && prevToolRate != null ? latestToolRate - prevToolRate : null;
 	const apiInputDelta =
 		latestApiInputRate != null && prevApiInputRate != null
 			? latestApiInputRate - prevApiInputRate
@@ -363,7 +322,7 @@ export function OverviewTab() {
 			tool.success_rate < tool.required_success_rate
 		) {
 			toast.error(
-				`Verktyget nar inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`,
+				`Verktyget nar inte kraven (${(tool.success_rate * 100).toFixed(1)}% < ${(tool.required_success_rate * 100).toFixed(0)}%)`
 			);
 			return;
 		}
@@ -377,11 +336,7 @@ export function OverviewTab() {
 			toast.success(`${tool.tool_id} satt till ${newStatus}`);
 			await fetchLifecycleData();
 		} catch (error) {
-			toast.error(
-				error instanceof Error
-					? error.message
-					: "Kunde inte uppdatera status",
-			);
+			toast.error(error instanceof Error ? error.message : "Kunde inte uppdatera status");
 			console.error(error);
 		} finally {
 			setActionLoading(null);
@@ -404,9 +359,7 @@ export function OverviewTab() {
 			setRollbackNotes("");
 			await fetchLifecycleData();
 		} catch (error) {
-			toast.error(
-				error instanceof Error ? error.message : "Rollback misslyckades",
-			);
+			toast.error(error instanceof Error ? error.message : "Rollback misslyckades");
 			console.error(error);
 		} finally {
 			setActionLoading(null);
@@ -416,7 +369,7 @@ export function OverviewTab() {
 	const bulkPromoteToLive = async () => {
 		if (
 			!confirm(
-				`Befordra ALLA ${lifecycleData?.review_count || 0} review-verktyg till LIVE?\n\nDetta kringgår tröskelvärden och är avsett för initial migrering.`,
+				`Befordra ALLA ${lifecycleData?.review_count || 0} review-verktyg till LIVE?\n\nDetta kringgår tröskelvärden och är avsett för initial migrering.`
 			)
 		) {
 			return;
@@ -426,16 +379,11 @@ export function OverviewTab() {
 			setLifecycleLoading(true);
 			const result = await adminToolLifecycleApiService.bulkPromoteToLive();
 			toast.success(
-				(result as { message?: string })?.message ||
-					"Alla verktyg befordrade till LIVE",
+				(result as { message?: string })?.message || "Alla verktyg befordrade till LIVE"
 			);
 			await fetchLifecycleData();
 		} catch (error) {
-			toast.error(
-				error instanceof Error
-					? error.message
-					: "Bulk-befordran misslyckades",
-			);
+			toast.error(error instanceof Error ? error.message : "Bulk-befordran misslyckades");
 			console.error(error);
 		} finally {
 			setLifecycleLoading(false);
@@ -448,7 +396,7 @@ export function OverviewTab() {
 		// Text search filter
 		if (searchQuery) {
 			tools = tools.filter((tool) =>
-				tool.tool_id.toLowerCase().includes(searchQuery.toLowerCase()),
+				tool.tool_id.toLowerCase().includes(searchQuery.toLowerCase())
 			);
 		}
 
@@ -462,7 +410,7 @@ export function OverviewTab() {
 				(tool) =>
 					tool.status !== "live" &&
 					tool.success_rate !== null &&
-					tool.success_rate >= tool.required_success_rate,
+					tool.success_rate >= tool.required_success_rate
 			);
 		}
 
@@ -507,9 +455,7 @@ export function OverviewTab() {
 						{/* Agentval */}
 						<div className="rounded-lg border p-3 space-y-1">
 							<p className="text-xs text-muted-foreground">Agentval</p>
-							<p className="text-xl font-bold tabular-nums">
-								{formatPercent(latestAgentRate)}
-							</p>
+							<p className="text-xl font-bold tabular-nums">{formatPercent(latestAgentRate)}</p>
 							{agentDelta !== null && (
 								<p className={`text-xs ${agentDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
 									{agentDelta >= 0 ? "\u25B2" : "\u25BC"} {formatSignedPercent(agentDelta)}
@@ -519,9 +465,7 @@ export function OverviewTab() {
 						{/* Toolval */}
 						<div className="rounded-lg border p-3 space-y-1">
 							<p className="text-xs text-muted-foreground">Toolval</p>
-							<p className="text-xl font-bold tabular-nums">
-								{formatPercent(latestToolRate)}
-							</p>
+							<p className="text-xl font-bold tabular-nums">{formatPercent(latestToolRate)}</p>
 							{toolDelta !== null && (
 								<p className={`text-xs ${toolDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
 									{toolDelta >= 0 ? "\u25B2" : "\u25BC"} {formatSignedPercent(toolDelta)}
@@ -531,11 +475,11 @@ export function OverviewTab() {
 						{/* API Input */}
 						<div className="rounded-lg border p-3 space-y-1">
 							<p className="text-xs text-muted-foreground">API Input</p>
-							<p className="text-xl font-bold tabular-nums">
-								{formatPercent(latestApiInputRate)}
-							</p>
+							<p className="text-xl font-bold tabular-nums">{formatPercent(latestApiInputRate)}</p>
 							{apiInputDelta !== null && (
-								<p className={`text-xs ${apiInputDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+								<p
+									className={`text-xs ${apiInputDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}
+								>
 									{apiInputDelta >= 0 ? "\u25B2" : "\u25BC"} {formatSignedPercent(apiInputDelta)}
 								</p>
 							)}
@@ -544,9 +488,7 @@ export function OverviewTab() {
 						<div className="rounded-lg border p-3 space-y-1">
 							<p className="text-xs text-muted-foreground">Lifecycle</p>
 							<p className="text-xl font-bold tabular-nums">
-								{lifecycleData
-									? `${lifecycleData.live_count}/${lifecycleData.total_count}`
-									: "-"}
+								{lifecycleData ? `${lifecycleData.live_count}/${lifecycleData.total_count}` : "-"}
 							</p>
 							{lifecycleData && lifecycleData.review_count > 0 && (
 								<p className="text-xs text-muted-foreground">
@@ -562,16 +504,26 @@ export function OverviewTab() {
 					{/* Summary line */}
 					<div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground border-t pt-2">
 						<span>
-							Live: <span className="font-medium text-foreground">{lifecycleData?.live_count ?? "-"}</span>
+							Live:{" "}
+							<span className="font-medium text-foreground">
+								{lifecycleData?.live_count ?? "-"}
+							</span>
 						</span>
 						<span>
-							Review: <span className="font-medium text-foreground">{lifecycleData?.review_count ?? "-"}</span>
+							Review:{" "}
+							<span className="font-medium text-foreground">
+								{lifecycleData?.review_count ?? "-"}
+							</span>
 						</span>
 						<span>
-							Total: <span className="font-medium text-foreground">{lifecycleData?.total_count ?? "-"}</span>
+							Total:{" "}
+							<span className="font-medium text-foreground">
+								{lifecycleData?.total_count ?? "-"}
+							</span>
 						</span>
 						<span>
-							Senaste eval: <span className="font-medium text-foreground">{latestEvalDate ?? "-"}</span>
+							Senaste eval:{" "}
+							<span className="font-medium text-foreground">{latestEvalDate ?? "-"}</span>
 						</span>
 						<span>
 							Fas: <span className="font-medium text-foreground">Shadow</span>
@@ -671,13 +623,8 @@ export function OverviewTab() {
 							<TableBody>
 								{filteredTools.length === 0 ? (
 									<TableRow>
-										<TableCell
-											colSpan={5}
-											className="text-center text-sm text-muted-foreground"
-										>
-											{searchQuery
-												? "Inga verktyg hittades"
-												: "Inga verktyg tillgangliga"}
+										<TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+											{searchQuery ? "Inga verktyg hittades" : "Inga verktyg tillgangliga"}
 										</TableCell>
 									</TableRow>
 								) : (
@@ -685,9 +632,7 @@ export function OverviewTab() {
 										const action = getActionIcon(tool);
 										return (
 											<TableRow key={tool.tool_id}>
-												<TableCell className="font-mono text-xs py-2">
-													{tool.tool_id}
-												</TableCell>
+												<TableCell className="font-mono text-xs py-2">{tool.tool_id}</TableCell>
 												<TableCell className="py-2">
 													<LifecycleBadge
 														status={tool.status === "live" ? "live" : "review"}
@@ -698,7 +643,13 @@ export function OverviewTab() {
 												</TableCell>
 												<TableCell className="text-xs py-2 tabular-nums">
 													{tool.success_rate !== null ? (
-														<span className={tool.success_rate >= tool.required_success_rate ? "text-emerald-600" : "text-amber-600"}>
+														<span
+															className={
+																tool.success_rate >= tool.required_success_rate
+																	? "text-emerald-600"
+																	: "text-amber-600"
+															}
+														>
 															{(tool.success_rate * 100).toFixed(1)}%
 														</span>
 													) : (
@@ -769,8 +720,12 @@ export function OverviewTab() {
 
 					{/* Legend */}
 					<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground border-t pt-2">
-						<span><CheckCircle2 className="inline h-3 w-3 text-emerald-600" /> = Redo att promota</span>
-						<span><ShieldAlert className="inline h-3 w-3 text-red-600" /> = Emergency rollback</span>
+						<span>
+							<CheckCircle2 className="inline h-3 w-3 text-emerald-600" /> = Redo att promota
+						</span>
+						<span>
+							<ShieldAlert className="inline h-3 w-3 text-red-600" /> = Emergency rollback
+						</span>
 						<span>&mdash; = Under troskel</span>
 					</div>
 				</CardContent>
@@ -784,9 +739,15 @@ export function OverviewTab() {
 				<CardContent>
 					<Tabs value={statsTab} onValueChange={setStatsTab}>
 						<TabsList className="h-8">
-							<TabsTrigger value="agent" className="text-xs">Agentval</TabsTrigger>
-							<TabsTrigger value="tool" className="text-xs">Toolval</TabsTrigger>
-							<TabsTrigger value="api_input" className="text-xs">API Input</TabsTrigger>
+							<TabsTrigger value="agent" className="text-xs">
+								Agentval
+							</TabsTrigger>
+							<TabsTrigger value="tool" className="text-xs">
+								Toolval
+							</TabsTrigger>
+							<TabsTrigger value="api_input" className="text-xs">
+								API Input
+							</TabsTrigger>
 						</TabsList>
 
 						<TabsContent value="agent" className="mt-3">
@@ -834,18 +795,12 @@ export function OverviewTab() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Emergency Rollback</AlertDialogTitle>
 						<AlertDialogDescription>
-							Satt tillbaka{" "}
-							<span className="font-mono font-semibold">
-								{rollbackTool?.tool_id}
-							</span>{" "}
-							till review-status. Detta tar omedelbart bort verktyget fran
-							produktion.
+							Satt tillbaka <span className="font-mono font-semibold">{rollbackTool?.tool_id}</span>{" "}
+							till review-status. Detta tar omedelbart bort verktyget fran produktion.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<div className="py-4">
-						<label className="text-sm font-medium mb-2 block">
-							Anledning (kravs):
-						</label>
+						<label className="text-sm font-medium mb-2 block">Anledning (kravs):</label>
 						<Input
 							placeholder="T.ex. Verktyg orsakar fel i produktion"
 							value={rollbackNotes}

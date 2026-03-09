@@ -1,31 +1,38 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
 	Activity,
 	AlertCircle,
 	Beaker,
 	BookOpen,
+	ExternalLink,
 	Loader2,
 	Orbit,
 	Rocket,
+	Settings,
 	Sparkles,
+	ThumbsDown,
+	ThumbsUp,
 	Trash2,
 	Workflow,
+	Zap,
 } from "lucide-react";
-import {
-	nexusApiService,
-	type NexusHealthResponse,
-	type OverviewMetricsResponse,
-	type RoutingEventResponse,
-	type ECEReportResponse,
-	type CalibrationParamsResponse,
-	type LiveRoutingConfigResponse,
-} from "@/lib/apis/nexus-api.service";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import Link from "next/link";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
+import { DarkMatterPanel } from "@/components/admin/nexus/shared/dark-matter-panel";
+import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
+import { DeployTab } from "@/components/admin/nexus/tabs/deploy-tab";
+import { ForgeTab } from "@/components/admin/nexus/tabs/forge-tab";
+import { LedgerTab } from "@/components/admin/nexus/tabs/ledger-tab";
+import { LoopTab } from "@/components/admin/nexus/tabs/loop-tab";
+import { OptimizerTab } from "@/components/admin/nexus/tabs/optimizer-tab";
+import { PipelineExplorerTab } from "@/components/admin/nexus/tabs/pipeline-explorer-tab";
+import { SpaceTab } from "@/components/admin/nexus/tabs/space-tab";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
 	Select,
 	SelectContent,
@@ -33,21 +40,18 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { ThumbsUp, ThumbsDown, ExternalLink, Settings, Zap } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
-import Link from "next/link";
-import { DarkMatterPanel } from "@/components/admin/nexus/shared/dark-matter-panel";
-import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
-import { BandDistribution } from "@/components/admin/nexus/shared/band-distribution";
-import { SpaceTab } from "@/components/admin/nexus/tabs/space-tab";
-import { ForgeTab } from "@/components/admin/nexus/tabs/forge-tab";
-import { LoopTab } from "@/components/admin/nexus/tabs/loop-tab";
-import { LedgerTab } from "@/components/admin/nexus/tabs/ledger-tab";
-import { DeployTab } from "@/components/admin/nexus/tabs/deploy-tab";
-import { OptimizerTab } from "@/components/admin/nexus/tabs/optimizer-tab";
-import { PipelineExplorerTab } from "@/components/admin/nexus/tabs/pipeline-explorer-tab";
+import {
+	type CalibrationParamsResponse,
+	type ECEReportResponse,
+	type LiveRoutingConfigResponse,
+	type NexusHealthResponse,
+	nexusApiService,
+	type OverviewMetricsResponse,
+	type RoutingEventResponse,
+} from "@/lib/apis/nexus-api.service";
 
 function TabFallback() {
 	return (
@@ -95,28 +99,29 @@ export function NexusDashboard() {
 			.finally(() => setLlmGateLoading(false));
 	}, []);
 
-	const handleLlmGateToggle = useCallback(
-		async (enabled: boolean) => {
-			setLlmGateToggling(true);
-			try {
-				const current = tuningRef.current ?? {};
-				const updated = { ...current, llm_gate_mode: enabled };
-				const res = await adminToolSettingsApiService.updateRetrievalTuning(
-					updated as Parameters<typeof adminToolSettingsApiService.updateRetrievalTuning>[0],
-				);
-				tuningRef.current = res.tuning as unknown as Record<string, unknown>;
-				setLlmGateActive(Boolean(res.tuning.llm_gate_mode));
-			} catch {
-				setLlmGateActive(!enabled);
-			} finally {
-				setLlmGateToggling(false);
-			}
-		},
-		[],
-	);
+	const handleLlmGateToggle = useCallback(async (enabled: boolean) => {
+		setLlmGateToggling(true);
+		try {
+			const current = tuningRef.current ?? {};
+			const updated = { ...current, llm_gate_mode: enabled };
+			const res = await adminToolSettingsApiService.updateRetrievalTuning(
+				updated as Parameters<typeof adminToolSettingsApiService.updateRetrievalTuning>[0]
+			);
+			tuningRef.current = res.tuning as unknown as Record<string, unknown>;
+			setLlmGateActive(Boolean(res.tuning.llm_gate_mode));
+		} catch {
+			setLlmGateActive(!enabled);
+		} finally {
+			setLlmGateToggling(false);
+		}
+	}, []);
 
 	const handleReset = useCallback(() => {
-		if (!window.confirm("Nollställ ALL NEXUS-data? Routing-händelser, testfall, loop-körningar, snapshots — allt raderas.")) {
+		if (
+			!window.confirm(
+				"Nollställ ALL NEXUS-data? Routing-händelser, testfall, loop-körningar, snapshots — allt raderas."
+			)
+		) {
 			return;
 		}
 		setResetting(true);
@@ -145,7 +150,9 @@ export function NexusDashboard() {
 				<div className="flex items-center gap-3">
 					{/* LLM Gate Mode Toggle */}
 					<div className="flex items-center gap-2 rounded-lg border px-3 py-2">
-						<Zap className={`h-4 w-4 ${llmGateActive ? "text-amber-500" : "text-muted-foreground"}`} />
+						<Zap
+							className={`h-4 w-4 ${llmGateActive ? "text-amber-500" : "text-muted-foreground"}`}
+						/>
 						<span className="text-sm font-medium whitespace-nowrap">LLM Gate</span>
 						{llmGateLoading ? (
 							<Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -157,14 +164,15 @@ export function NexusDashboard() {
 							/>
 						)}
 						{llmGateActive && (
-							<Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs">
+							<Badge
+								variant="outline"
+								className="text-amber-600 border-amber-300 bg-amber-50 text-xs"
+							>
 								AKTIV
 							</Badge>
 						)}
 					</div>
-					{resetResult && (
-						<span className="text-xs text-muted-foreground">{resetResult}</span>
-					)}
+					{resetResult && <span className="text-xs text-muted-foreground">{resetResult}</span>}
 					<Button
 						variant="outline"
 						size="sm"
@@ -188,8 +196,8 @@ export function NexusDashboard() {
 					<Zap className="h-4 w-4 text-amber-600" />
 					<AlertDescription className="text-amber-800">
 						<strong>LLM Gate-läge aktivt.</strong> Det riktiga LangGraph-flödet använder nu rena
-						LLM-beslut för intent, agent och tool-routing — utan embedding eller reranker.
-						Stäng av för att återgå till hybrid-approach.
+						LLM-beslut för intent, agent och tool-routing — utan embedding eller reranker. Stäng av
+						för att återgå till hybrid-approach.
 					</AlertDescription>
 				</Alert>
 			)}
@@ -203,9 +211,7 @@ export function NexusDashboard() {
 			) : error ? (
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
-					<AlertDescription>
-						Kunde inte ansluta till NEXUS backend: {error}
-					</AlertDescription>
+					<AlertDescription>Kunde inte ansluta till NEXUS backend: {error}</AlertDescription>
 				</Alert>
 			) : health ? (
 				<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -214,18 +220,9 @@ export function NexusDashboard() {
 						value={health.status === "ok" ? "Aktiv" : "Fel"}
 						color={health.status === "ok" ? "green" : "red"}
 					/>
-					<StatusCard
-						label="Zoner konfigurerade"
-						value={String(health.zones_configured)}
-					/>
-					<StatusCard
-						label="Routing-händelser"
-						value={String(health.total_routing_events)}
-					/>
-					<StatusCard
-						label="Syntetiska testfall"
-						value={String(health.total_synthetic_cases)}
-					/>
+					<StatusCard label="Zoner konfigurerade" value={String(health.zones_configured)} />
+					<StatusCard label="Routing-händelser" value={String(health.total_routing_events)} />
+					<StatusCard label="Syntetiska testfall" value={String(health.total_synthetic_cases)} />
 				</div>
 			) : null}
 
@@ -318,13 +315,12 @@ function OverviewTab() {
 			.finally(() => setMetricsLoading(false));
 	}, []);
 
-	const pct = (v: number | null | undefined) =>
-		v != null ? `${(v * 100).toFixed(1)}%` : "—";
+	const pct = (v: number | null | undefined) => (v != null ? `${(v * 100).toFixed(1)}%` : "—");
 	const num = (v: number | null | undefined, decimals = 4) =>
 		v != null ? v.toFixed(decimals) : "—";
 	const pctColor = (v: number | null | undefined, good: number, invert = false) => {
 		if (v == null) return undefined;
-		return invert ? (v <= good ? "green" : "red") : (v >= good ? "green" : "red");
+		return invert ? (v <= good ? "green" : "red") : v >= good ? "green" : "red";
 	};
 
 	return (
@@ -348,10 +344,7 @@ function OverviewTab() {
 									value={pct(metrics.band0_rate)}
 									color={pctColor(metrics.band0_rate, 0.8)}
 								/>
-								<StatusCard
-									label="Multi-intent detect"
-									value={pct(metrics.multi_intent_rate)}
-								/>
+								<StatusCard label="Multi-intent detect" value={pct(metrics.multi_intent_rate)} />
 								<StatusCard
 									label="Schema match rate"
 									value={pct(metrics.schema_match_rate)}
@@ -383,10 +376,7 @@ function OverviewTab() {
 									value={metrics.platt_calibrated ? "Ja" : "Nej"}
 									color={metrics.platt_calibrated ? "green" : "red"}
 								/>
-								<StatusCard
-									label="Routing-händelser"
-									value={String(metrics.total_events)}
-								/>
+								<StatusCard label="Routing-händelser" value={String(metrics.total_events)} />
 							</div>
 						</CardContent>
 					</Card>
@@ -403,19 +393,21 @@ function OverviewTab() {
 									value={pct(metrics.namespace_purity)}
 									color={pctColor(metrics.namespace_purity, 0.88)}
 								/>
-								<StatusCard
-									label="Hard negatives"
-									value={String(metrics.total_hard_negatives)}
-								/>
+								<StatusCard label="Hard negatives" value={String(metrics.total_hard_negatives)} />
 								<StatusCard
 									label="Reranker Delta"
-									value={metrics.reranker_delta != null ? `${metrics.reranker_delta >= 0 ? "+" : ""}${(metrics.reranker_delta * 100).toFixed(1)}pp` : "—"}
-									color={metrics.reranker_delta != null && metrics.reranker_delta > 0.12 ? "green" : undefined}
+									value={
+										metrics.reranker_delta != null
+											? `${metrics.reranker_delta >= 0 ? "+" : ""}${(metrics.reranker_delta * 100).toFixed(1)}pp`
+											: "—"
+									}
+									color={
+										metrics.reranker_delta != null && metrics.reranker_delta > 0.12
+											? "green"
+											: undefined
+									}
 								/>
-								<StatusCard
-									label="Verktyg indexerade"
-									value={String(metrics.total_tools)}
-								/>
+								<StatusCard label="Verktyg indexerade" value={String(metrics.total_tools)} />
 							</div>
 						</CardContent>
 					</Card>
@@ -442,10 +434,7 @@ function OverviewTab() {
 									value={pct(metrics.hubness_rate)}
 									color={pctColor(metrics.hubness_rate, 0.05, true)}
 								/>
-								<StatusCard
-									label="False negative rate"
-									value="—"
-								/>
+								<StatusCard label="False negative rate" value="—" />
 							</div>
 						</CardContent>
 					</Card>
@@ -505,7 +494,10 @@ function LiveRoutingPanel() {
 			.getLiveRoutingConfig()
 			.then(setConfig)
 			.catch(() => {
-				setConfig({ phases: PHASE_LABELS as unknown as Record<string, number>, current_config: DEFAULT_TUNING });
+				setConfig({
+					phases: PHASE_LABELS as unknown as Record<string, number>,
+					current_config: DEFAULT_TUNING,
+				});
 				setUsingDefaults(true);
 			})
 			.finally(() => setLoading(false));
@@ -521,7 +513,9 @@ function LiveRoutingPanel() {
 					<Settings className="h-4 w-4 text-muted-foreground" />
 					<CardTitle>Fas & Retrieval-vikter</CardTitle>
 					{usingDefaults && (
-						<span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">defaults</span>
+						<span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+							defaults
+						</span>
 					)}
 				</div>
 				<Link
@@ -550,9 +544,7 @@ function LiveRoutingPanel() {
 										<span
 											key={phase}
 											className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium ${
-												isActive
-													? "bg-green-600 text-white"
-													: "bg-muted text-muted-foreground"
+												isActive ? "bg-green-600 text-white" : "bg-muted text-muted-foreground"
 											}`}
 										>
 											{isActive ? "●" : "○"} {PHASE_LABELS[phase] ?? phase}
@@ -584,11 +576,20 @@ function LiveRoutingPanel() {
 						<div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground pt-1 border-t">
 							<span>
 								Live routing:{" "}
-								<span className={cfg.live_routing_enabled ? "text-green-600 font-medium" : "text-red-500 font-medium"}>
+								<span
+									className={
+										cfg.live_routing_enabled
+											? "text-green-600 font-medium"
+											: "text-red-500 font-medium"
+									}
+								>
 									{cfg.live_routing_enabled ? "Aktiverad" : "Inaktiverad"}
 								</span>
 							</span>
-							<span>Top-K: intent={cfg.intent_candidate_top_k}, agent={cfg.agent_candidate_top_k}, tool={cfg.tool_candidate_top_k}</span>
+							<span>
+								Top-K: intent={cfg.intent_candidate_top_k}, agent={cfg.agent_candidate_top_k}, tool=
+								{cfg.tool_candidate_top_k}
+							</span>
 						</div>
 					</div>
 				)}
@@ -646,9 +647,7 @@ function RoutingEventsPanel() {
 						Laddar händelser...
 					</div>
 				) : events.length === 0 ? (
-					<p className="text-sm text-muted-foreground">
-						Inga routing-händelser registrerade ännu.
-					</p>
+					<p className="text-sm text-muted-foreground">Inga routing-händelser registrerade ännu.</p>
 				) : (
 					<div className="overflow-x-auto">
 						<table className="w-full text-sm">
@@ -688,7 +687,9 @@ function RoutingEventsPanel() {
 												<span className="inline-flex items-center rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 text-xs font-medium">
 													{evt.selected_agent}
 												</span>
-											) : "—"}
+											) : (
+												"—"
+											)}
 										</td>
 										<td className="py-2 pr-4">{evt.selected_tool ?? "—"}</td>
 										<td className="py-2 pr-4">
@@ -697,11 +698,7 @@ function RoutingEventsPanel() {
 												: "—"}
 										</td>
 										<td className="py-2 pr-4">
-											{evt.is_ood ? (
-												<span className="text-red-600 font-medium">Ja</span>
-											) : (
-												"Nej"
-											)}
+											{evt.is_ood ? <span className="text-red-600 font-medium">Ja</span> : "Nej"}
 										</td>
 										<td className="py-2 pr-4 whitespace-nowrap">
 											{new Date(evt.routed_at).toLocaleString("sv-SE")}
@@ -750,10 +747,7 @@ function CalibrationPanel() {
 
 	const fetchData = () => {
 		setLoading(true);
-		Promise.all([
-			nexusApiService.getCalibrationECE(),
-			nexusApiService.getCalibrationParams(),
-		])
+		Promise.all([nexusApiService.getCalibrationECE(), nexusApiService.getCalibrationParams()])
 			.then(([eceData, paramsData]) => {
 				setEce(eceData);
 				setParams(paramsData);
@@ -796,12 +790,7 @@ function CalibrationPanel() {
 							))}
 						</SelectContent>
 					</Select>
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={handleFit}
-						disabled={fitting}
-					>
+					<Button variant="outline" size="sm" onClick={handleFit} disabled={fitting}>
 						{fitting ? (
 							<>
 								<Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
@@ -835,14 +824,9 @@ function CalibrationPanel() {
 								<p className="text-sm font-medium mb-2">ECE per zon</p>
 								<div className="grid grid-cols-2 md:grid-cols-4 gap-2">
 									{Object.entries(ece.per_zone).map(([zone, value]) => (
-										<div
-											key={zone}
-											className="rounded border px-3 py-2"
-										>
+										<div key={zone} className="rounded border px-3 py-2">
 											<p className="text-xs text-muted-foreground">{zone}</p>
-											<p className="text-sm font-mono font-medium">
-												{value.toFixed(4)}
-											</p>
+											<p className="text-sm font-mono font-medium">{value.toFixed(4)}</p>
 										</div>
 									))}
 								</div>
@@ -855,10 +839,7 @@ function CalibrationPanel() {
 								<p className="text-sm font-medium mb-2">Platt-parametrar</p>
 								<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
 									{params.map((p) => (
-										<div
-											key={p.id}
-											className="rounded border px-3 py-2 text-sm"
-										>
+										<div key={p.id} className="rounded border px-3 py-2 text-sm">
 											<div className="flex items-center justify-between">
 												<span className="font-medium">{p.zone}</span>
 												{p.is_active && (
@@ -868,9 +849,18 @@ function CalibrationPanel() {
 												)}
 											</div>
 											<div className="mt-1 text-muted-foreground text-xs space-y-0.5">
-												<p>A: {p.param_a != null ? p.param_a.toFixed(4) : "—"} · B: {p.param_b != null ? p.param_b.toFixed(4) : "—"}</p>
-												<p>ECE: {p.ece_score != null ? p.ece_score.toFixed(4) : "—"} · Samples: {p.fitted_on_samples ?? "—"}</p>
-												<p>Metod: {p.calibration_method} · Fittad: {new Date(p.fitted_at).toLocaleString("sv-SE")}</p>
+												<p>
+													A: {p.param_a != null ? p.param_a.toFixed(4) : "—"} · B:{" "}
+													{p.param_b != null ? p.param_b.toFixed(4) : "—"}
+												</p>
+												<p>
+													ECE: {p.ece_score != null ? p.ece_score.toFixed(4) : "—"} · Samples:{" "}
+													{p.fitted_on_samples ?? "—"}
+												</p>
+												<p>
+													Metod: {p.calibration_method} · Fittad:{" "}
+													{new Date(p.fitted_at).toLocaleString("sv-SE")}
+												</p>
 											</div>
 										</div>
 									))}
@@ -888,25 +878,13 @@ function CalibrationPanel() {
 // Status Card
 // ---------------------------------------------------------------------------
 
-function StatusCard({
-	label,
-	value,
-	color,
-}: {
-	label: string;
-	value: string;
-	color?: string;
-}) {
+function StatusCard({ label, value, color }: { label: string; value: string; color?: string }) {
 	return (
 		<div className="rounded-lg border bg-card p-4">
 			<p className="text-sm text-muted-foreground">{label}</p>
 			<p
 				className={`text-2xl font-bold mt-1 ${
-					color === "green"
-						? "text-green-600"
-						: color === "red"
-							? "text-red-600"
-							: ""
+					color === "green" ? "text-green-600" : color === "red" ? "text-red-600" : ""
 				}`}
 			>
 				{value}

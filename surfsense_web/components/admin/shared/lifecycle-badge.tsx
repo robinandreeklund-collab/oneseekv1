@@ -29,8 +29,7 @@ export function LifecycleBadge({
 	const isReady = successRate != null && successRate >= requiredSuccessRate;
 
 	const statusLabel = isLive ? "Live" : "Review";
-	const rateLabel =
-		successRate != null ? `${(successRate * 100).toFixed(1)}%` : null;
+	const rateLabel = successRate != null ? `${(successRate * 100).toFixed(1)}%` : null;
 
 	return (
 		<span className={cn("inline-flex items-center gap-1.5", className)}>
@@ -39,21 +38,19 @@ export function LifecycleBadge({
 				className={cn(
 					"text-xs font-medium",
 					isLive && "bg-green-600 hover:bg-green-700",
-					!isLive && isReady && "bg-amber-500 hover:bg-amber-600 text-white",
+					!isLive && isReady && "bg-amber-500 hover:bg-amber-600 text-white"
 				)}
 			>
 				<span
 					className={cn(
 						"mr-1 inline-block h-1.5 w-1.5 rounded-full",
-						isLive ? "bg-green-200" : isReady ? "bg-amber-200" : "bg-gray-400",
+						isLive ? "bg-green-200" : isReady ? "bg-amber-200" : "bg-gray-400"
 					)}
 				/>
 				{statusLabel}
 			</Badge>
 			{!compact && rateLabel && (
-				<span className="text-xs text-muted-foreground tabular-nums">
-					{rateLabel}
-				</span>
+				<span className="text-xs text-muted-foreground tabular-nums">{rateLabel}</span>
 			)}
 		</span>
 	);

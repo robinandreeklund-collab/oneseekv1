@@ -140,7 +140,9 @@ export const MCPConfig: FC<MCPConfigProps> = ({ connector, onConfigChange, onNam
 			<Alert className="border-red-500/50 bg-red-500/10">
 				<XCircle className="h-4 w-4 text-red-600" />
 				<AlertTitle>Ogiltig anslutningstyp</AlertTitle>
-				<AlertDescription>Den här komponenten kan endast användas med MCP-anslutningar.</AlertDescription>
+				<AlertDescription>
+					Den här komponenten kan endast användas med MCP-anslutningar.
+				</AlertDescription>
 			</Alert>
 		);
 	}

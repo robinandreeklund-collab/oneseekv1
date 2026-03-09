@@ -55,15 +55,9 @@ function DiffField({ field }: { field: SuggestionField }) {
 		return (
 			<div className="ml-4 text-sm font-mono">
 				<span className="text-muted-foreground">{field.field}:</span>
-				{field.oldValue && (
-					<div className="text-red-500 pl-2">
-						- &quot;{field.oldValue}&quot;
-					</div>
-				)}
+				{field.oldValue && <div className="text-red-500 pl-2">- &quot;{field.oldValue}&quot;</div>}
 				{field.newValue && (
-					<div className="text-green-500 pl-2">
-						+ &quot;{field.newValue}&quot;
-					</div>
+					<div className="text-green-500 pl-2">+ &quot;{field.newValue}&quot;</div>
 				)}
 			</div>
 		);
@@ -78,16 +72,12 @@ export function SuggestionDiffView({
 	onToggle,
 	onToggleAll,
 }: SuggestionDiffViewProps) {
-	const allSelected =
-		suggestions.length > 0 && suggestions.every((s) => selectedIds.has(s.toolId));
+	const allSelected = suggestions.length > 0 && suggestions.every((s) => selectedIds.has(s.toolId));
 
 	return (
 		<div className="space-y-3">
 			<div className="flex items-center gap-2 pb-2 border-b">
-				<Checkbox
-					checked={allSelected}
-					onCheckedChange={(checked) => onToggleAll(!!checked)}
-				/>
+				<Checkbox checked={allSelected} onCheckedChange={(checked) => onToggleAll(!!checked)} />
 				<span className="text-sm font-medium">
 					{suggestions.length} förslag ({selectedIds.size} valda)
 				</span>
@@ -99,8 +89,7 @@ export function SuggestionDiffView({
 					className={cn(
 						"border rounded-lg p-3 space-y-2",
 						suggestion.validationStatus === "error" && "border-red-300 bg-red-50/50",
-						suggestion.validationStatus === "warning" &&
-							"border-amber-300 bg-amber-50/50",
+						suggestion.validationStatus === "warning" && "border-amber-300 bg-amber-50/50"
 					)}
 				>
 					<div className="flex items-center gap-2">
@@ -108,9 +97,7 @@ export function SuggestionDiffView({
 							checked={selectedIds.has(suggestion.toolId)}
 							onCheckedChange={() => onToggle(suggestion.toolId)}
 						/>
-						<span className="font-medium text-sm">
-							{suggestion.toolName || suggestion.toolId}
-						</span>
+						<span className="font-medium text-sm">{suggestion.toolName || suggestion.toolId}</span>
 						{suggestion.validationStatus === "ok" && (
 							<Badge variant="outline" className="text-xs text-green-600">
 								OK
@@ -128,10 +115,7 @@ export function SuggestionDiffView({
 					))}
 
 					{suggestion.warnings?.map((warning) => (
-						<div
-							key={warning}
-							className="ml-4 text-xs text-amber-600 flex items-center gap-1"
-						>
+						<div key={warning} className="ml-4 text-xs text-amber-600 flex items-center gap-1">
 							<span>&#9888;</span> {warning}
 						</div>
 					))}

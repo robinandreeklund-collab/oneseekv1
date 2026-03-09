@@ -220,7 +220,7 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 								name="endpoint_url"
 								render={({ field }) => (
 									<FormItem>
-									<FormLabel className="text-xs sm:text-sm">Elasticsearch endpoint-URL</FormLabel>
+										<FormLabel className="text-xs sm:text-sm">Elasticsearch endpoint-URL</FormLabel>
 										<FormControl>
 											<Input
 												type="url"
@@ -232,8 +232,8 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 											/>
 										</FormControl>
 										<FormDescription className="text-[10px] sm:text-xs">
-										Ange den fullständiga endpoint-URL:en för Elasticsearch. Vi extraherar
-										automatiskt värdnamn, port och SSL-inställningar.
+											Ange den fullständiga endpoint-URL:en för Elasticsearch. Vi extraherar
+											automatiskt värdnamn, port och SSL-inställningar.
 										</FormDescription>
 										<FormMessage />
 									</FormItem>
@@ -511,8 +511,8 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 													/>
 												</FormControl>
 												<FormDescription className="text-[10px] sm:text-xs">
-													Kommaseparerad lista över specifika fält att söka i (t.ex. "title, content,
-													description"). Lämna tomt för att söka i alla fält.
+													Kommaseparerad lista över specifika fält att söka i (t.ex. "title,
+													content, description"). Lämna tomt för att söka i alla fält.
 												</FormDescription>
 												<FormMessage />
 											</FormItem>
@@ -733,9 +733,7 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 									</div>
 
 									<div>
-										<h4 className="text-[10px] sm:text-xs font-medium mb-2">
-											Steg 3: Välj index
-										</h4>
+										<h4 className="text-[10px] sm:text-xs font-medium mb-2">Steg 3: Välj index</h4>
 										<p className="text-[10px] sm:text-xs text-muted-foreground mb-3">
 											Ange vilka index som ska sökas. Du kan:
 										</p>
@@ -784,7 +782,8 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 												<code className="bg-muted px-1 py-0.5 rounded">title</code> - Dokumenttitlar
 											</li>
 											<li>
-												<code className="bg-muted px-1 py-0.5 rounded">content</code> - Huvudinnehåll
+												<code className="bg-muted px-1 py-0.5 rounded">content</code> -
+												Huvudinnehåll
 											</li>
 											<li>
 												<code className="bg-muted px-1 py-0.5 rounded">description</code> -
@@ -797,7 +796,9 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 									</div>
 
 									<div>
-										<h4 className="text-[10px] sm:text-xs font-medium mb-2">Maximalt antal dokument</h4>
+										<h4 className="text-[10px] sm:text-xs font-medium mb-2">
+											Maximalt antal dokument
+										</h4>
 										<p className="text-[10px] sm:text-xs text-muted-foreground">
 											Sätt en gräns för antalet dokument som hämtas per sökning (1-10 000). Detta
 											hjälper till att kontrollera svarstider och resursanvändning. Lämna tomt för
@@ -846,8 +847,8 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 												har läsbehörighet för indexen du vill söka i.
 											</li>
 											<li>
-												<strong>API-nyckelns format:</strong> Elasticsearch API-nycklar är vanligtvis
-												base64-kodade strängar. Se till att du använder hela nyckeln.
+												<strong>API-nyckelns format:</strong> Elasticsearch API-nycklar är
+												vanligtvis base64-kodade strängar. Se till att du använder hela nyckeln.
 											</li>
 										</ul>
 									</div>
@@ -873,7 +874,9 @@ export const ElasticsearchConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSub
 
 									<Alert className="bg-slate-400/5 dark:bg-white/5 border-slate-400/20 mt-4">
 										<Info className="h-3 w-3 sm:h-4 sm:w-4" />
-										<AlertTitle className="text-[10px] sm:text-xs">Behöver du mer hjälp?</AlertTitle>
+										<AlertTitle className="text-[10px] sm:text-xs">
+											Behöver du mer hjälp?
+										</AlertTitle>
 										<AlertDescription className="text-[9px] sm:text-[10px]">
 											Om du fortsätter att ha problem, kontrollera loggarna för ditt
 											Elasticsearch-kluster och att klusterversionen är kompatibel. För

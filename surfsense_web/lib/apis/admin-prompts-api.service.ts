@@ -4,15 +4,12 @@ import {
 	agentPromptsResponse,
 	agentPromptsUpdateRequest,
 } from "@/contracts/types/agent-prompts.types";
-import { ValidationError } from "@/lib/error";
 import { baseApiService } from "@/lib/apis/base-api.service";
+import { ValidationError } from "@/lib/error";
 
 class AdminPromptsApiService {
 	getAgentPrompts = async () => {
-		return baseApiService.get(
-			`/api/v1/admin/agent-prompts`,
-			agentPromptsResponse
-		);
+		return baseApiService.get(`/api/v1/admin/agent-prompts`, agentPromptsResponse);
 	};
 
 	updateAgentPrompts = async (request: AgentPromptsUpdateRequest) => {
@@ -22,13 +19,9 @@ class AdminPromptsApiService {
 			throw new ValidationError(`Invalid request: ${errorMessage}`);
 		}
 
-		return baseApiService.put(
-			`/api/v1/admin/agent-prompts`,
-			agentPromptsResponse,
-			{
-				body: parsedRequest.data,
-			}
-		);
+		return baseApiService.put(`/api/v1/admin/agent-prompts`, agentPromptsResponse, {
+			body: parsedRequest.data,
+		});
 	};
 
 	getAgentPromptHistory = async (promptKey: string) => {

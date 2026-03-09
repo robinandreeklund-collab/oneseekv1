@@ -299,27 +299,24 @@ export function LayoutDataProvider({
 	}, [threadsData, searchSpaceId]);
 
 	// Navigation items
-	const navItems: NavItem[] = useMemo(
-		() => {
-			if (isPublicChat) return [];
-			return [
-				{
-					title: "Inbox",
-					url: "#inbox", // Special URL to indicate this is handled differently
-					icon: Inbox,
-					isActive: isInboxSidebarOpen,
-					badge: totalUnreadCount > 0 ? formatInboxCount(totalUnreadCount) : undefined,
-				},
-				{
-					title: "Documents",
-					url: `/dashboard/${searchSpaceId}/documents`,
-					icon: SquareLibrary,
-					isActive: pathname?.includes("/documents"),
-				},
-			];
-		},
-		[isPublicChat, searchSpaceId, pathname, isInboxSidebarOpen, totalUnreadCount]
-	);
+	const navItems: NavItem[] = useMemo(() => {
+		if (isPublicChat) return [];
+		return [
+			{
+				title: "Inbox",
+				url: "#inbox", // Special URL to indicate this is handled differently
+				icon: Inbox,
+				isActive: isInboxSidebarOpen,
+				badge: totalUnreadCount > 0 ? formatInboxCount(totalUnreadCount) : undefined,
+			},
+			{
+				title: "Documents",
+				url: `/dashboard/${searchSpaceId}/documents`,
+				icon: SquareLibrary,
+				isActive: pathname?.includes("/documents"),
+			},
+		];
+	}, [isPublicChat, searchSpaceId, pathname, isInboxSidebarOpen, totalUnreadCount]);
 
 	// Handlers
 	const handleSearchSpaceSelect = useCallback(
@@ -559,9 +556,7 @@ export function LayoutDataProvider({
 				chats={isPublicChat ? [] : myChats}
 				sharedChats={isPublicChat ? [] : sharedChats}
 				activeChatId={isPublicChat ? null : currentChatId}
-				onNewChat={
-					isPublicChat ? () => router.push("/dashboard/public/new-chat") : handleNewChat
-				}
+				onNewChat={isPublicChat ? () => router.push("/dashboard/public/new-chat") : handleNewChat}
 				onChatSelect={isPublicChat ? () => {} : handleChatSelect}
 				onChatDelete={isPublicChat ? undefined : handleChatDelete}
 				onChatArchive={isPublicChat ? undefined : handleChatArchive}

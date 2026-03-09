@@ -74,8 +74,8 @@ export const BaiduSearchApiConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSu
 				<div className="-ml-1">
 					<AlertTitle className="text-xs sm:text-sm">API-nyckel krävs</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						Du behöver en Baidu AppBuilder API-nyckel för att använda denna anslutning. Du kan få
-						en genom att registrera dig på{" "}
+						Du behöver en Baidu AppBuilder API-nyckel för att använda denna anslutning. Du kan få en
+						genom att registrera dig på{" "}
 						<a
 							href="https://qianfan.cloud.baidu.com/"
 							target="_blank"

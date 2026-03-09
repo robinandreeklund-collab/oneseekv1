@@ -81,8 +81,8 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 				<div className="text-xs sm:text-sm">
 					<p className="font-medium text-xs sm:text-sm">Lägg till boten i kanaler</p>
 					<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
-						Innan indexering, lägg till Oneseek-boten i varje kanal du vill indexera. Boten kan
-						bara komma åt meddelanden från kanaler den har lagts till i. Skriv{" "}
+						Innan indexering, lägg till Oneseek-boten i varje kanal du vill indexera. Boten kan bara
+						komma åt meddelanden från kanaler den har lagts till i. Skriv{" "}
 						<code className="bg-muted px-1 py-0.5 rounded text-[9px]">/invite @Oneseek</code> i
 						valfri kanal för att lägga till den.
 					</p>
@@ -136,8 +136,7 @@ export const SlackConfig: FC<SlackConfigProps> = ({ connector }) => {
 									<CheckCircle2 className="size-3.5 text-emerald-500" />
 									<span className="text-[11px] font-medium">Redo att indexera</span>
 									<span className="text-[10px] text-muted-foreground">
-										{channelsWithBot.length}{" "}
-										{channelsWithBot.length === 1 ? "kanal" : "kanaler"}
+										{channelsWithBot.length} {channelsWithBot.length === 1 ? "kanal" : "kanaler"}
 									</span>
 								</div>
 								<div className="flex flex-wrap gap-1.5">

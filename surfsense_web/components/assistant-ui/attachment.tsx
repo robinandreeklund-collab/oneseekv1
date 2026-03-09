@@ -229,7 +229,7 @@ const AttachmentRemove: FC = () => {
 	return (
 		<AttachmentPrimitive.Remove asChild>
 			<TooltipIconButton
-					tooltip="Ta bort fil"
+				tooltip="Ta bort fil"
 				className="aui-attachment-tile-remove absolute top-1.5 right-1.5 size-3.5 rounded-full bg-white text-muted-foreground opacity-100 shadow-sm hover:bg-white! [&_svg]:text-black hover:[&_svg]:text-destructive"
 				side="top"
 			>

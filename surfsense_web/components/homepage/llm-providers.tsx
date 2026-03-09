@@ -10,15 +10,56 @@ import { cn } from "@/lib/utils";
    Primary models — the 7 compare-mode models with real logos
    ──────────────────────────────────────────────────────────── */
 const PRIMARY_MODELS = [
-	{ name: "ChatGPT", logo: "/model-logos/chatgpt.png", accent: "from-emerald-500/20 to-green-500/20", border: "border-emerald-500/30", glow: "group-hover:shadow-emerald-500/20" },
-	{ name: "Claude", logo: "/model-logos/claude.png", accent: "from-orange-500/20 to-amber-500/20", border: "border-orange-500/30", glow: "group-hover:shadow-orange-500/20" },
-	{ name: "Gemini", logo: "/model-logos/gemini.png", accent: "from-blue-500/20 to-cyan-500/20", border: "border-blue-500/30", glow: "group-hover:shadow-blue-500/20" },
-	{ name: "Grok", logo: "/model-logos/grok.png", accent: "from-neutral-500/20 to-neutral-400/20", border: "border-neutral-500/30", glow: "group-hover:shadow-neutral-500/20" },
-	{ name: "DeepSeek", logo: "/model-logos/deepseek.png", accent: "from-indigo-500/20 to-blue-500/20", border: "border-indigo-500/30", glow: "group-hover:shadow-indigo-500/20" },
-	{ name: "Perplexity", logo: "/model-logos/perplexity.png", accent: "from-cyan-500/20 to-teal-500/20", border: "border-cyan-500/30", glow: "group-hover:shadow-cyan-500/20" },
-	{ name: "Qwen", logo: "/model-logos/qwen.png", accent: "from-violet-500/20 to-purple-500/20", border: "border-violet-500/30", glow: "group-hover:shadow-violet-500/20" },
+	{
+		name: "ChatGPT",
+		logo: "/model-logos/chatgpt.png",
+		accent: "from-emerald-500/20 to-green-500/20",
+		border: "border-emerald-500/30",
+		glow: "group-hover:shadow-emerald-500/20",
+	},
+	{
+		name: "Claude",
+		logo: "/model-logos/claude.png",
+		accent: "from-orange-500/20 to-amber-500/20",
+		border: "border-orange-500/30",
+		glow: "group-hover:shadow-orange-500/20",
+	},
+	{
+		name: "Gemini",
+		logo: "/model-logos/gemini.png",
+		accent: "from-blue-500/20 to-cyan-500/20",
+		border: "border-blue-500/30",
+		glow: "group-hover:shadow-blue-500/20",
+	},
+	{
+		name: "Grok",
+		logo: "/model-logos/grok.png",
+		accent: "from-neutral-500/20 to-neutral-400/20",
+		border: "border-neutral-500/30",
+		glow: "group-hover:shadow-neutral-500/20",
+	},
+	{
+		name: "DeepSeek",
+		logo: "/model-logos/deepseek.png",
+		accent: "from-indigo-500/20 to-blue-500/20",
+		border: "border-indigo-500/30",
+		glow: "group-hover:shadow-indigo-500/20",
+	},
+	{
+		name: "Perplexity",
+		logo: "/model-logos/perplexity.png",
+		accent: "from-cyan-500/20 to-teal-500/20",
+		border: "border-cyan-500/30",
+		glow: "group-hover:shadow-cyan-500/20",
+	},
+	{
+		name: "Qwen",
+		logo: "/model-logos/qwen.png",
+		accent: "from-violet-500/20 to-purple-500/20",
+		border: "border-violet-500/30",
+		glow: "group-hover:shadow-violet-500/20",
+	},
 ];
-
 
 export function LLMProviders() {
 	const t = useTranslations("homepage");
@@ -75,7 +116,7 @@ export function LLMProviders() {
 									"shadow-sm group-hover:shadow-xl",
 									model.accent,
 									model.border,
-									model.glow,
+									model.glow
 								)}
 							>
 								{/* Logo */}
@@ -96,8 +137,7 @@ export function LLMProviders() {
 						</motion.div>
 					))}
 				</motion.div>
-
-				</div>
+			</div>
 		</section>
 	);
 }

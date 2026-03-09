@@ -6,13 +6,7 @@
  */
 
 import { Badge } from "@/components/ui/badge";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export interface AuditTrailEntry {
 	id: number;
@@ -46,9 +40,7 @@ function triggerLabel(trigger: string): string {
 	}
 }
 
-function triggerVariant(
-	trigger: string,
-): "default" | "secondary" | "destructive" | "outline" {
+function triggerVariant(trigger: string): "default" | "secondary" | "destructive" | "outline" {
 	switch (trigger) {
 		case "rollback":
 			return "destructive";
@@ -82,9 +74,7 @@ export function AuditTrail({ entries, isLoading }: AuditTrailProps) {
 		<Card>
 			<CardHeader>
 				<CardTitle>Audit Trail</CardTitle>
-				<CardDescription>
-					Historik över lifecycle-ändringar — vem, vad, när.
-				</CardDescription>
+				<CardDescription>Historik över lifecycle-ändringar — vem, vad, när.</CardDescription>
 			</CardHeader>
 			<CardContent>
 				{entries.length === 0 ? (
@@ -94,10 +84,7 @@ export function AuditTrail({ entries, isLoading }: AuditTrailProps) {
 				) : (
 					<div className="space-y-2 max-h-96 overflow-auto">
 						{entries.map((entry) => (
-							<div
-								key={entry.id}
-								className="flex items-start gap-3 rounded border p-3 text-sm"
-							>
+							<div key={entry.id} className="flex items-start gap-3 rounded border p-3 text-sm">
 								<div className="flex-1 min-w-0 space-y-1">
 									<div className="flex items-center gap-2 flex-wrap">
 										<span className="font-mono text-xs truncate max-w-[200px]">
@@ -116,9 +103,7 @@ export function AuditTrail({ entries, isLoading }: AuditTrailProps) {
 										)}
 									</div>
 									{entry.reason && (
-										<p className="text-xs text-muted-foreground truncate">
-											{entry.reason}
-										</p>
+										<p className="text-xs text-muted-foreground truncate">{entry.reason}</p>
 									)}
 								</div>
 								<div className="text-right shrink-0 space-y-1">
@@ -126,9 +111,7 @@ export function AuditTrail({ entries, isLoading }: AuditTrailProps) {
 										{new Date(entry.created_at).toLocaleString("sv-SE")}
 									</p>
 									{entry.changed_by_email && (
-										<p className="text-xs text-muted-foreground">
-											{entry.changed_by_email}
-										</p>
+										<p className="text-xs text-muted-foreground">{entry.changed_by_email}</p>
 									)}
 								</div>
 							</div>

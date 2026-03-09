@@ -1,6 +1,6 @@
+import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
 import { db } from "@/app/db";
 import { postsTable } from "@/app/db/schema";
 
@@ -15,55 +15,34 @@ const updatePostSchema = z.object({
 });
 
 // GET /api/posts/[id]
-export async function GET(
-	_request: NextRequest,
-	{ params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	try {
 		const { id } = await params;
 		const postId = parseInt(id, 10);
 		if (isNaN(postId)) {
-			return NextResponse.json(
-				{ success: false, message: "Ogiltigt ID" },
-				{ status: 400 }
-			);
+			return NextResponse.json({ success: false, message: "Ogiltigt ID" }, { status: 400 });
 		}
 
-		const posts = await db
-			.select()
-			.from(postsTable)
-			.where(eq(postsTable.id, postId));
+		const posts = await db.select().from(postsTable).where(eq(postsTable.id, postId));
 
 		if (posts.length === 0) {
-			return NextResponse.json(
-				{ success: false, message: "Post hittades inte" },
-				{ status: 404 }
-			);
+			return NextResponse.json({ success: false, message: "Post hittades inte" }, { status: 404 });
 		}
 
 		return NextResponse.json({ success: true, data: posts[0] });
 	} catch (error) {
 		console.error("Error fetching post:", error);
-		return NextResponse.json(
-			{ success: false, message: "Kunde inte hämta post" },
-			{ status: 500 }
-		);
+		return NextResponse.json({ success: false, message: "Kunde inte hämta post" }, { status: 500 });
 	}
 }
 
 // PUT /api/posts/[id]
-export async function PUT(
-	request: NextRequest,
-	{ params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	try {
 		const { id } = await params;
 		const postId = parseInt(id, 10);
 		if (isNaN(postId)) {
-			return NextResponse.json(
-				{ success: false, message: "Ogiltigt ID" },
-				{ status: 400 }
-			);
+			return NextResponse.json({ success: false, message: "Ogiltigt ID" }, { status: 400 });
 		}
 
 		const body = await request.json();
@@ -79,10 +58,7 @@ export async function PUT(
 			.returning();
 
 		if (result.length === 0) {
-			return NextResponse.json(
-				{ success: false, message: "Post hittades inte" },
-				{ status: 404 }
-			);
+			return NextResponse.json({ success: false, message: "Post hittades inte" }, { status: 404 });
 		}
 
 		return NextResponse.json({
@@ -114,22 +90,13 @@ export async function DELETE(
 		const { id } = await params;
 		const postId = parseInt(id, 10);
 		if (isNaN(postId)) {
-			return NextResponse.json(
-				{ success: false, message: "Ogiltigt ID" },
-				{ status: 400 }
-			);
+			return NextResponse.json({ success: false, message: "Ogiltigt ID" }, { status: 400 });
 		}
 
-		const result = await db
-			.delete(postsTable)
-			.where(eq(postsTable.id, postId))
-			.returning();
+		const result = await db.delete(postsTable).where(eq(postsTable.id, postId)).returning();
 
 		if (result.length === 0) {
-			return NextResponse.json(
-				{ success: false, message: "Post hittades inte" },
-				{ status: 404 }
-			);
+			return NextResponse.json({ success: false, message: "Post hittades inte" }, { status: 404 });
 		}
 
 		return NextResponse.json({

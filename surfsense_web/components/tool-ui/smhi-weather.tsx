@@ -120,14 +120,7 @@ function getValue(value: unknown): number | undefined {
 	return typeof value === "number" ? value : undefined;
 }
 
-type WeatherCondition =
-	| "clear"
-	| "partly_cloudy"
-	| "cloudy"
-	| "fog"
-	| "rain"
-	| "snow"
-	| "thunder";
+type WeatherCondition = "clear" | "partly_cloudy" | "cloudy" | "fog" | "rain" | "snow" | "thunder";
 
 function resolveWeatherCondition(symbol: number | undefined): WeatherCondition {
 	if (symbol === undefined) return "cloudy";
@@ -222,13 +215,7 @@ function resolveSceneClasses(condition: WeatherCondition, phase: DayPhase): stri
 	return "from-sky-300 via-blue-200 to-slate-200";
 }
 
-function WeatherScene({
-	condition,
-	phase,
-}: {
-	condition: WeatherCondition;
-	phase: DayPhase;
-}) {
+function WeatherScene({ condition, phase }: { condition: WeatherCondition; phase: DayPhase }) {
 	const isNight = phase === "night";
 	const showRain = condition === "rain" || condition === "thunder";
 	const showSnow = condition === "snow";
@@ -236,16 +223,21 @@ function WeatherScene({
 	const showStars = isNight;
 	const showLightning = condition === "thunder";
 	const showFog = condition === "fog";
-	const sunClass =
-		isNight ? "bg-slate-200 shadow-slate-200/40" : "bg-amber-300 shadow-amber-200/60";
+	const sunClass = isNight
+		? "bg-slate-200 shadow-slate-200/40"
+		: "bg-amber-300 shadow-amber-200/60";
 	const gradient = resolveSceneClasses(condition, phase);
 	const rainDrops = Array.from({ length: 18 });
 	const snowFlakes = Array.from({ length: 12 });
 	const stars = Array.from({ length: 12 });
 
 	return (
-		<div className={`relative h-28 w-full overflow-hidden rounded-xl bg-gradient-to-br ${gradient}`}>
-			<div className={`absolute right-6 top-4 size-12 rounded-full shadow-xl ${sunClass} weather-float`} />
+		<div
+			className={`relative h-28 w-full overflow-hidden rounded-xl bg-gradient-to-br ${gradient}`}
+		>
+			<div
+				className={`absolute right-6 top-4 size-12 rounded-full shadow-xl ${sunClass} weather-float`}
+			/>
 
 			{showStars && (
 				<div className="absolute inset-0">
@@ -254,8 +246,8 @@ function WeatherScene({
 							key={`star-${idx}`}
 							className="weather-star"
 							style={{
-								left: `${6 + (idx * 7) % 80}%`,
-								top: `${6 + (idx * 11) % 40}%`,
+								left: `${6 + ((idx * 7) % 80)}%`,
+								top: `${6 + ((idx * 11) % 40)}%`,
 								animationDelay: `${idx * 0.3}s`,
 							}}
 						/>
@@ -278,7 +270,7 @@ function WeatherScene({
 							key={`rain-${idx}`}
 							className="weather-rain"
 							style={{
-								left: `${6 + (idx * 6) % 90}%`,
+								left: `${6 + ((idx * 6) % 90)}%`,
 								animationDelay: `${idx * 0.1}s`,
 								animationDuration: `${1.1 + (idx % 5) * 0.15}s`,
 							}}
@@ -294,7 +286,7 @@ function WeatherScene({
 							key={`snow-${idx}`}
 							className="weather-snow"
 							style={{
-								left: `${8 + (idx * 8) % 90}%`,
+								left: `${8 + ((idx * 8) % 90)}%`,
 								animationDelay: `${idx * 0.2}s`,
 								animationDuration: `${2.4 + (idx % 4) * 0.3}s`,
 							}}
@@ -452,7 +444,9 @@ function extractTemp(parameters: Record<string, unknown>): number | undefined {
 	return typeof value === "number" ? value : undefined;
 }
 
-function buildHourlyForecast(entries: { valid_time?: string | null; parameters?: Record<string, unknown> | null }[]) {
+function buildHourlyForecast(
+	entries: { valid_time?: string | null; parameters?: Record<string, unknown> | null }[]
+) {
 	const now = Date.now();
 	const sorted = entries
 		.filter((entry) => entry.valid_time && entry.parameters)
@@ -475,7 +469,9 @@ function buildHourlyForecast(entries: { valid_time?: string | null; parameters?:
 	});
 }
 
-function buildDailyForecast(entries: { valid_time?: string | null; parameters?: Record<string, unknown> | null }[]) {
+function buildDailyForecast(
+	entries: { valid_time?: string | null; parameters?: Record<string, unknown> | null }[]
+) {
 	const grouped = new Map<string, { time: string; temps: number[]; symbols: number[] }>();
 	for (const entry of entries) {
 		if (!entry.valid_time || !entry.parameters) continue;
@@ -498,7 +494,9 @@ function buildDailyForecast(entries: { valid_time?: string | null; parameters?: 
 			const temps = bucket.temps;
 			const minTemp = temps.length ? Math.min(...temps) : undefined;
 			const maxTemp = temps.length ? Math.max(...temps) : undefined;
-			const symbol = bucket.symbols.length ? bucket.symbols[Math.floor(bucket.symbols.length / 2)] : undefined;
+			const symbol = bucket.symbols.length
+				? bucket.symbols[Math.floor(bucket.symbols.length / 2)]
+				: undefined;
 			return {
 				date: dateKey,
 				time: bucket.time,
@@ -586,16 +584,11 @@ function renderSmhiWeatherUI({
 			: "Unknown location");
 	const summary = result.current?.summary || {};
 	const parameters = result.current?.parameters || {};
-	const temperature =
-		getValue(summary.temperature_c) ?? getValue(parameters.t as unknown);
-	const windSpeed =
-		getValue(summary.wind_speed_m_s) ?? getValue(parameters.ws as unknown);
-	const humidity =
-		getValue(summary.relative_humidity) ?? getValue(parameters.r as unknown);
-	const pressure =
-		getValue(summary.pressure_hpa) ?? getValue(parameters.msl as unknown);
-	const symbol =
-		getValue(summary.weather_symbol) ?? getValue(parameters.Wsymb2 as unknown);
+	const temperature = getValue(summary.temperature_c) ?? getValue(parameters.t as unknown);
+	const windSpeed = getValue(summary.wind_speed_m_s) ?? getValue(parameters.ws as unknown);
+	const humidity = getValue(summary.relative_humidity) ?? getValue(parameters.r as unknown);
+	const pressure = getValue(summary.pressure_hpa) ?? getValue(parameters.msl as unknown);
+	const symbol = getValue(summary.weather_symbol) ?? getValue(parameters.Wsymb2 as unknown);
 	const isDaytime = isDaytimeFromIso(result.current?.valid_time || undefined);
 	const phase = resolveDayPhase(result.current?.valid_time || undefined);
 	const timeseries = Array.isArray(result.timeseries) ? result.timeseries : [];

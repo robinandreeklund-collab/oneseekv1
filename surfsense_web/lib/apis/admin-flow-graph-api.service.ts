@@ -1,6 +1,6 @@
+import { z } from "zod";
 import { flowGraphResponse } from "@/contracts/types/admin-flow-graph.types";
 import { baseApiService } from "@/lib/apis/base-api.service";
-import { z } from "zod";
 
 const statusResponse = z.object({ status: z.string() });
 
@@ -11,26 +11,19 @@ export interface FlowToolEntry {
 
 class AdminFlowGraphApiService {
 	getFlowGraph = async () => {
-		return baseApiService.get(
-			`/api/v1/admin/flow-graph`,
-			flowGraphResponse
-		);
+		return baseApiService.get(`/api/v1/admin/flow-graph`, flowGraphResponse);
 	};
 
 	updateAgentRoutes = async (agentId: string, routes: string[]) => {
-		return baseApiService.patch(
-			`/api/v1/admin/flow-graph/agent-routes`,
-			statusResponse,
-			{ body: { agent_id: agentId, routes } }
-		);
+		return baseApiService.patch(`/api/v1/admin/flow-graph/agent-routes`, statusResponse, {
+			body: { agent_id: agentId, routes },
+		});
 	};
 
 	updateAgentTools = async (agentId: string, flowTools: FlowToolEntry[]) => {
-		return baseApiService.patch(
-			`/api/v1/admin/flow-graph/agent-tools`,
-			statusResponse,
-			{ body: { agent_id: agentId, flow_tools: flowTools } }
-		);
+		return baseApiService.patch(`/api/v1/admin/flow-graph/agent-tools`, statusResponse, {
+			body: { agent_id: agentId, flow_tools: flowTools },
+		});
 	};
 
 	upsertIntent = async (intent: {
@@ -47,19 +40,13 @@ class AdminFlowGraphApiService {
 		geographic_scope?: string;
 		excludes?: string[];
 	}) => {
-		return baseApiService.put(
-			`/api/v1/admin/flow-graph/intent`,
-			statusResponse,
-			{ body: intent }
-		);
+		return baseApiService.put(`/api/v1/admin/flow-graph/intent`, statusResponse, { body: intent });
 	};
 
 	deleteIntent = async (intentId: string) => {
-		return baseApiService.delete(
-			`/api/v1/admin/flow-graph/intent`,
-			statusResponse,
-			{ body: { intent_id: intentId } }
-		);
+		return baseApiService.delete(`/api/v1/admin/flow-graph/intent`, statusResponse, {
+			body: { intent_id: intentId },
+		});
 	};
 
 	upsertAgent = async (agent: {
@@ -77,19 +64,13 @@ class AdminFlowGraphApiService {
 		geographic_scope?: string;
 		excludes?: string[];
 	}) => {
-		return baseApiService.put(
-			`/api/v1/admin/flow-graph/agent`,
-			statusResponse,
-			{ body: agent }
-		);
+		return baseApiService.put(`/api/v1/admin/flow-graph/agent`, statusResponse, { body: agent });
 	};
 
 	deleteAgent = async (agentId: string) => {
-		return baseApiService.delete(
-			`/api/v1/admin/flow-graph/agent`,
-			statusResponse,
-			{ body: { agent_id: agentId } }
-		);
+		return baseApiService.delete(`/api/v1/admin/flow-graph/agent`, statusResponse, {
+			body: { agent_id: agentId },
+		});
 	};
 
 	resetAgentToSeed = async (agentId: string) => {

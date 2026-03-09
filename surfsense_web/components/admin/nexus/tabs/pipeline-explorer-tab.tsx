@@ -1,25 +1,18 @@
 "use client";
 
+import { ArrowRight, ChevronDown, ChevronRight, Loader2, Play, Zap } from "lucide-react";
 import { useState } from "react";
-import {
-	ArrowRight,
-	ChevronDown,
-	ChevronRight,
-	Loader2,
-	Play,
-	Zap,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
-	nexusApiService,
-	type RoutingDecision,
 	type AgentCandidateResponse,
-	type RoutingCandidate,
-	type LlmGateResult,
 	type LivePipelineResult,
+	type LlmGateResult,
+	nexusApiService,
+	type RoutingCandidate,
+	type RoutingDecision,
 } from "@/lib/apis/nexus-api.service";
 
 const BAND_COLORS: Record<number, string> = {
@@ -152,9 +145,7 @@ export function PipelineExplorerTab() {
 							Kör
 						</Button>
 					</div>
-					{error && (
-						<p className="text-sm text-red-600 mt-2">{error}</p>
-					)}
+					{error && <p className="text-sm text-red-600 mt-2">{error}</p>}
 				</CardContent>
 			</Card>
 
@@ -196,7 +187,9 @@ export function PipelineExplorerTab() {
 									<span className="truncate mr-4">{item.query}</span>
 									<div className="flex items-center gap-2 shrink-0">
 										<Badge variant="outline" className="text-xs">
-											{item.result.selected_agent ? lbl(item.result.selected_agent, item.result.labels) : "—"}
+											{item.result.selected_agent
+												? lbl(item.result.selected_agent, item.result.labels)
+												: "—"}
 										</Badge>
 										<ArrowRight className="h-3 w-3 text-muted-foreground" />
 										<Badge variant="outline" className="text-xs">
@@ -238,9 +231,11 @@ function FlowSummary({ result }: { result: RoutingDecision }) {
 				<div className="flex items-center gap-2 flex-wrap justify-center text-sm">
 					{/* Query */}
 					<span className="font-medium max-w-[200px] truncate" title={qa.original_query}>
-						"{qa.original_query.length > 30
+						"
+						{qa.original_query.length > 30
 							? `${qa.original_query.slice(0, 30)}…`
-							: qa.original_query}"
+							: qa.original_query}
+						"
 					</span>
 					<ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
 
@@ -336,19 +331,29 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={1} title={result.live ? "Intent (Live LLM)" : gate ? "Intent (LLM)" : "Intent (QUL)"} color="bg-blue-500">
+		<StageCard
+			number={1}
+			title={result.live ? "Intent (Live LLM)" : gate ? "Intent (LLM)" : "Intent (QUL)"}
+			color="bg-blue-500"
+		>
 			<div className="space-y-3 text-sm">
 				<Row label="Normaliserad" value={qa.normalized_query} />
 				<Row label="Komplexitet">
-					<Badge className={COMPLEXITY_COLORS[result.live?.complexity ?? qa.complexity] ?? ""}>{result.live?.complexity ?? qa.complexity}</Badge>
+					<Badge className={COMPLEXITY_COLORS[result.live?.complexity ?? qa.complexity] ?? ""}>
+						{result.live?.complexity ?? qa.complexity}
+					</Badge>
 					{result.live?.execution_strategy && (
-						<Badge variant="outline" className="ml-1 text-[10px] py-0">{result.live.execution_strategy}</Badge>
+						<Badge variant="outline" className="ml-1 text-[10px] py-0">
+							{result.live.execution_strategy}
+						</Badge>
 					)}
 				</Row>
 				<Row label="Zon-kandidater">
 					<div className="flex gap-1 flex-wrap">
 						{qa.zone_candidates.map((z) => (
-							<Badge key={z} variant="outline">{z}</Badge>
+							<Badge key={z} variant="outline">
+								{z}
+							</Badge>
 						))}
 					</div>
 				</Row>
@@ -356,7 +361,9 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 					<Row label="Domänledtrådar">
 						<div className="flex gap-1 flex-wrap">
 							{qa.domain_hints.map((h) => (
-								<Badge key={h} variant="outline" className="text-xs">{h}</Badge>
+								<Badge key={h} variant="outline" className="text-xs">
+									{h}
+								</Badge>
 							))}
 						</div>
 					</Row>
@@ -368,14 +375,20 @@ function IntentStage({ result }: { result: RoutingDecision }) {
 					<div className="rounded-md border border-blue-200 bg-blue-50/50 p-3 space-y-2">
 						<div className="flex items-center justify-between">
 							<span className="text-xs font-medium text-blue-600">LLM Gate — Intent</span>
-							<Badge variant="outline" className="text-[10px] py-0">{gate.intent_step.candidates_shown} kandidater</Badge>
+							<Badge variant="outline" className="text-[10px] py-0">
+								{gate.intent_step.candidates_shown} kandidater
+							</Badge>
 						</div>
 						<Row label="Vald domän">
-							<Badge className="bg-blue-100 text-blue-800 border-blue-300">{lbl(gate.intent_step.chosen, result.labels)}</Badge>
+							<Badge className="bg-blue-100 text-blue-800 border-blue-300">
+								{lbl(gate.intent_step.chosen, result.labels)}
+							</Badge>
 						</Row>
 						{gate.intent_step.reasoning && (
 							<Row label="Motivering">
-								<span className="text-muted-foreground italic text-xs">{gate.intent_step.reasoning}</span>
+								<span className="text-muted-foreground italic text-xs">
+									{gate.intent_step.reasoning}
+								</span>
 							</Row>
 						)}
 					</div>
@@ -408,7 +421,11 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={2} title={result.live ? "Agent (Live LLM)" : gate ? "Agent (LLM)" : "Agent"} color="bg-indigo-500">
+		<StageCard
+			number={2}
+			title={result.live ? "Agent (Live LLM)" : gate ? "Agent (LLM)" : "Agent"}
+			color="bg-indigo-500"
+		>
 			{ar ? (
 				<div className="space-y-3 text-sm">
 					<Row label="Vald agent">
@@ -422,13 +439,15 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 					</Row>
 					<Row label="Namespace-filter">
 						<div className="flex gap-1 flex-wrap">
-							{ar.tool_namespaces.length > 0
-								? ar.tool_namespaces.map((ns) => (
-										<Badge key={ns} variant="outline" className="font-mono text-xs">
-											{ns}
-										</Badge>
-									))
-								: <span className="text-muted-foreground">Alla</span>}
+							{ar.tool_namespaces.length > 0 ? (
+								ar.tool_namespaces.map((ns) => (
+									<Badge key={ns} variant="outline" className="font-mono text-xs">
+										{ns}
+									</Badge>
+								))
+							) : (
+								<span className="text-muted-foreground">Alla</span>
+							)}
 						</div>
 					</Row>
 
@@ -436,14 +455,20 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 						<div className="rounded-md border border-indigo-200 bg-indigo-50/50 p-3 space-y-2">
 							<div className="flex items-center justify-between">
 								<span className="text-xs font-medium text-indigo-600">LLM Gate — Agent</span>
-								<Badge variant="outline" className="text-[10px] py-0">{gate.agent_step.candidates_shown} kandidater</Badge>
+								<Badge variant="outline" className="text-[10px] py-0">
+									{gate.agent_step.candidates_shown} kandidater
+								</Badge>
 							</div>
 							<Row label="Vald agent">
-								<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">{lbl(gate.agent_step.chosen, result.labels)}</Badge>
+								<Badge className="bg-indigo-100 text-indigo-800 border-indigo-300">
+									{lbl(gate.agent_step.chosen, result.labels)}
+								</Badge>
 							</Row>
 							{gate.agent_step.reasoning && (
 								<Row label="Motivering">
-									<span className="text-muted-foreground italic text-xs">{gate.agent_step.reasoning}</span>
+									<span className="text-muted-foreground italic text-xs">
+										{gate.agent_step.reasoning}
+									</span>
 								</Row>
 							)}
 						</div>
@@ -453,7 +478,12 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 						<Collapsible title={`Alla kandidater (${ar.candidates.length})`}>
 							<div className="space-y-1">
 								{ar.candidates.map((c) => (
-									<AgentCandidateRow key={c.name} candidate={c} selected={ar.selected_agents.includes(c.name)} labels={result.labels} />
+									<AgentCandidateRow
+										key={c.name}
+										candidate={c}
+										selected={ar.selected_agents.includes(c.name)}
+										labels={result.labels}
+									/>
 								))}
 							</div>
 						</Collapsible>
@@ -466,7 +496,15 @@ function AgentStage({ result }: { result: RoutingDecision }) {
 	);
 }
 
-function AgentCandidateRow({ candidate, selected, labels }: { candidate: AgentCandidateResponse; selected: boolean; labels: Record<string, string> }) {
+function AgentCandidateRow({
+	candidate,
+	selected,
+	labels,
+}: {
+	candidate: AgentCandidateResponse;
+	selected: boolean;
+	labels: Record<string, string>;
+}) {
 	return (
 		<div
 			className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
@@ -474,7 +512,9 @@ function AgentCandidateRow({ candidate, selected, labels }: { candidate: AgentCa
 			}`}
 		>
 			<div className="flex items-center gap-2">
-				<span className={`font-medium ${selected ? "text-indigo-700" : ""}`}>{lbl(candidate.name, labels)}</span>
+				<span className={`font-medium ${selected ? "text-indigo-700" : ""}`}>
+					{lbl(candidate.name, labels)}
+				</span>
 				<span className="text-muted-foreground">({candidate.zone})</span>
 			</div>
 			<div className="flex items-center gap-2">
@@ -499,7 +539,11 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 	const gate = result.llm_gate;
 
 	return (
-		<StageCard number={3} title={result.live ? "Tool (Live LLM)" : gate ? "Tool (LLM)" : "Tool (StR + Rerank)"} color="bg-emerald-500">
+		<StageCard
+			number={3}
+			title={result.live ? "Tool (Live LLM)" : gate ? "Tool (LLM)" : "Tool (StR + Rerank)"}
+			color="bg-emerald-500"
+		>
 			<div className="space-y-3 text-sm">
 				<Row label="NEXUS valde">
 					<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">
@@ -512,14 +556,20 @@ function ToolStage({ result }: { result: RoutingDecision }) {
 					<div className="rounded-md border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
 						<div className="flex items-center justify-between">
 							<span className="text-xs font-medium text-emerald-600">LLM Gate — Tool</span>
-							<Badge variant="outline" className="text-[10px] py-0">{gate.tool_step.candidates_shown} kandidater</Badge>
+							<Badge variant="outline" className="text-[10px] py-0">
+								{gate.tool_step.candidates_shown} kandidater
+							</Badge>
 						</div>
 						<Row label="Valt verktyg">
-							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">{lbl(gate.tool_step.chosen, result.labels)}</Badge>
+							<Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">
+								{lbl(gate.tool_step.chosen, result.labels)}
+							</Badge>
 						</Row>
 						{gate.tool_step.reasoning && (
 							<Row label="Motivering">
-								<span className="text-muted-foreground italic text-xs">{gate.tool_step.reasoning}</span>
+								<span className="text-muted-foreground italic text-xs">
+									{gate.tool_step.reasoning}
+								</span>
 							</Row>
 						)}
 					</div>
@@ -621,7 +671,9 @@ function ToolCandidateRow({
 				<span className={isSelected ? "font-medium text-emerald-700" : ""}>
 					{lbl(candidate.tool_id, labels)}
 				</span>
-				<Badge variant="outline" className="text-[10px] py-0">{candidate.zone}</Badge>
+				<Badge variant="outline" className="text-[10px] py-0">
+					{candidate.zone}
+				</Badge>
 				{isLlmChoice && !isSelected && (
 					<Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[10px] py-0">
 						LLM
@@ -650,7 +702,9 @@ function VerdictStage({ result }: { result: RoutingDecision }) {
 		<StageCard number={4} title="Beslut" color="bg-amber-500">
 			<div className="space-y-3 text-sm">
 				<Row label="Band">
-					<span className={`px-2 py-0.5 rounded text-xs font-bold ${BAND_COLORS[result.band] ?? ""}`}>
+					<span
+						className={`px-2 py-0.5 rounded text-xs font-bold ${BAND_COLORS[result.band] ?? ""}`}
+					>
 						{result.band} — {result.band_name}
 					</span>
 				</Row>
@@ -673,7 +727,13 @@ function VerdictStage({ result }: { result: RoutingDecision }) {
 // Stage 5: Planner (Live mode)
 // ---------------------------------------------------------------------------
 
-function PlannerStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
+function PlannerStage({
+	live,
+	labels,
+}: {
+	live: LivePipelineResult;
+	labels: Record<string, string>;
+}) {
 	return (
 		<StageCard number={5} title="Planner (LLM)" color="bg-violet-500">
 			<div className="space-y-3 text-sm">
@@ -684,7 +744,10 @@ function PlannerStage({ live, labels }: { live: LivePipelineResult; labels: Reco
 					<div className="space-y-1">
 						<p className="text-xs font-medium text-muted-foreground">Plansteg</p>
 						{live.plan_steps.map((step, i) => (
-							<div key={step.id} className="flex items-start gap-2 text-xs rounded px-2 py-1 bg-muted/50">
+							<div
+								key={step.id}
+								className="flex items-start gap-2 text-xs rounded px-2 py-1 bg-muted/50"
+							>
 								<span className="text-muted-foreground shrink-0 w-5">{i + 1}.</span>
 								<span>{step.content}</span>
 							</div>
@@ -705,7 +768,13 @@ function PlannerStage({ live, labels }: { live: LivePipelineResult; labels: Reco
 // Stage 6: Executor (Live mode — real tool execution)
 // ---------------------------------------------------------------------------
 
-function ExecutorStage({ live, labels }: { live: LivePipelineResult; labels: Record<string, string> }) {
+function ExecutorStage({
+	live,
+	labels,
+}: {
+	live: LivePipelineResult;
+	labels: Record<string, string>;
+}) {
 	return (
 		<StageCard number={6} title="Executor + Tools" color="bg-teal-500">
 			<div className="space-y-3 text-sm">
@@ -741,7 +810,9 @@ function ExecutorStage({ live, labels }: { live: LivePipelineResult; labels: Rec
 						<p className="text-xs font-medium text-muted-foreground mb-1">
 							{live.tool_executed ? "Riktigt verktygssvar" : "Simulerat svar"}
 						</p>
-						<div className="text-xs whitespace-pre-wrap max-h-64 overflow-auto font-mono">{live.tool_output}</div>
+						<div className="text-xs whitespace-pre-wrap max-h-64 overflow-auto font-mono">
+							{live.tool_output}
+						</div>
 					</div>
 				)}
 
@@ -801,9 +872,13 @@ function SynthesisStage({ live }: { live: LivePipelineResult }) {
 				)}
 				<Row label="Datakälla">
 					{live.tool_executed ? (
-						<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]">Riktig data</Badge>
+						<Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]">
+							Riktig data
+						</Badge>
 					) : (
-						<Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]">Simulerad</Badge>
+						<Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]">
+							Simulerad
+						</Badge>
 					)}
 				</Row>
 				<Row label="Total latens" value={`${live.total_latency_ms.toFixed(0)} ms`} />
@@ -861,7 +936,11 @@ function Row({
 	);
 }
 
-function EntityList({ entities }: { entities: { locations: string[]; times: string[]; organizations: string[]; topics: string[] } }) {
+function EntityList({
+	entities,
+}: {
+	entities: { locations: string[]; times: string[]; organizations: string[]; topics: string[] };
+}) {
 	const all = [
 		...entities.locations.map((v) => ({ type: "plats", value: v })),
 		...entities.times.map((v) => ({ type: "tid", value: v })),
@@ -881,7 +960,11 @@ function EntityList({ entities }: { entities: { locations: string[]; times: stri
 		<Row label="Entiteter">
 			<div className="flex gap-1 flex-wrap">
 				{all.map((e) => (
-					<Badge key={`${e.type}-${e.value}`} variant="outline" className={`text-xs ${typeColors[e.type] ?? ""}`}>
+					<Badge
+						key={`${e.type}-${e.value}`}
+						variant="outline"
+						className={`text-xs ${typeColors[e.type] ?? ""}`}
+					>
 						{e.type}: {e.value}
 					</Badge>
 				))}

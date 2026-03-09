@@ -44,14 +44,14 @@ import { ComposerAddAttachment, ComposerAttachments } from "@/components/assista
 import { ChatSessionStatus } from "@/components/assistant-ui/chat-session-status";
 import { ConnectorIndicator } from "@/components/assistant-ui/connector-popup";
 import {
+	ContextStatsContext,
+	type ContextStatsEntry,
+} from "@/components/assistant-ui/context-stats";
+import {
 	InlineMentionEditor,
 	type InlineMentionEditorRef,
 } from "@/components/assistant-ui/inline-mention-editor";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
-import {
-	ContextStatsContext,
-	type ContextStatsEntry,
-} from "@/components/assistant-ui/context-stats";
 import {
 	FadeLayer,
 	ThinkingStepsContext,
@@ -198,7 +198,12 @@ const getTimeBasedGreeting = (user?: { display_name?: string | null; email?: str
 
 	const nightGreetings = ["God natt", "Kväll", "Hej där", "Varvar ner"];
 
-	const lateNightGreetings = ["Vaken fortfarande", "Nattugglaläge", "Uppe efter läggdags", "Hej där"];
+	const lateNightGreetings = [
+		"Vaken fortfarande",
+		"Nattugglaläge",
+		"Uppe efter läggdags",
+		"Hej där",
+	];
 
 	// Select a random greeting based on time
 	let greeting: string;
@@ -497,8 +502,8 @@ const Composer: FC<{ isPublicChat: boolean }> = ({ isPublicChat }) => {
 				currentUserId={currentUser?.id ?? null}
 				members={members ?? []}
 			/>
-		<ComposerPrimitive.AttachmentDropzone className="aui-composer-attachment-dropzone flex w-full flex-col rounded-2xl border-input bg-muted px-1 pt-2 outline-none transition-shadow data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50">
-			{!isPublicChat && <ComposerAttachments />}
+			<ComposerPrimitive.AttachmentDropzone className="aui-composer-attachment-dropzone flex w-full flex-col rounded-2xl border-input bg-muted px-1 pt-2 outline-none transition-shadow data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50">
+				{!isPublicChat && <ComposerAttachments />}
 				{/* Inline editor with @mention support */}
 				<div ref={editorContainerRef} className="aui-composer-input-wrapper px-3 pt-3 pb-6">
 					<InlineMentionEditor
@@ -515,8 +520,8 @@ const Composer: FC<{ isPublicChat: boolean }> = ({ isPublicChat }) => {
 				</div>
 
 				{/* Document picker popover (portal to body for proper z-index stacking) */}
-			{!isPublicChat &&
-				showDocumentPopover &&
+				{!isPublicChat &&
+					showDocumentPopover &&
 					typeof document !== "undefined" &&
 					createPortal(
 						<DocumentMentionPicker
@@ -540,7 +545,7 @@ const Composer: FC<{ isPublicChat: boolean }> = ({ isPublicChat }) => {
 						/>,
 						document.body
 					)}
-			<ComposerAction isBlockedByOtherUser={isBlockedByOtherUser} isPublicChat={isPublicChat} />
+				<ComposerAction isBlockedByOtherUser={isBlockedByOtherUser} isPublicChat={isPublicChat} />
 			</ComposerPrimitive.AttachmentDropzone>
 		</ComposerPrimitive.Root>
 	);
@@ -596,10 +601,10 @@ const ComposerAction: FC<ComposerActionProps> = ({
 
 	return (
 		<div className="aui-composer-action-wrapper relative mx-2 mb-2 flex items-center justify-between">
-		<div className="flex items-center gap-1">
-			{!isPublicChat && <ComposerAddAttachment />}
-			{!isPublicChat && <ConnectorIndicator />}
-		</div>
+			<div className="flex items-center gap-1">
+				{!isPublicChat && <ComposerAddAttachment />}
+				{!isPublicChat && <ConnectorIndicator />}
+			</div>
 
 			{/* Show processing indicator when attachments are being processed */}
 			{hasProcessingAttachments && (
@@ -610,7 +615,7 @@ const ComposerAction: FC<ComposerActionProps> = ({
 			)}
 
 			{/* Show warning when no model is configured */}
-		{!hasModelConfigured && !hasProcessingAttachments && !isPublicChat && (
+			{!hasModelConfigured && !hasProcessingAttachments && !isPublicChat && (
 				<div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs">
 					<AlertCircle className="size-3" />
 					<span>Välj en modell</span>
@@ -699,13 +704,7 @@ const FadeLayerPart: FC = () => {
 
 	if (timeline.length === 0) return null;
 
-	return (
-		<FadeLayer
-			timeline={timeline}
-			stepsById={stepsById}
-			isStreaming={isStreaming}
-		/>
-	);
+	return <FadeLayer timeline={timeline} stepsById={stepsById} isStreaming={isStreaming} />;
 };
 
 const AssistantMessageInner: FC = () => {

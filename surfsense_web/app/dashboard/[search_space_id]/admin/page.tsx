@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { AdminPromptsPage } from "@/components/admin/agent-prompts-page";
 
 export default function AdminPromptsRedirectPage() {

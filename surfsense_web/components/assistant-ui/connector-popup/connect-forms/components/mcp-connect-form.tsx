@@ -196,10 +196,10 @@ export const MCPConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting })
 							rows={16}
 							className={`font-mono text-xs ${jsonError ? "border-red-500" : ""}`}
 						/>
-					{jsonError && <p className="text-xs text-red-500">JSON-fel: {jsonError}</p>}
+						{jsonError && <p className="text-xs text-red-500">JSON-fel: {jsonError}</p>}
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-						Klistra in en MCP-serverkonfiguration. Måste innehålla: name, command, args (valfritt),
-						env (valfritt), transport (valfritt).
+							Klistra in en MCP-serverkonfiguration. Måste innehålla: name, command, args
+							(valfritt), env (valfritt), transport (valfritt).
 						</p>
 					</div>
 

@@ -153,8 +153,8 @@ export const CirclebackConfig: FC<CirclebackConfigProps> = ({ connector, onNameC
 							</Button>
 						</div>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Använd denna URL i dina Circleback-automationsinställningar för att skicka
-							mötesdata till Oneseek.
+							Använd denna URL i dina Circleback-automationsinställningar för att skicka mötesdata
+							till Oneseek.
 						</p>
 					</div>
 				) : (
@@ -169,8 +169,8 @@ export const CirclebackConfig: FC<CirclebackConfigProps> = ({ connector, onNameC
 						<AlertTitle className="text-xs sm:text-sm">Konfigurationsinstruktioner</AlertTitle>
 						<AlertDescription className="text-[10px] sm:text-xs !pl-0 mt-1">
 							Konfigurera denna URL i Circleback Inställningar → Automations → Create automation →
-							Send webhook request. Webhooken skickar automatiskt mötesanteckningar,
-							transkriptioner och åtgärdspunkter till detta sökutrymme.
+							Send webhook request. Webhooken skickar automatiskt mötesanteckningar, transkriptioner
+							och åtgärdspunkter till detta sökutrymme.
 						</AlertDescription>
 					</Alert>
 				)}

@@ -1,22 +1,8 @@
 "use client";
 
+import { ArrowLeft, Eye, EyeOff, ImagePlus, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
+import { toast } from "sonner";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -27,17 +13,22 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-	Plus,
-	Pencil,
-	Trash2,
-	Eye,
-	EyeOff,
-	ImagePlus,
-	Loader2,
-	ArrowLeft,
-} from "lucide-react";
-import { toast } from "sonner";
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 
 interface Post {
 	id: number;
@@ -284,7 +275,14 @@ export function PostsAdminPage({ type, title, description }: PostsAdminPageProps
 		return (
 			<div className="space-y-6">
 				<div className="flex items-center gap-4">
-					<Button variant="ghost" size="sm" onClick={() => { setEditorOpen(false); resetForm(); }}>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => {
+							setEditorOpen(false);
+							resetForm();
+						}}
+					>
 						<ArrowLeft className="h-4 w-4 mr-2" />
 						Tillbaka
 					</Button>
@@ -501,11 +499,7 @@ export function PostsAdminPage({ type, title, description }: PostsAdminPageProps
 							<CardContent className="flex items-center gap-4 py-4">
 								{post.imageUrl && (
 									<div className="w-16 h-16 rounded-lg overflow-hidden border bg-muted shrink-0">
-										<img
-											src={post.imageUrl}
-											alt=""
-											className="object-cover w-full h-full"
-										/>
+										<img src={post.imageUrl} alt="" className="object-cover w-full h-full" />
 									</div>
 								)}
 								<div className="flex-1 min-w-0">
@@ -524,11 +518,15 @@ export function PostsAdminPage({ type, title, description }: PostsAdminPageProps
 										</span>
 										{post.tags && (
 											<div className="flex gap-1">
-												{post.tags.split(",").filter(Boolean).slice(0, 3).map((tag) => (
-													<Badge key={tag.trim()} variant="outline" className="text-xs py-0">
-														{tag.trim()}
-													</Badge>
-												))}
+												{post.tags
+													.split(",")
+													.filter(Boolean)
+													.slice(0, 3)
+													.map((tag) => (
+														<Badge key={tag.trim()} variant="outline" className="text-xs py-0">
+															{tag.trim()}
+														</Badge>
+													))}
 											</div>
 										)}
 									</div>
@@ -540,11 +538,7 @@ export function PostsAdminPage({ type, title, description }: PostsAdminPageProps
 										onClick={() => handleTogglePublish(post)}
 										title={post.published ? "Avpublicera" : "Publicera"}
 									>
-										{post.published ? (
-											<EyeOff className="h-4 w-4" />
-										) : (
-											<Eye className="h-4 w-4" />
-										)}
+										{post.published ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
 									</Button>
 									<Button
 										variant="ghost"
@@ -578,12 +572,16 @@ export function PostsAdminPage({ type, title, description }: PostsAdminPageProps
 					<AlertDialogHeader>
 						<AlertDialogTitle>Ta bort inlägg?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Är du säker på att du vill ta bort &quot;{postToDelete?.title}&quot;? Detta kan inte ångras.
+							Är du säker på att du vill ta bort &quot;{postToDelete?.title}&quot;? Detta kan inte
+							ångras.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel>Avbryt</AlertDialogCancel>
-						<AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+						<AlertDialogAction
+							onClick={handleDelete}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
 							Ta bort
 						</AlertDialogAction>
 					</AlertDialogFooter>

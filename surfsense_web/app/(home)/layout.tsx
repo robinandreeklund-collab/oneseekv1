@@ -12,9 +12,7 @@ export default function HomePageLayout({ children }: { children: React.ReactNode
 		<div className="min-h-screen bg-white text-gray-900 dark:bg-neutral-950 dark:text-white overflow-x-hidden">
 			<Navbar />
 			{/* Main content — no fixed offset, sidebar overlays on mobile and is part of the layout on desktop */}
-			<main className="min-h-screen">
-				{children}
-			</main>
+			<main className="min-h-screen">{children}</main>
 			{!isAuthPage && <FooterNew />}
 		</div>
 	);

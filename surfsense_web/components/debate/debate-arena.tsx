@@ -1,6 +1,5 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import {
 	CheckCircle2Icon,
 	ChevronDownIcon,
@@ -17,9 +16,10 @@ import {
 	VolumeXIcon,
 	VoteIcon,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import React, {
-	type FC,
 	createContext,
+	type FC,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -29,28 +29,24 @@ import React, {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-	Collapsible,
-	CollapsibleContent,
-	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Slider } from "@/components/ui/slider";
 import type {
 	DebateArenaAnalysis,
 	DebateParticipant,
 	DebateResults,
 	DebateRoundInfo,
 	DebateState,
-	DebateVote,
 	DebateVoiceState,
+	DebateVote,
 } from "@/contracts/types/debate.types";
 import {
 	DEBATE_MODEL_COLORS,
 	DEBATE_MODEL_DISPLAY,
 	ROUND_LABELS,
 } from "@/contracts/types/debate.types";
-import { Slider } from "@/components/ui/slider";
 import { useSmoothTyping } from "@/hooks/use-smooth-typing";
+import { cn } from "@/lib/utils";
 
 // ============================================================================
 // Context — other tool UIs check this to hide when debate arena is active
@@ -110,10 +106,7 @@ interface DebateArenaLayoutProps {
 	analysis?: DebateArenaAnalysis | null;
 }
 
-export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
-	debateState,
-	analysis,
-}) => {
+export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({ debateState, analysis }) => {
 	const [selectedRound, setSelectedRound] = useState<number | null>(null);
 	const voiceCtx = React.useContext(DebateVoiceContext);
 	const isVoiceMode = debateState.voiceMode === true;
@@ -187,7 +180,10 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 				</div>
 				<div className="flex items-center gap-2">
 					{isVoiceMode && voiceCtx?.voiceState.playbackStatus === "playing" && (
-						<Badge variant="outline" className="animate-pulse border-red-500/40 bg-red-500/5 text-red-500 text-[10px]">
+						<Badge
+							variant="outline"
+							className="animate-pulse border-red-500/40 bg-red-500/5 text-red-500 text-[10px]"
+						>
 							<span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
 							LIVE
 						</Badge>
@@ -212,9 +208,7 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 			</motion.div>
 
 			{/* Voice Control Bar — only shown in voice mode */}
-			{isVoiceMode && voiceCtx && (
-				<VoiceControlBar voiceCtx={voiceCtx} isComplete={isComplete} />
-			)}
+			{isVoiceMode && voiceCtx && <VoiceControlBar voiceCtx={voiceCtx} isComplete={isComplete} />}
 
 			{/* Topic */}
 			{debateState.topic && (
@@ -244,15 +238,15 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 									? "bg-primary text-primary-foreground shadow-sm"
 									: isDone
 										? "text-green-500 hover:bg-accent"
-										: "text-muted-foreground hover:bg-accent",
+										: "text-muted-foreground hover:bg-accent"
 							)}
 						>
 							{isDone && !isActive && <CheckCircle2Icon className="h-3 w-3" />}
 							{/* OPT-11: Removed redundant round === activeRound check */}
-							{isActive && !isDone && (
-								<LoaderCircleIcon className="h-3 w-3 animate-spin" />
-							)}
-							<span>R{round} — {getRoundTypeLabel(round)}</span>
+							{isActive && !isDone && <LoaderCircleIcon className="h-3 w-3 animate-spin" />}
+							<span>
+								R{round} — {getRoundTypeLabel(round)}
+							</span>
 						</button>
 					);
 				})}
@@ -283,11 +277,11 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 						const voiceTextDone = isVoiceMode && roundResponse?.status === "complete";
 
 						const autoExpanded = isVoiceMode
-							? (isBeingVoiced || (isSpeaking && !voiceSpeaker))
-							: (isSpeaking || (
-								roundResponse?.status === "complete" && currentSpeaker === null
-								&& index === visibleParticipants.length - 1
-							));
+							? isBeingVoiced || (isSpeaking && !voiceSpeaker)
+							: isSpeaking ||
+								(roundResponse?.status === "complete" &&
+									currentSpeaker === null &&
+									index === visibleParticipants.length - 1);
 
 						return (
 							<ParticipantCard
@@ -297,7 +291,11 @@ export const DebateArenaLayout: FC<DebateArenaLayoutProps> = ({
 								round={activeRound}
 								index={index}
 								autoExpanded={autoExpanded}
-								isMostRecent={!isVoiceMode && index === visibleParticipants.length - 1 && currentSpeaker === null}
+								isMostRecent={
+									!isVoiceMode &&
+									index === visibleParticipants.length - 1 &&
+									currentSpeaker === null
+								}
 								isVoiceMode={isVoiceMode}
 								isBeingVoiced={isBeingVoiced}
 								voiceTextDone={voiceTextDone}
@@ -376,8 +374,9 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	// Voice playback ground-truth: true when playNext() is actively
 	// playing a chunk for THIS participant (set by the audio hook, not
 	// by the SSE debate_voice_speaker event which fires too early).
-	const voiceActive = voiceCtx?.voiceState.currentSpeaker === participant.display
-		&& voiceCtx?.voiceState.playbackStatus === "playing";
+	const voiceActive =
+		voiceCtx?.voiceState.currentSpeaker === participant.display &&
+		voiceCtx?.voiceState.playbackStatus === "playing";
 
 	// Latch: once audio has started playing for this participant, keep
 	// the typing animation running even if voiceActive flickers briefly.
@@ -404,7 +403,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 	// "Genererar..." shown while LLM generates text (before voice starts).
 	const isGeneratingText = isVoiceMode && isSpeaking && !voiceStarted;
 	const effectiveExpanded = isVoiceMode
-		? (voiceActive || isTextStreaming || isGeneratingText)
+		? voiceActive || isTextStreaming || isGeneratingText
 		: (manualToggle ?? autoExpanded);
 
 	return (
@@ -420,11 +419,17 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 					"transition-all duration-300",
 					!isVoiceMode && isSpeaking && "border-primary/50 shadow-lg shadow-primary/5",
 					isBeingVoiced && "border-red-500/50 shadow-xl shadow-red-500/10 ring-2 ring-red-500/30",
-					isVoiceMode && isTextStreaming && !isBeingVoiced && "border-primary/40 shadow-lg shadow-primary/5",
-					isVoiceMode && voiceTextDone && !isBeingVoiced && "border-border opacity-80",
+					isVoiceMode &&
+						isTextStreaming &&
+						!isBeingVoiced &&
+						"border-primary/40 shadow-lg shadow-primary/5",
+					isVoiceMode && voiceTextDone && !isBeingVoiced && "border-border opacity-80"
 				)}
 			>
-				<Collapsible open={effectiveExpanded} onOpenChange={(open) => !isVoiceMode && setManualToggle(open)}>
+				<Collapsible
+					open={effectiveExpanded}
+					onOpenChange={(open) => !isVoiceMode && setManualToggle(open)}
+				>
 					<div className="flex items-center justify-between px-4 py-3">
 						<div className="flex items-center gap-3">
 							{MODEL_LOGOS[participant.key] ? (
@@ -433,14 +438,14 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 									alt={participant.display}
 									className={cn(
 										"h-9 w-9 rounded-lg object-contain",
-										isBeingVoiced && "ring-2 ring-red-500/50",
+										isBeingVoiced && "ring-2 ring-red-500/50"
 									)}
 								/>
 							) : (
 								<div
 									className={cn(
 										"flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-white",
-										isBeingVoiced && "ring-2 ring-red-500/50",
+										isBeingVoiced && "ring-2 ring-red-500/50"
 									)}
 									style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}
 								>
@@ -451,7 +456,10 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 								<div className="flex items-center gap-2">
 									<span className="text-sm font-semibold">{participant.display}</span>
 									{participant.isOneseek && (
-										<Badge variant="outline" className="border-cyan-500/30 text-cyan-500 text-[10px]">
+										<Badge
+											variant="outline"
+											className="border-cyan-500/30 text-cyan-500 text-[10px]"
+										>
 											Realtidsverktyg
 										</Badge>
 									)}
@@ -474,19 +482,28 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 						</div>
 						<div className="flex items-center gap-2">
 							{isGeneratingText && (
-								<Badge variant="outline" className="animate-pulse border-amber-500/30 text-amber-500 text-[10px]">
+								<Badge
+									variant="outline"
+									className="animate-pulse border-amber-500/30 text-amber-500 text-[10px]"
+								>
 									<LoaderCircleIcon className="mr-1 h-3 w-3 animate-spin" />
 									Genererar...
 								</Badge>
 							)}
 							{isBeingVoiced && (
-								<Badge variant="outline" className="animate-pulse border-red-500/40 bg-red-500/5 text-red-500 text-[10px]">
+								<Badge
+									variant="outline"
+									className="animate-pulse border-red-500/40 bg-red-500/5 text-red-500 text-[10px]"
+								>
 									<span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
 									LIVE
 								</Badge>
 							)}
 							{!isVoiceMode && isSpeaking && (
-								<Badge variant="outline" className="animate-pulse border-primary/30 text-primary text-[10px]">
+								<Badge
+									variant="outline"
+									className="animate-pulse border-primary/30 text-primary text-[10px]"
+								>
 									<MicIcon className="mr-1 h-3 w-3" />
 									Talar
 								</Badge>
@@ -509,7 +526,7 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 										<ChevronDownIcon
 											className={cn(
 												"h-4 w-4 transition-transform",
-												effectiveExpanded && "rotate-180",
+												effectiveExpanded && "rotate-180"
 											)}
 										/>
 									</Button>
@@ -531,16 +548,19 @@ const ParticipantCard: FC<ParticipantCardProps> = ({
 					<CollapsibleContent>
 						{displayText ? (
 							<CardContent className="border-t border-border px-4 py-3">
-								<p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground" style={{ overflowWrap: "anywhere" }}>
+								<p
+									className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground"
+									style={{ overflowWrap: "anywhere" }}
+								>
 									{displayText}
-									{isTextStreaming && <span className="animate-pulse text-primary text-base">▍</span>}
+									{isTextStreaming && (
+										<span className="animate-pulse text-primary text-base">▍</span>
+									)}
 								</p>
 							</CardContent>
 						) : isGeneratingText ? (
 							<CardContent className="border-t border-border px-4 py-3">
-								<p className="text-xs text-muted-foreground italic">
-									Hämtar svar...
-								</p>
+								<p className="text-xs text-muted-foreground italic">Hämtar svar...</p>
 							</CardContent>
 						) : null}
 					</CollapsibleContent>
@@ -582,7 +602,8 @@ const VotingSection: FC<VotingSectionProps> = ({ votes, results }) => {
 							return (
 								<div key={model} className="flex items-center gap-3">
 									<span className={cn("w-24 text-xs font-medium", isWinner && "text-amber-400")}>
-										{isWinner && "👑 "}{model}
+										{isWinner && "👑 "}
+										{model}
 									</span>
 									<div className="flex-1">
 										<div className="h-2 overflow-hidden rounded-full bg-muted">
@@ -591,7 +612,7 @@ const VotingSection: FC<VotingSectionProps> = ({ votes, results }) => {
 													"h-full rounded-full",
 													isWinner
 														? "bg-gradient-to-r from-amber-500 to-amber-400"
-														: "bg-gradient-to-r from-primary to-cyan-500",
+														: "bg-gradient-to-r from-primary to-cyan-500"
 												)}
 												initial={{ width: "0%" }}
 												animate={{
@@ -656,9 +677,7 @@ const WinnerBanner: FC<WinnerBannerProps> = ({ winner, results, votes }) => {
 					👑
 				</div>
 				<div className="flex-1">
-					<h3 className="text-lg font-bold text-amber-400">
-						{winner} vann debatten!
-					</h3>
+					<h3 className="text-lg font-bold text-amber-400">{winner} vann debatten!</h3>
 					<p className="text-sm text-muted-foreground">
 						{winnerVotes} av {totalVotes} röster
 						{results.tiebreakerUsed && " (tiebreaker: ordräkning)"}
@@ -668,9 +687,7 @@ const WinnerBanner: FC<WinnerBannerProps> = ({ winner, results, votes }) => {
 					<div className="text-3xl font-extrabold text-amber-400">
 						{winnerVotes}/{totalVotes}
 					</div>
-					<div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-						röster
-					</div>
+					<div className="text-[10px] uppercase tracking-wider text-muted-foreground">röster</div>
 				</div>
 			</div>
 		</motion.div>
@@ -694,7 +711,8 @@ interface VoiceControlBarProps {
 }
 
 const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => {
-	const { voiceState, togglePlayPause, setVolume, exportAudioBlob, resumeAudioContext, lastError } = voiceCtx;
+	const { voiceState, togglePlayPause, setVolume, exportAudioBlob, resumeAudioContext, lastError } =
+		voiceCtx;
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	// Waveform visualization
@@ -746,12 +764,7 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 			className="flex items-center gap-3 rounded-xl border border-border bg-card/50 px-4 py-3 backdrop-blur-sm"
 		>
 			{/* Play/Pause */}
-			<Button
-				variant="ghost"
-				size="sm"
-				className="h-8 w-8 p-0"
-				onClick={togglePlayPause}
-			>
+			<Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={togglePlayPause}>
 				{voiceState.playbackStatus === "playing" ? (
 					<PauseIcon className="h-4 w-4" />
 				) : (
@@ -763,18 +776,14 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<div className="flex items-center gap-2">
 					{lastError ? (
-						<span className="truncate text-xs font-medium text-red-400">
-							{lastError}
-						</span>
+						<span className="truncate text-xs font-medium text-red-400">{lastError}</span>
 					) : voiceState.currentSpeaker ? (
 						<span className="truncate text-xs font-medium text-foreground">
 							{voiceState.currentSpeaker}
 						</span>
 					) : (
 						<span className="text-xs text-muted-foreground">
-							{voiceState.playbackStatus === "idle"
-								? "Klicka ▶ för att aktivera ljud"
-								: "Buffrar…"}
+							{voiceState.playbackStatus === "idle" ? "Klicka ▶ för att aktivera ljud" : "Buffrar…"}
 						</span>
 					)}
 					{voiceState.playbackStatus === "playing" && (
@@ -782,12 +791,7 @@ const VoiceControlBar: FC<VoiceControlBarProps> = ({ voiceCtx, isComplete }) => 
 					)}
 				</div>
 				{/* Waveform canvas */}
-				<canvas
-					ref={canvasRef}
-					width={320}
-					height={24}
-					className="w-full rounded-sm"
-				/>
+				<canvas ref={canvasRef} width={320} height={24} className="w-full rounded-sm" />
 			</div>
 
 			{/* Volume */}

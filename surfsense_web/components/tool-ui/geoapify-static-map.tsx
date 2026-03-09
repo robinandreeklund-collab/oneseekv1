@@ -111,9 +111,7 @@ export const GeoapifyStaticMapToolUI = makeAssistantToolUI<
 			return <MapEmptyState />;
 		}
 
-		const title = result.center?.name
-			? `Karta: ${result.center.name}`
-			: "Karta";
+		const title = result.center?.name ? `Karta: ${result.center.name}` : "Karta";
 		const description = "Data © OpenStreetMap contributors";
 
 		const safeId = `geoapify-${encodeURIComponent(result.image_url)}`;

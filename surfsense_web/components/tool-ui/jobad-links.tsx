@@ -1,7 +1,7 @@
 "use client";
 
 import { makeAssistantToolUI } from "@assistant-ui/react";
-import { AlertCircleIcon, ExternalLinkIcon, MapPinIcon, BriefcaseIcon } from "lucide-react";
+import { AlertCircleIcon, BriefcaseIcon, ExternalLinkIcon, MapPinIcon } from "lucide-react";
 import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -154,10 +154,7 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 					</div>
 					{result.effective_query && (
 						<p className="mt-1 text-xs text-muted-foreground">
-							Query:{" "}
-							<span className="font-medium text-foreground">
-								{result.effective_query}
-							</span>
+							Query: <span className="font-medium text-foreground">{result.effective_query}</span>
 						</p>
 					)}
 					{result.filters_not_applied?.length ? (
@@ -170,7 +167,10 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 							<p className="text-sm text-muted-foreground">No job ads found.</p>
 						) : (
 							results.map((job) => (
-								<div key={job.id || job.headline} className="rounded-lg border border-border/60 p-3">
+								<div
+									key={job.id || job.headline}
+									className="rounded-lg border border-border/60 p-3"
+								>
 									<div className="flex items-start justify-between gap-3">
 										<div>
 											<p className="font-semibold text-sm">{job.headline || "Untitled job"}</p>
@@ -238,4 +238,3 @@ export const JobAdLinksToolUI = makeAssistantToolUI<JobAdLinksArgs, JobAdLinksRe
 		);
 	},
 });
-

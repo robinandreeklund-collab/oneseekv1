@@ -1,16 +1,23 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { useAtomValue } from "jotai";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { stringify as stringifyYaml } from "yaml";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
+import {
+	buildEvalExportFileName,
+	downloadTextFile,
+	parseApiInputEvalInput as parseApiInputEvalInputUtil,
+	parseEvalTestCases,
+} from "@/components/admin/hooks/use-eval-parsers";
+import type { SuggestionDiffItem } from "@/components/admin/shared/suggestion-diff-view";
 import type {
 	MetadataCatalogAuditRunResponse,
 	MetadataCatalogSeparationResponse,
-	ToolAutoLoopDraftPromptItem,
 	ToolApiInputEvaluationJobStatusResponse,
 	ToolApiInputEvaluationResponse,
 	ToolApiInputEvaluationTestCase,
+	ToolAutoLoopDraftPromptItem,
 	ToolEvaluationJobStatusResponse,
 	ToolEvaluationResponse,
 	ToolEvaluationTestCase,
@@ -18,27 +25,15 @@ import type {
 	ToolMetadataUpdateItem,
 	ToolRetrievalTuning,
 } from "@/contracts/types/admin-tool-settings.types";
-import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
-import type { SuggestionDiffItem } from "@/components/admin/shared/suggestion-diff-view";
-import {
-	downloadTextFile,
-	buildEvalExportFileName,
-	parseEvalTestCases,
-	parseApiInputEvalInput as parseApiInputEvalInputUtil,
-} from "@/components/admin/hooks/use-eval-parsers";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
 // ---------------------------------------------------------------------------
 // Helper types
 // ---------------------------------------------------------------------------
 
 type EvalExportFormat = "json" | "yaml";
-type LiveRoutingPhase =
-	| "shadow"
-	| "tool_gate"
-	| "agent_auto"
-	| "adaptive"
-	| "intent_finetune";
+type LiveRoutingPhase = "shadow" | "tool_gate" | "agent_auto" | "adaptive" | "intent_finetune";
 type ExportableEvalJobStatus =
 	| ToolEvaluationJobStatusResponse
 	| ToolApiInputEvaluationJobStatusResponse;
@@ -77,14 +72,13 @@ export function useCalibrationTab() {
 	const queryClient = useQueryClient();
 
 	// --- Calibration step ---
-	const [calibrationStep, setCalibrationStep] = useState<
-		"audit" | "eval" | "auto"
-	>("audit");
+	const [calibrationStep, setCalibrationStep] = useState<"audit" | "eval" | "auto">("audit");
 
 	// --- Draft metadata (needed for metadataPatch in eval) ---
 	const [draftTools, setDraftTools] = useState<Record<string, ToolMetadataUpdateItem>>({});
-	const [draftRetrievalTuning, setDraftRetrievalTuning] =
-		useState<ToolRetrievalTuning | null>(null);
+	const [draftRetrievalTuning, setDraftRetrievalTuning] = useState<ToolRetrievalTuning | null>(
+		null
+	);
 
 	// --- Eval state ---
 	const [evalInput, setEvalInput] = useState("");
@@ -93,15 +87,15 @@ export function useCalibrationTab() {
 	const [holdoutInput, setHoldoutInput] = useState("");
 	const [showHoldoutJsonInput, setShowHoldoutJsonInput] = useState(false);
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
-	const [generationMode, setGenerationMode] = useState<
-		"category" | "provider" | "global_random"
-	>("category");
+	const [generationMode, setGenerationMode] = useState<"category" | "provider" | "global_random">(
+		"category"
+	);
 	const [evaluationStepTab, setEvaluationStepTab] = useState<
 		"all" | "guide" | "generation" | "agent_eval" | "api_input"
 	>("all");
-	const [generationEvalType, setGenerationEvalType] = useState<
-		"tool_selection" | "api_input"
-	>("tool_selection");
+	const [generationEvalType, setGenerationEvalType] = useState<"tool_selection" | "api_input">(
+		"tool_selection"
+	);
 	const [generationProvider, setGenerationProvider] = useState("scb");
 	const [generationCategory, setGenerationCategory] = useState("");
 	const [generationQuestionCount, setGenerationQuestionCount] = useState(12);
@@ -124,9 +118,9 @@ export function useCalibrationTab() {
 	const [isStartingAutoLoop, setIsStartingAutoLoop] = useState(false);
 	const [autoLoopJobId, setAutoLoopJobId] = useState<string | null>(null);
 	const [lastAutoLoopNotice, setLastAutoLoopNotice] = useState<string | null>(null);
-	const [autoLoopPromptDrafts, setAutoLoopPromptDrafts] = useState<
-		ToolAutoLoopDraftPromptItem[]
-	>([]);
+	const [autoLoopPromptDrafts, setAutoLoopPromptDrafts] = useState<ToolAutoLoopDraftPromptItem[]>(
+		[]
+	);
 	const [isSavingAutoLoopPromptDrafts, setIsSavingAutoLoopPromptDrafts] = useState(false);
 
 	// --- Eval library ---
@@ -140,39 +134,34 @@ export function useCalibrationTab() {
 	const [retrievalLimit, setRetrievalLimit] = useState(5);
 	const [useLlmSupervisorReview, setUseLlmSupervisorReview] = useState(true);
 	const [includeDraftMetadata, setIncludeDraftMetadata] = useState(true);
-	const [evaluationResult, setEvaluationResult] =
-		useState<ToolEvaluationResponse | null>(null);
+	const [evaluationResult, setEvaluationResult] = useState<ToolEvaluationResponse | null>(null);
 	const [apiInputEvaluationResult, setApiInputEvaluationResult] =
 		useState<ToolApiInputEvaluationResponse | null>(null);
 	const [evalJobId, setEvalJobId] = useState<string | null>(null);
 	const [apiInputEvalJobId, setApiInputEvalJobId] = useState<string | null>(null);
 	const [lastEvalJobNotice, setLastEvalJobNotice] = useState<string | null>(null);
-	const [lastApiInputEvalJobNotice, setLastApiInputEvalJobNotice] = useState<string | null>(
-		null
-	);
+	const [lastApiInputEvalJobNotice, setLastApiInputEvalJobNotice] = useState<string | null>(null);
 
 	// --- Suggestion state ---
-	const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(
+	const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(new Set());
+	const [selectedPromptSuggestionKeys, setSelectedPromptSuggestionKeys] = useState<Set<string>>(
 		new Set()
 	);
-	const [selectedPromptSuggestionKeys, setSelectedPromptSuggestionKeys] = useState<
-		Set<string>
-	>(new Set());
 	const [selectedToolPromptSuggestionKeys, setSelectedToolPromptSuggestionKeys] = useState<
 		Set<string>
 	>(new Set());
 	const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
 	const [isSavingSuggestions, setIsSavingSuggestions] = useState(false);
 	const [isSavingPromptSuggestions, setIsSavingPromptSuggestions] = useState(false);
-	const [isSavingToolPromptSuggestions, setIsSavingToolPromptSuggestions] =
-		useState(false);
+	const [isSavingToolPromptSuggestions, setIsSavingToolPromptSuggestions] = useState(false);
 	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
 
 	// --- Audit state (Steg 1) ---
 	const [isRunningAudit, setIsRunningAudit] = useState(false);
 	const [auditResult, setAuditResult] = useState<MetadataCatalogAuditRunResponse | null>(null);
 	const [isRunningSeparation, setIsRunningSeparation] = useState(false);
-	const [separationResult, setSeparationResult] = useState<MetadataCatalogSeparationResponse | null>(null);
+	const [separationResult, setSeparationResult] =
+		useState<MetadataCatalogSeparationResponse | null>(null);
 	const [auditMaxTools, setAuditMaxTools] = useState(25);
 	const [auditRetrievalLimit, setAuditRetrievalLimit] = useState(5);
 	const [auditProviderFilter, setAuditProviderFilter] = useState<string>("all");
@@ -192,8 +181,7 @@ export function useCalibrationTab() {
 
 	const { data: apiCategories } = useQuery({
 		queryKey: ["admin-tool-api-categories", data?.search_space_id],
-		queryFn: () =>
-			adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
+		queryFn: () => adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
@@ -217,9 +205,7 @@ export function useCalibrationTab() {
 	const { data: apiInputEvalJobStatus } = useQuery({
 		queryKey: ["admin-tool-api-input-evaluation-job", apiInputEvalJobId],
 		queryFn: () =>
-			adminToolSettingsApiService.getToolApiInputEvaluationStatus(
-				apiInputEvalJobId as string
-			),
+			adminToolSettingsApiService.getToolApiInputEvaluationStatus(apiInputEvalJobId as string),
 		enabled: !!apiInputEvalJobId,
 		refetchInterval: (query) => {
 			const status = query.state.data?.status;
@@ -252,9 +238,7 @@ export function useCalibrationTab() {
 	const apiProviders = useMemo(() => apiCategories?.providers ?? [], [apiCategories?.providers]);
 
 	const generationCategoryOptions = useMemo(() => {
-		const provider = apiProviders.find(
-			(item) => item.provider_key === generationProvider
-		);
+		const provider = apiProviders.find((item) => item.provider_key === generationProvider);
 		const deduped = new Map<string, { category_id: string; category_name: string }>();
 		for (const item of provider?.categories ?? []) {
 			if (!deduped.has(item.category_id)) {
@@ -293,9 +277,7 @@ export function useCalibrationTab() {
 
 	const isEvalJobRunning =
 		!!evalJobId &&
-		(!evalJobStatus ||
-			evalJobStatus.status === "pending" ||
-			evalJobStatus.status === "running");
+		(!evalJobStatus || evalJobStatus.status === "pending" || evalJobStatus.status === "running");
 
 	const isApiInputEvalJobRunning =
 		!!apiInputEvalJobId &&
@@ -310,10 +292,8 @@ export function useCalibrationTab() {
 			autoLoopJobStatus.status === "running");
 
 	const showGuideSections = evaluationStepTab === "all" || evaluationStepTab === "guide";
-	const showGenerationSections =
-		evaluationStepTab === "all" || evaluationStepTab === "generation";
-	const showAgentSections =
-		evaluationStepTab === "all" || evaluationStepTab === "agent_eval";
+	const showGenerationSections = evaluationStepTab === "all" || evaluationStepTab === "generation";
+	const showAgentSections = evaluationStepTab === "all" || evaluationStepTab === "agent_eval";
 	const showApiSections = evaluationStepTab === "all" || evaluationStepTab === "api_input";
 
 	const selectedSuggestions = useMemo(
@@ -344,8 +324,12 @@ export function useCalibrationTab() {
 			}
 			const currentEx = new Set(suggestion.current_metadata.example_queries ?? []);
 			const proposedEx = new Set(suggestion.proposed_metadata.example_queries ?? []);
-			const addedEx = (suggestion.proposed_metadata.example_queries ?? []).filter((q) => !currentEx.has(q));
-			const removedEx = (suggestion.current_metadata.example_queries ?? []).filter((q) => !proposedEx.has(q));
+			const addedEx = (suggestion.proposed_metadata.example_queries ?? []).filter(
+				(q) => !currentEx.has(q)
+			);
+			const removedEx = (suggestion.current_metadata.example_queries ?? []).filter(
+				(q) => !proposedEx.has(q)
+			);
 			if (addedEx.length || removedEx.length) {
 				fields.push({ field: "example_queries", added: addedEx, removed: removedEx });
 			}
@@ -503,10 +487,7 @@ export function useCalibrationTab() {
 	// Handlers
 	// -----------------------------------------------------------------------
 
-	const handleExportEvalRun = (
-		kind: "tool_selection" | "api_input",
-		format: EvalExportFormat
-	) => {
+	const handleExportEvalRun = (kind: "tool_selection" | "api_input", format: EvalExportFormat) => {
 		const isApiInput = kind === "api_input";
 		const jobId = isApiInput ? apiInputEvalJobId : evalJobId;
 		const jobStatus: ExportableEvalJobStatus | undefined = isApiInput
@@ -574,9 +555,10 @@ export function useCalibrationTab() {
 				search_space_id: data.search_space_id,
 				eval_type: generationEvalType,
 				mode: generationMode,
-				provider_key: generationMode === "global_random" && generationProvider === "all"
-					? null
-					: generationProvider,
+				provider_key:
+					generationMode === "global_random" && generationProvider === "all"
+						? null
+						: generationProvider,
 				category_id: generationMode === "category" ? generationCategory : null,
 				weather_suite_mode: "mixed",
 				question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
@@ -594,9 +576,7 @@ export function useCalibrationTab() {
 			const generatedTests = Array.isArray(response.payload.tests)
 				? response.payload.tests.length
 				: 0;
-			toast.success(
-				`Genererade ${generatedTests} frågor och sparade ${response.file_name}`
-			);
+			toast.success(`Genererade ${generatedTests} frågor och sparade ${response.file_name}`);
 		} catch (_error) {
 			toast.error("Kunde inte generera eval-fil");
 		} finally {
@@ -652,9 +632,7 @@ export function useCalibrationTab() {
 				},
 				use_holdout_suite: autoUseHoldoutSuite,
 				holdout_question_count: normalizedHoldoutCount,
-				holdout_difficulty_profile: autoUseHoldoutSuite
-					? autoHoldoutDifficultyProfile
-					: null,
+				holdout_difficulty_profile: autoUseHoldoutSuite ? autoHoldoutDifficultyProfile : null,
 				target_success_rate: normalizedTarget,
 				max_iterations: normalizedIterations,
 				patience: normalizedPatience,
@@ -716,14 +694,20 @@ export function useCalibrationTab() {
 	const parseEvalInput = () => {
 		setEvalInputError(null);
 		const result = parseEvalTestCases(evalInput);
-		if (!result.ok) { setEvalInputError(result.error); return null; }
+		if (!result.ok) {
+			setEvalInputError(result.error);
+			return null;
+		}
 		return result;
 	};
 
 	const parseApiInputEvalInput = () => {
 		setEvalInputError(null);
 		const result = parseApiInputEvalInputUtil(evalInput, holdoutInput, useHoldoutSuite);
-		if (!result.ok) { setEvalInputError(result.error); return null; }
+		if (!result.ok) {
+			setEvalInputError(result.error);
+			return null;
+		}
 		return result;
 	};
 
@@ -741,9 +725,7 @@ export function useCalibrationTab() {
 				tests: parsedInput.tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				retrieval_tuning_override:
-					includeDraftMetadata && draftRetrievalTuning
-						? draftRetrievalTuning
-						: undefined,
+					includeDraftMetadata && draftRetrievalTuning ? draftRetrievalTuning : undefined,
 			});
 			setEvalJobId(started.job_id);
 			setLastEvalJobNotice(null);
@@ -773,9 +755,7 @@ export function useCalibrationTab() {
 				holdout_tests: parsedInput.holdout_tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				retrieval_tuning_override:
-					includeDraftMetadata && draftRetrievalTuning
-						? draftRetrievalTuning
-						: undefined,
+					includeDraftMetadata && draftRetrievalTuning ? draftRetrievalTuning : undefined,
 			});
 			setApiInputEvalJobId(started.job_id);
 			setLastApiInputEvalJobNotice(null);
@@ -806,9 +786,7 @@ export function useCalibrationTab() {
 
 	const toggleAllSuggestions = (selected: boolean) => {
 		if (selected) {
-			setSelectedSuggestionIds(
-				new Set(evaluationResult?.suggestions.map((s) => s.tool_id) ?? [])
-			);
+			setSelectedSuggestionIds(new Set(evaluationResult?.suggestions.map((s) => s.tool_id) ?? []));
 		} else {
 			setSelectedSuggestionIds(new Set());
 		}
@@ -894,9 +872,7 @@ export function useCalibrationTab() {
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				failed_cases: evaluationResult.results.filter((result) => !result.passed),
 			});
-			setEvaluationResult((prev) =>
-				prev ? { ...prev, suggestions: response.suggestions } : prev
-			);
+			setEvaluationResult((prev) => (prev ? { ...prev, suggestions: response.suggestions } : prev));
 			setSelectedSuggestionIds(new Set());
 			toast.success("Förslag uppdaterade");
 		} catch (_error) {
@@ -922,9 +898,7 @@ export function useCalibrationTab() {
 		}
 		setIsSavingRetrievalTuning(true);
 		try {
-			await adminToolSettingsApiService.updateRetrievalTuning(
-				suggestion.proposed_tuning
-			);
+			await adminToolSettingsApiService.updateRetrievalTuning(suggestion.proposed_tuning);
 			await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
 			await refetch();
 			setDraftRetrievalTuning(suggestion.proposed_tuning);
@@ -1120,95 +1094,158 @@ export function useCalibrationTab() {
 
 	return {
 		// Data & loading
-		data, isLoading, error,
-		lifecycleData, apiProviders, evalLibraryFiles,
-		evalJobStatus, apiInputEvalJobStatus, autoLoopJobStatus,
+		data,
+		isLoading,
+		error,
+		lifecycleData,
+		apiProviders,
+		evalLibraryFiles,
+		evalJobStatus,
+		apiInputEvalJobStatus,
+		autoLoopJobStatus,
 
 		// Step navigation
-		calibrationStep, setCalibrationStep,
-		evaluationStepTab, setEvaluationStepTab,
-		showGuideSections, showGenerationSections, showAgentSections, showApiSections,
+		calibrationStep,
+		setCalibrationStep,
+		evaluationStepTab,
+		setEvaluationStepTab,
+		showGuideSections,
+		showGenerationSections,
+		showAgentSections,
+		showApiSections,
 
 		// Fas-panel
-		draftRetrievalTuning, handleChangePhase,
+		draftRetrievalTuning,
+		handleChangePhase,
 
 		// Audit (Steg 1)
-		auditProviderFilter, setAuditProviderFilter,
-		auditMaxTools, setAuditMaxTools,
-		auditRetrievalLimit, setAuditRetrievalLimit,
-		includeDraftMetadata, setIncludeDraftMetadata,
-		isRunningAudit, handleRunAudit,
-		isRunningSeparation, handleRunSeparation,
-		auditResult, separationResult, handleApplySeparation,
+		auditProviderFilter,
+		setAuditProviderFilter,
+		auditMaxTools,
+		setAuditMaxTools,
+		auditRetrievalLimit,
+		setAuditRetrievalLimit,
+		includeDraftMetadata,
+		setIncludeDraftMetadata,
+		isRunningAudit,
+		handleRunAudit,
+		isRunningSeparation,
+		handleRunSeparation,
+		auditResult,
+		separationResult,
+		handleApplySeparation,
 
 		// Generation
-		generationMode, setGenerationMode,
-		generationEvalType, setGenerationEvalType,
-		generationProvider, setGenerationProvider,
-		generationQuestionCount, setGenerationQuestionCount,
-		generationDifficultyProfile, setGenerationDifficultyProfile,
-		generationEvalName, setGenerationEvalName,
-		generationCategory, setGenerationCategory,
+		generationMode,
+		setGenerationMode,
+		generationEvalType,
+		setGenerationEvalType,
+		generationProvider,
+		setGenerationProvider,
+		generationQuestionCount,
+		setGenerationQuestionCount,
+		generationDifficultyProfile,
+		setGenerationDifficultyProfile,
+		generationEvalName,
+		setGenerationEvalName,
+		generationCategory,
+		setGenerationCategory,
 		generationCategoryOptions,
-		isGeneratingEvalFile, handleGenerateEvalLibraryFile,
-		selectedLibraryPath, selectedHoldoutLibraryPath,
-		isLoadingLibraryFile, loadEvalLibraryFile, loadEvalLibraryFileToHoldout,
+		isGeneratingEvalFile,
+		handleGenerateEvalLibraryFile,
+		selectedLibraryPath,
+		selectedHoldoutLibraryPath,
+		isLoadingLibraryFile,
+		loadEvalLibraryFile,
+		loadEvalLibraryFileToHoldout,
 		refreshEvalLibraryFiles,
 
 		// Eval input
-		evalInput, setEvalInput,
-		showEvalJsonInput, setShowEvalJsonInput,
-		useHoldoutSuite, setUseHoldoutSuite,
-		showHoldoutJsonInput, setShowHoldoutJsonInput,
-		holdoutInput, setHoldoutInput,
-		uploadEvalFile, uploadHoldoutFile,
+		evalInput,
+		setEvalInput,
+		showEvalJsonInput,
+		setShowEvalJsonInput,
+		useHoldoutSuite,
+		setUseHoldoutSuite,
+		showHoldoutJsonInput,
+		setShowHoldoutJsonInput,
+		holdoutInput,
+		setHoldoutInput,
+		uploadEvalFile,
+		uploadHoldoutFile,
 		evalInputError,
-		retrievalLimit, setRetrievalLimit,
-		useLlmSupervisorReview, setUseLlmSupervisorReview,
+		retrievalLimit,
+		setRetrievalLimit,
+		useLlmSupervisorReview,
+		setUseLlmSupervisorReview,
 
 		// Eval jobs
-		isEvaluating, handleRunEvaluation,
-		isApiInputEvaluating, handleRunApiInputEvaluation,
-		isEvalJobRunning, isApiInputEvalJobRunning,
-		evalJobId, apiInputEvalJobId,
+		isEvaluating,
+		handleRunEvaluation,
+		isApiInputEvaluating,
+		handleRunApiInputEvaluation,
+		isEvalJobRunning,
+		isApiInputEvalJobRunning,
+		evalJobId,
+		apiInputEvalJobId,
 		handleExportEvalRun,
 
 		// Results
-		evaluationResult, apiInputEvaluationResult,
+		evaluationResult,
+		apiInputEvaluationResult,
 
 		// Suggestions
-		selectedSuggestionIds, suggestionDiffItems,
-		toggleSuggestion, toggleAllSuggestions,
+		selectedSuggestionIds,
+		suggestionDiffItems,
+		toggleSuggestion,
+		toggleAllSuggestions,
 		selectedSuggestions,
 		regenerateSuggestions,
-		applySelectedSuggestionsToDraft, isApplyingSuggestions,
-		saveSelectedSuggestions, isSavingSuggestions,
+		applySelectedSuggestionsToDraft,
+		isApplyingSuggestions,
+		saveSelectedSuggestions,
+		isSavingSuggestions,
 
 		selectedToolPromptSuggestionKeys,
 		toggleToolPromptSuggestion,
-		saveSelectedToolPromptSuggestions, isSavingToolPromptSuggestions,
+		saveSelectedToolPromptSuggestions,
+		isSavingToolPromptSuggestions,
 
 		selectedPromptSuggestionKeys,
 		togglePromptSuggestion,
-		saveSelectedPromptSuggestions, isSavingPromptSuggestions,
+		saveSelectedPromptSuggestions,
+		isSavingPromptSuggestions,
 
-		applyWeightSuggestionToDraft, saveWeightSuggestion, isSavingRetrievalTuning,
+		applyWeightSuggestionToDraft,
+		saveWeightSuggestion,
+		isSavingRetrievalTuning,
 
 		// Auto-loop
-		autoTargetSuccessRate, setAutoTargetSuccessRate,
-		autoMaxIterations, setAutoMaxIterations,
-		autoPatience, setAutoPatience,
-		autoMinImprovementDelta, setAutoMinImprovementDelta,
-		autoUseHoldoutSuite, setAutoUseHoldoutSuite,
-		autoHoldoutQuestionCount, setAutoHoldoutQuestionCount,
-		autoHoldoutDifficultyProfile, setAutoHoldoutDifficultyProfile,
-		isStartingAutoLoop, handleStartAutoLoop,
-		isAutoLoopRunning, autoLoopJobId,
-		autoLoopPromptDrafts, isSavingAutoLoopPromptDrafts,
+		autoTargetSuccessRate,
+		setAutoTargetSuccessRate,
+		autoMaxIterations,
+		setAutoMaxIterations,
+		autoPatience,
+		setAutoPatience,
+		autoMinImprovementDelta,
+		setAutoMinImprovementDelta,
+		autoUseHoldoutSuite,
+		setAutoUseHoldoutSuite,
+		autoHoldoutQuestionCount,
+		setAutoHoldoutQuestionCount,
+		autoHoldoutDifficultyProfile,
+		setAutoHoldoutDifficultyProfile,
+		isStartingAutoLoop,
+		handleStartAutoLoop,
+		isAutoLoopRunning,
+		autoLoopJobId,
+		autoLoopPromptDrafts,
+		isSavingAutoLoopPromptDrafts,
 		saveAutoLoopPromptDraftSuggestions,
 
 		// Lifecycle
-		isPromoting, handleBulkPromote,
+		isPromoting,
+		handleBulkPromote,
 	};
 }
 

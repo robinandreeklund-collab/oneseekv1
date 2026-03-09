@@ -95,10 +95,7 @@ function formatTime(value: unknown): string {
 // Tool UI
 // ============================================================================
 
-export const TrafiklabRouteToolUI = makeAssistantToolUI<
-	TrafiklabRouteArgs,
-	TrafiklabRouteResult
->({
+export const TrafiklabRouteToolUI = makeAssistantToolUI<TrafiklabRouteArgs, TrafiklabRouteResult>({
 	toolName: "trafiklab_route",
 	render: function TrafiklabRouteUI({ args, result, status }) {
 		if (status.type === "running" || status.type === "requires-action") {
@@ -169,8 +166,7 @@ export const TrafiklabRouteToolUI = makeAssistantToolUI<
 								const route = entry?.route || {};
 								const departureTime = formatTime(entry?.realtime || entry?.scheduled);
 								const line = route.designation || route.name || "Service";
-								const direction =
-									route.direction || route.destination?.name || "Unknown direction";
+								const direction = route.direction || route.destination?.name || "Unknown direction";
 								const platform =
 									entry?.realtime_platform?.designation ||
 									entry?.scheduled_platform?.designation ||
@@ -186,9 +182,7 @@ export const TrafiklabRouteToolUI = makeAssistantToolUI<
 											<p className="font-medium">
 												{line} · {direction}
 											</p>
-											<p className="text-xs text-muted-foreground">
-												Platform {platform}
-											</p>
+											<p className="text-xs text-muted-foreground">Platform {platform}</p>
 										</div>
 										<div className="text-right">
 											<p className="font-semibold">{departureTime || "--"}</p>

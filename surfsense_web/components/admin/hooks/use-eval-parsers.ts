@@ -20,7 +20,7 @@ export function downloadTextFile(content: string, fileName: string, mimeType: st
 export function buildEvalExportFileName(
 	evalKind: "tool_selection" | "api_input",
 	jobId: string,
-	format: EvalExportFormat,
+	format: EvalExportFormat
 ) {
 	const normalizedJob = String(jobId || "unknown")
 		.replace(/[^a-zA-Z0-9_-]+/g, "")
@@ -30,12 +30,14 @@ export function buildEvalExportFileName(
 	return `${prefix}-${normalizedJob || "unknown"}-${timestamp}.${format}`;
 }
 
-export function parseEvalTestCases(rawInput: string): {
-	ok: true;
-	eval_name?: string;
-	target_success_rate?: number;
-	tests: ToolEvaluationTestCase[];
-} | { ok: false; error: string } {
+export function parseEvalTestCases(rawInput: string):
+	| {
+			ok: true;
+			eval_name?: string;
+			target_success_rate?: number;
+			tests: ToolEvaluationTestCase[];
+	  }
+	| { ok: false; error: string } {
 	const trimmed = rawInput.trim();
 	if (!trimmed) return { ok: false, error: "Klistra in eval-JSON innan du kör." };
 
@@ -45,40 +47,37 @@ export function parseEvalTestCases(rawInput: string): {
 		if (!envelope || !Array.isArray(envelope.tests)) {
 			return { ok: false, error: "JSON måste innehålla en tests-array." };
 		}
-		const tests: ToolEvaluationTestCase[] = envelope.tests.map(
-			(item: any, index: number) => ({
-				id: String(item.id ?? `case-${index + 1}`),
-				question: String(item.question ?? ""),
-				difficulty:
-					typeof item.difficulty === "string" ? item.difficulty : undefined,
-				expected:
-					item.expected ||
-					item.expected_tool ||
-					item.expected_category ||
-					item.expected_agent ||
-					item.expected_route ||
-					item.expected_sub_route ||
-					item.plan_requirements
-						? {
-								tool: item.expected?.tool ?? item.expected_tool ?? null,
-								category: item.expected?.category ?? item.expected_category ?? null,
-								agent: item.expected?.agent ?? item.expected_agent ?? null,
-								route: item.expected?.route ?? item.expected_route ?? null,
-								sub_route: item.expected?.sub_route ?? item.expected_sub_route ?? null,
-								plan_requirements: Array.isArray(
-									item.expected?.plan_requirements ?? item.plan_requirements,
-								)
-									? (
-											item.expected?.plan_requirements ?? item.plan_requirements
-										).map((value: unknown) => String(value))
-									: [],
-							}
-						: undefined,
-				allowed_tools: Array.isArray(item.allowed_tools)
-					? item.allowed_tools.map((value: unknown) => String(value))
-					: [],
-			}),
-		);
+		const tests: ToolEvaluationTestCase[] = envelope.tests.map((item: any, index: number) => ({
+			id: String(item.id ?? `case-${index + 1}`),
+			question: String(item.question ?? ""),
+			difficulty: typeof item.difficulty === "string" ? item.difficulty : undefined,
+			expected:
+				item.expected ||
+				item.expected_tool ||
+				item.expected_category ||
+				item.expected_agent ||
+				item.expected_route ||
+				item.expected_sub_route ||
+				item.plan_requirements
+					? {
+							tool: item.expected?.tool ?? item.expected_tool ?? null,
+							category: item.expected?.category ?? item.expected_category ?? null,
+							agent: item.expected?.agent ?? item.expected_agent ?? null,
+							route: item.expected?.route ?? item.expected_route ?? null,
+							sub_route: item.expected?.sub_route ?? item.expected_sub_route ?? null,
+							plan_requirements: Array.isArray(
+								item.expected?.plan_requirements ?? item.plan_requirements
+							)
+								? (item.expected?.plan_requirements ?? item.plan_requirements).map(
+										(value: unknown) => String(value)
+									)
+								: [],
+						}
+					: undefined,
+			allowed_tools: Array.isArray(item.allowed_tools)
+				? item.allowed_tools.map((value: unknown) => String(value))
+				: [],
+		}));
 		const invalidCase = tests.find((test) => !test.question.trim());
 		if (invalidCase) {
 			return { ok: false, error: `Test ${invalidCase.id} saknar question.` };
@@ -87,9 +86,7 @@ export function parseEvalTestCases(rawInput: string): {
 			ok: true,
 			eval_name: typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
 			target_success_rate:
-				typeof envelope.target_success_rate === "number"
-					? envelope.target_success_rate
-					: undefined,
+				typeof envelope.target_success_rate === "number" ? envelope.target_success_rate : undefined,
 			tests,
 		};
 	} catch (_error) {
@@ -120,28 +117,24 @@ export function parseApiInputCaseList(items: any[]): ToolApiInputEvaluationTestC
 						route: item.expected?.route ?? item.expected_route ?? null,
 						sub_route: item.expected?.sub_route ?? item.expected_sub_route ?? null,
 						plan_requirements: Array.isArray(
-							item.expected?.plan_requirements ?? item.plan_requirements,
+							item.expected?.plan_requirements ?? item.plan_requirements
 						)
-							? (
-									item.expected?.plan_requirements ?? item.plan_requirements
-								).map((value: unknown) => String(value))
+							? (item.expected?.plan_requirements ?? item.plan_requirements).map((value: unknown) =>
+									String(value)
+								)
 							: [],
-						required_fields: Array.isArray(
-							item.expected?.required_fields ?? item.required_fields,
-						)
-							? (item.expected?.required_fields ?? item.required_fields).map(
-									(value: unknown) => String(value),
+						required_fields: Array.isArray(item.expected?.required_fields ?? item.required_fields)
+							? (item.expected?.required_fields ?? item.required_fields).map((value: unknown) =>
+									String(value)
 								)
 							: [],
 						field_values:
-							typeof (item.expected?.field_values ?? item.field_values) ===
-								"object" &&
+							typeof (item.expected?.field_values ?? item.field_values) === "object" &&
 							(item.expected?.field_values ?? item.field_values) !== null
 								? (item.expected?.field_values ?? item.field_values)
 								: {},
 						allow_clarification:
-							typeof (item.expected?.allow_clarification ??
-								item.allow_clarification) === "boolean"
+							typeof (item.expected?.allow_clarification ?? item.allow_clarification) === "boolean"
 								? (item.expected?.allow_clarification ?? item.allow_clarification)
 								: undefined,
 					}
@@ -155,14 +148,16 @@ export function parseApiInputCaseList(items: any[]): ToolApiInputEvaluationTestC
 export function parseApiInputEvalInput(
 	evalInput: string,
 	holdoutInput: string,
-	useHoldoutSuite: boolean,
-): {
-	ok: true;
-	eval_name?: string;
-	target_success_rate?: number;
-	tests: ToolApiInputEvaluationTestCase[];
-	holdout_tests: ToolApiInputEvaluationTestCase[];
-} | { ok: false; error: string } {
+	useHoldoutSuite: boolean
+):
+	| {
+			ok: true;
+			eval_name?: string;
+			target_success_rate?: number;
+			tests: ToolApiInputEvaluationTestCase[];
+			holdout_tests: ToolApiInputEvaluationTestCase[];
+	  }
+	| { ok: false; error: string } {
 	const trimmed = evalInput.trim();
 	if (!trimmed) return { ok: false, error: "Klistra in eval-JSON innan du kör." };
 
@@ -179,9 +174,7 @@ export function parseApiInputEvalInput(
 		}
 		let holdoutTestsRaw: any[] = [];
 		if (useHoldoutSuite) {
-			holdoutTestsRaw = Array.isArray(envelope.holdout_tests)
-				? envelope.holdout_tests
-				: [];
+			holdoutTestsRaw = Array.isArray(envelope.holdout_tests) ? envelope.holdout_tests : [];
 			const holdoutTrimmed = holdoutInput.trim();
 			if (holdoutTrimmed) {
 				let parsedHoldout: any;
@@ -214,16 +207,15 @@ export function parseApiInputEvalInput(
 		if (useHoldoutSuite && holdoutTests.length === 0) {
 			return {
 				ok: false,
-				error: "Aktiverad holdout-suite men inga holdout tests hittades. Lägg till holdout-JSON eller holdout_tests i huvud-JSON.",
+				error:
+					"Aktiverad holdout-suite men inga holdout tests hittades. Lägg till holdout-JSON eller holdout_tests i huvud-JSON.",
 			};
 		}
 		return {
 			ok: true,
 			eval_name: typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
 			target_success_rate:
-				typeof envelope.target_success_rate === "number"
-					? envelope.target_success_rate
-					: undefined,
+				typeof envelope.target_success_rate === "number" ? envelope.target_success_rate : undefined,
 			tests,
 			holdout_tests: holdoutTests,
 		};
@@ -244,7 +236,9 @@ export function formatSignedPercent(value: number | null | undefined) {
 }
 
 export function formatAutoLoopStopReason(reason: string | null | undefined) {
-	const normalized = String(reason ?? "").trim().toLowerCase();
+	const normalized = String(reason ?? "")
+		.trim()
+		.toLowerCase();
 	if (!normalized) return "Okänd stop-orsak";
 	if (normalized === "target_reached") return "Målnivå uppnådd";
 	if (normalized === "no_improvement") return "Avbruten p.g.a. utebliven förbättring";

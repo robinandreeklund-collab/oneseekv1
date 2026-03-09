@@ -1,57 +1,46 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
+import { Loader2, Lock, Plus, RotateCcw, Save, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useAtomValue } from "jotai";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
-import type {
-	ToolMetadataItem,
-	ToolMetadataUpdateItem,
-	ToolRetrievalTuning,
-} from "@/contracts/types/admin-tool-settings.types";
-import {
-	METADATA_MAX_NAME_CHARS,
-	METADATA_MAX_DESCRIPTION_CHARS,
-	METADATA_MAX_KEYWORD_CHARS,
-	METADATA_MAX_EXAMPLE_QUERY_CHARS,
-} from "@/contracts/types/admin-tool-settings.types";
-import type { ToolLifecycleStatusResponse } from "@/contracts/types/admin-tool-lifecycle.types";
-import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
-import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
-import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
+import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
 import {
 	Accordion,
 	AccordionContent,
 	AccordionItem,
 	AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Save, RotateCcw, Plus, X, Loader2, Lock, ShieldCheck } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { LifecycleBadge } from "@/components/admin/shared/lifecycle-badge";
+import { Textarea } from "@/components/ui/textarea";
+import type { ToolLifecycleStatusResponse } from "@/contracts/types/admin-tool-lifecycle.types";
+import type {
+	ToolMetadataItem,
+	ToolMetadataUpdateItem,
+	ToolRetrievalTuning,
+} from "@/contracts/types/admin-tool-settings.types";
+import {
+	METADATA_MAX_DESCRIPTION_CHARS,
+	METADATA_MAX_EXAMPLE_QUERY_CHARS,
+	METADATA_MAX_KEYWORD_CHARS,
+	METADATA_MAX_NAME_CHARS,
+} from "@/contracts/types/admin-tool-settings.types";
+import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type LiveRoutingPhase =
-	| "shadow"
-	| "tool_gate"
-	| "agent_auto"
-	| "adaptive"
-	| "intent_finetune";
+type LiveRoutingPhase = "shadow" | "tool_gate" | "agent_auto" | "adaptive" | "intent_finetune";
 
 type NumericRetrievalTuningField = {
 	[K in keyof ToolRetrievalTuning]: ToolRetrievalTuning[K] extends number ? K : never;
@@ -97,13 +86,7 @@ function formatPercent(value: number | null | undefined) {
 // Compact inline field helper
 // ---------------------------------------------------------------------------
 
-function InlineField({
-	label,
-	children,
-}: {
-	label: string;
-	children: React.ReactNode;
-}) {
+function InlineField({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
 		<div className="flex items-center gap-2">
 			<Label className="w-20 shrink-0 text-xs text-muted-foreground">{label}</Label>
@@ -176,9 +159,7 @@ function ToolEditor({
 						id={`desc-${tool.tool_id}`}
 						value={tool.description}
 						maxLength={METADATA_MAX_DESCRIPTION_CHARS}
-						onChange={(e) =>
-							onChange(tool.tool_id, { description: e.target.value })
-						}
+						onChange={(e) => onChange(tool.tool_id, { description: e.target.value })}
 						rows={2}
 						className="text-xs pr-14"
 					/>
@@ -193,7 +174,11 @@ function ToolEditor({
 				<div className="flex-1">
 					<div className="flex flex-wrap items-center gap-1 mb-1">
 						{tool.keywords.map((keyword, index) => (
-							<Badge key={`kw-${tool.tool_id}-${index}`} variant="secondary" className="gap-0.5 text-xs py-0 h-5">
+							<Badge
+								key={`kw-${tool.tool_id}-${index}`}
+								variant="secondary"
+								className="gap-0.5 text-xs py-0 h-5"
+							>
 								{keyword}
 								<button
 									onClick={() => removeKeyword(index)}
@@ -246,7 +231,12 @@ function ToolEditor({
 							<span className="flex-1 text-xs bg-muted px-2 py-0.5 rounded truncate">
 								{example}
 							</span>
-							<Button onClick={() => removeExample(index)} size="sm" variant="ghost" className="h-5 w-5 p-0">
+							<Button
+								onClick={() => removeExample(index)}
+								size="sm"
+								variant="ghost"
+								className="h-5 w-5 p-0"
+							>
 								<X className="h-3 w-3" />
 							</Button>
 						</div>
@@ -275,7 +265,9 @@ function ToolEditor({
 			<div className="flex items-center gap-4">
 				<div className="flex items-center gap-2">
 					<Label className="w-24 shrink-0 text-xs">Excludes:</Label>
-					<span className="text-xs text-muted-foreground">{(tool.excludes ?? []).length}/15 st</span>
+					<span className="text-xs text-muted-foreground">
+						{(tool.excludes ?? []).length}/15 st
+					</span>
 				</div>
 				{tool.geographic_scope && (
 					<span className="text-xs text-muted-foreground">Scope: {tool.geographic_scope}</span>
@@ -320,8 +312,9 @@ export function MetadataTab() {
 	const [searchTerm, setSearchTerm] = useState("");
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 	const [draftTools, setDraftTools] = useState<Record<string, ToolMetadataUpdateItem>>({});
-	const [draftRetrievalTuning, setDraftRetrievalTuning] =
-		useState<ToolRetrievalTuning | null>(null);
+	const [draftRetrievalTuning, setDraftRetrievalTuning] = useState<ToolRetrievalTuning | null>(
+		null
+	);
 	const [savingToolId, setSavingToolId] = useState<string | null>(null);
 	const [isSavingAll, setIsSavingAll] = useState(false);
 	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
@@ -334,8 +327,7 @@ export function MetadataTab() {
 
 	const { data: apiCategories } = useQuery({
 		queryKey: ["admin-tool-api-categories", data?.search_space_id],
-		queryFn: () =>
-			adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
+		queryFn: () => adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
@@ -347,8 +339,7 @@ export function MetadataTab() {
 
 	const { data: catalogData } = useQuery({
 		queryKey: ["admin-metadata-catalog", data?.search_space_id],
-		queryFn: () =>
-			adminToolSettingsApiService.getMetadataCatalog(data?.search_space_id),
+		queryFn: () => adminToolSettingsApiService.getMetadataCatalog(data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
@@ -413,10 +404,7 @@ export function MetadataTab() {
 		}))
 		.filter((category) => category.tools.length > 0);
 
-	const totalTools = filteredCategories.reduce(
-		(acc, cat) => acc + cat.tools.length,
-		0
-	);
+	const totalTools = filteredCategories.reduce((acc, cat) => acc + cat.tools.length, 0);
 
 	const stabilityLockCount = catalogData?.stability_locks?.locked_count ?? 0;
 	const stabilityLockedItems = catalogData?.stability_locks?.locked_items ?? [];
@@ -445,20 +433,14 @@ export function MetadataTab() {
 		}
 	}, [data?.categories]);
 
-	const updateRetrievalTuningField = (
-		key: NumericRetrievalTuningField,
-		value: number
-	) => {
+	const updateRetrievalTuningField = (key: NumericRetrievalTuningField, value: number) => {
 		setDraftRetrievalTuning((prev) => {
 			const current = prev ?? data?.retrieval_tuning;
 			if (!current) return prev;
 			if (key === "embedding_weight") {
 				const nextEmbeddingWeight = Math.max(0, Number(value));
 				const semanticCurrent = Math.max(0, Number(current.semantic_embedding_weight ?? 0));
-				const structuralCurrent = Math.max(
-					0,
-					Number(current.structural_embedding_weight ?? 0)
-				);
+				const structuralCurrent = Math.max(0, Number(current.structural_embedding_weight ?? 0));
 				const currentTotal = semanticCurrent + structuralCurrent;
 				const semanticNext =
 					currentTotal > 0
@@ -474,25 +456,16 @@ export function MetadataTab() {
 			}
 			return {
 				...current,
-				[key]:
-					key === "rerank_candidates"
-						? Math.max(1, Math.round(value))
-						: Number(value),
+				[key]: key === "rerank_candidates" ? Math.max(1, Math.round(value)) : Number(value),
 				...(key === "semantic_embedding_weight" || key === "structural_embedding_weight"
 					? {
 							embedding_weight:
 								(key === "semantic_embedding_weight"
 									? Math.max(0, Number(value))
-									: Math.max(
-											0,
-											Number(current.semantic_embedding_weight ?? 0)
-										)) +
+									: Math.max(0, Number(current.semantic_embedding_weight ?? 0))) +
 								(key === "structural_embedding_weight"
 									? Math.max(0, Number(value))
-									: Math.max(
-											0,
-											Number(current.structural_embedding_weight ?? 0)
-										)),
+									: Math.max(0, Number(current.structural_embedding_weight ?? 0))),
 						}
 					: {}),
 			};
@@ -547,10 +520,7 @@ export function MetadataTab() {
 		if (!data?.search_space_id) return;
 		const tools = toolIds.map((toolId) => draftTools[toolId]).filter(Boolean);
 		if (!tools.length) return;
-		await adminToolSettingsApiService.updateToolSettings(
-			{ tools },
-			data.search_space_id
-		);
+		await adminToolSettingsApiService.updateToolSettings({ tools }, data.search_space_id);
 		await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
 		await refetch();
 	};
@@ -607,9 +577,7 @@ export function MetadataTab() {
 		return (
 			<Card>
 				<CardContent className="py-12 text-center">
-					<p className="text-destructive">
-						Kunde inte ladda tool settings: {String(error)}
-					</p>
+					<p className="text-destructive">Kunde inte ladda tool settings: {String(error)}</p>
 				</CardContent>
 			</Card>
 		);
@@ -974,9 +942,7 @@ export function MetadataTab() {
 							</div>
 						</>
 					) : (
-						<p className="text-sm text-muted-foreground">
-							Kunde inte l&#228;sa retrieval-vikter.
-						</p>
+						<p className="text-sm text-muted-foreground">Kunde inte l&#228;sa retrieval-vikter.</p>
 					)}
 				</CardContent>
 			</Card>
@@ -1009,9 +975,7 @@ export function MetadataTab() {
 								<option value="review">Review</option>
 							</select>
 						</div>
-						<span className="text-xs text-muted-foreground">
-							{totalTools} verktyg
-						</span>
+						<span className="text-xs text-muted-foreground">{totalTools} verktyg</span>
 					</div>
 
 					<Accordion type="single" collapsible className="space-y-1">
@@ -1020,9 +984,7 @@ export function MetadataTab() {
 								const draft = draftTools[tool.tool_id] ?? toUpdateItem(tool);
 								const changed = changedToolSet.has(tool.tool_id);
 								const lifecycle = lifecycleByToolId[tool.tool_id];
-								const isLocked = stabilityLockedItems.some(
-									(item) => item.item_id === tool.tool_id
-								);
+								const isLocked = stabilityLockedItems.some((item) => item.item_id === tool.tool_id);
 								return (
 									<AccordionItem
 										key={tool.tool_id}
@@ -1046,9 +1008,7 @@ export function MetadataTab() {
 														{formatPercent(lifecycle.success_rate)}
 													</span>
 												)}
-												{isLocked && (
-													<Lock className="h-3 w-3 text-muted-foreground" />
-												)}
+												{isLocked && <Lock className="h-3 w-3 text-muted-foreground" />}
 												{changed && (
 													<Badge variant="outline" className="text-[10px] h-4 px-1">
 														&#228;ndrad
@@ -1080,16 +1040,9 @@ export function MetadataTab() {
 
 					{changedToolIds.length > 0 && (
 						<div className="pt-2">
-							<Button
-								onClick={saveAllChanges}
-								disabled={isSavingAll}
-								size="sm"
-								className="gap-1"
-							>
+							<Button onClick={saveAllChanges} disabled={isSavingAll} size="sm" className="gap-1">
 								<Save className="h-3.5 w-3.5" />
-								{isSavingAll
-									? "Sparar..."
-									: `Spara alla \u00e4ndringar (${changedToolIds.length})`}
+								{isSavingAll ? "Sparar..." : `Spara alla \u00e4ndringar (${changedToolIds.length})`}
 							</Button>
 						</div>
 					)}

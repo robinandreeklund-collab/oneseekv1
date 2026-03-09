@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
 import { useTranslations } from "next-intl";
+import { useMemo } from "react";
 import { Pricing } from "@/components/pricing";
 
 function PricingBasic() {
@@ -74,9 +74,7 @@ function PricingBasic() {
 		[t]
 	);
 
-	return (
-		<Pricing plans={demoPlans} title={t("title")} description={t("subtitle")} />
-	);
+	return <Pricing plans={demoPlans} title={t("title")} description={t("subtitle")} />;
 }
 
 export default PricingBasic;

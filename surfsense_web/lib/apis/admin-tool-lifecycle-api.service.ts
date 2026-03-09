@@ -1,20 +1,17 @@
 import {
-	type ToolLifecycleUpdateRequest,
 	type ToolLifecycleRollbackRequest,
+	type ToolLifecycleUpdateRequest,
 	toolLifecycleListResponse,
+	toolLifecycleRollbackRequest,
 	toolLifecycleStatusResponse,
 	toolLifecycleUpdateRequest,
-	toolLifecycleRollbackRequest,
 } from "@/contracts/types/admin-tool-lifecycle.types";
-import { ValidationError } from "@/lib/error";
 import { baseApiService } from "@/lib/apis/base-api.service";
+import { ValidationError } from "@/lib/error";
 
 class AdminToolLifecycleApiService {
 	getToolLifecycleList = async () => {
-		return baseApiService.get(
-			`/api/v1/admin/tool-lifecycle`,
-			toolLifecycleListResponse
-		);
+		return baseApiService.get(`/api/v1/admin/tool-lifecycle`, toolLifecycleListResponse);
 	};
 
 	updateToolStatus = async (toolId: string, request: ToolLifecycleUpdateRequest) => {

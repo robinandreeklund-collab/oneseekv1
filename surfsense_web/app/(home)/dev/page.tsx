@@ -1,8 +1,8 @@
+import { desc, eq } from "drizzle-orm";
+import { getLocale } from "next-intl/server";
 import { db } from "@/app/db";
 import { postsTable } from "@/app/db/schema";
-import { eq, desc } from "drizzle-orm";
 import { formatDate } from "@/lib/utils";
-import { getLocale } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +46,12 @@ export default async function DevPage() {
 						{publishedPosts.map((post) => {
 							const date = new Date(post.createdAt);
 							const formattedDate = formatDate(date, locale as "sv");
-							const tags = post.tags ? post.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
+							const tags = post.tags
+								? post.tags
+										.split(",")
+										.map((t) => t.trim())
+										.filter(Boolean)
+								: [];
 
 							return (
 								<article key={post.id} className="relative">
@@ -74,9 +79,7 @@ export default async function DevPage() {
 										</h2>
 
 										{post.excerpt && (
-											<p className="text-muted-foreground text-balance">
-												{post.excerpt}
-											</p>
+											<p className="text-muted-foreground text-balance">{post.excerpt}</p>
 										)}
 
 										{post.imageUrl && (
