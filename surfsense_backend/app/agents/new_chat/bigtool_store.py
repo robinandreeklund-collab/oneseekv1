@@ -30,17 +30,17 @@ from app.agents.new_chat.statistics_agent import (
 )
 from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.registry import (
     build_tools,
     build_tools_async,
     get_default_enabled_tools,
 )
-from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikanalys import TRAFIKANALYS_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
 from app.utils.text import normalize_text as _normalize_text, tokenize as _tokenize
@@ -2410,6 +2410,9 @@ def build_tool_index(
         (SKOLVERKET_TOOL_DEFINITIONS, None, "__skolverket__"),  # special handling
         (BOLAGSVERKET_TOOL_DEFINITIONS, None, None),
         (TRAFIKVERKET_TOOL_DEFINITIONS, None, None),
+        (TRAFIKANALYS_TOOL_DEFINITIONS, None, None),
+        (RIKSBANK_TOOL_DEFINITIONS, None, None),
+        (ELPRIS_TOOL_DEFINITIONS, None, None),
         (SMHI_TOOL_DEFINITIONS, None, None),
         (GEOAPIFY_TOOL_DEFINITIONS, None, None),
         (RIKSDAGEN_TOOL_DEFINITIONS, None, "__none__"),  # no base_path
