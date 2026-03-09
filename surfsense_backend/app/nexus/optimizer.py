@@ -679,10 +679,15 @@ class IntentLayerOptimizer:
         user_id: Any = None,
     ) -> dict[str, Any]:
         """Apply approved intent layer suggestions to DB."""
+        from app.services.agent_definition_service import upsert_agent
         from app.services.agent_metadata_service import (
             upsert_global_agent_metadata_overrides,
         )
         from app.services.intent_domain_service import upsert_intent_domain
+        from app.services.registry_events import (
+            bump_registry_version,
+            notify_registry_changed,
+        )
 
         domain_count = 0
         agent_count = 0
@@ -703,6 +708,15 @@ class IntentLayerOptimizer:
                 domain_count += 1
 
             elif item_type == "agent":
+                # Write to agent_definitions table (used by GraphRegistry /
+                # admin flow routing) as well as prompt-based overrides
+                # (used by NEXUS runtime).
+                await upsert_agent(
+                    session,
+                    agent_id=item_id,
+                    payload=item,
+                    updated_by_id=user_id,
+                )
                 await upsert_global_agent_metadata_overrides(
                     session,
                     [(item_id, item)],
@@ -711,7 +725,9 @@ class IntentLayerOptimizer:
                 agent_count += 1
 
         if domain_count or agent_count:
+            new_version = await bump_registry_version(session)
             await session.commit()
+            await notify_registry_changed(session, new_version)
             # Invalidate caches
             invalidate_cache()
             try:
@@ -1091,8 +1107,13 @@ class DomainAgentOptimizer:
         user_id: Any = None,
     ) -> dict[str, Any]:
         """Apply approved agent suggestions to DB."""
+        from app.services.agent_definition_service import upsert_agent
         from app.services.agent_metadata_service import (
             upsert_global_agent_metadata_overrides,
+        )
+        from app.services.registry_events import (
+            bump_registry_version,
+            notify_registry_changed,
         )
 
         agent_count = 0
@@ -1100,6 +1121,15 @@ class DomainAgentOptimizer:
             item_id = item.get("item_id", "")
             if not item_id:
                 continue
+            # Write to agent_definitions table (used by GraphRegistry /
+            # admin flow routing) as well as prompt-based overrides
+            # (used by NEXUS runtime).
+            await upsert_agent(
+                session,
+                agent_id=item_id,
+                payload=item,
+                updated_by_id=user_id,
+            )
             await upsert_global_agent_metadata_overrides(
                 session,
                 [(item_id, item)],
@@ -1108,7 +1138,9 @@ class DomainAgentOptimizer:
             agent_count += 1
 
         if agent_count:
+            new_version = await bump_registry_version(session)
             await session.commit()
+            await notify_registry_changed(session, new_version)
             invalidate_cache()
             try:
                 from app.agents.new_chat.bigtool_store import clear_tool_caches
