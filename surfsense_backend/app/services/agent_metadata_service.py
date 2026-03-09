@@ -832,6 +832,10 @@ def normalize_agent_metadata_payload(
         _normalize_text(payload.get("geographic_scope")) or fallback_geographic_scope
     )
     excludes = _normalize_text_list(payload.get("excludes")) or fallback_excludes
+    # Preserve primary_namespaces for NEXUS namespace-based tool filtering
+    primary_namespaces = payload.get("primary_namespaces") or default_payload.get(
+        "primary_namespaces", []
+    )
     return {
         "agent_id": resolved_agent_id,
         "label": label,
@@ -846,6 +850,7 @@ def normalize_agent_metadata_payload(
         "unique_scope": unique_scope,
         "geographic_scope": geographic_scope,
         "excludes": excludes,
+        "primary_namespaces": primary_namespaces,
     }
 
 
@@ -943,6 +948,7 @@ def _registry_agents_to_metadata(
                     "unique_scope": agent.get("unique_scope", ""),
                     "geographic_scope": agent.get("geographic_scope", ""),
                     "excludes": agent.get("excludes", []),
+                    "primary_namespaces": raw_ns,
                 }
             )
     return results
