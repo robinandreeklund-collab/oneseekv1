@@ -104,6 +104,14 @@ class AgentDefinition:
     keywords: list[str]
     namespace: tuple[str, ...]
     prompt_key: str
+    # Domain association — which domain_ids this agent belongs to
+    routes: tuple[str, ...] = ()
+    # Rich metadata for LLM differentiation
+    main_identifier: str = ""
+    core_activity: str = ""
+    unique_scope: str = ""
+    geographic_scope: str = ""
+    excludes: tuple[str, ...] = ()
 
 
 class SupervisorState(TypedDict, total=False):

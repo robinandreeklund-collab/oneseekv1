@@ -1335,6 +1335,12 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "trafik", "tag"),
             prompt_key="trafik",
+            routes=("trafik-och-transport",),
+            main_identifier="TågtrafikAgent",
+            core_activity="Hämtar realtidsinformation om tågtrafik och tidtabeller",
+            unique_scope="Tågtrafik — förseningar, tidtabeller, stationer, resplanering",
+            geographic_scope="Sverige",
+            excludes=("väder", "statistik", "fordon"),
         ),
         AgentDefinition(
             name="trafik-vag",
@@ -1354,6 +1360,12 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "trafik", "vag"),
             prompt_key="trafik",
+            routes=("trafik-och-transport",),
+            main_identifier="VägtrafikAgent",
+            core_activity="Hämtar realtidsinformation om vägtrafik och störningar",
+            unique_scope="Vägtrafik — störningar, olyckor, köer, kameror, vägarbeten",
+            geographic_scope="Sverige",
+            excludes=("väder", "statistik", "fordon", "tåg"),
         ),
         AgentDefinition(
             name="trafik-vagvader",
@@ -1370,10 +1382,16 @@ async def create_supervisor_agent(
             ],
             namespace=("agents", "trafik", "vagvader"),
             prompt_key="trafik",
+            routes=("trafik-och-transport",),
+            main_identifier="VägväderAgent",
+            core_activity="Hämtar vägväderdata från Trafikverkets väderstationer",
+            unique_scope="Vägväder — halka, isrisk, temperatur vid vägnätet",
+            geographic_scope="Sverige",
+            excludes=("statistik", "fordon", "tåg"),
         ),
         AgentDefinition(
             name="trafikanalys-transport",
-            description="Svensk transportstatistik från Trafikanalys — fordonsbestånd, nyregistreringar, trafikarbete, vägtrafikskador, sjötrafik, luftfart, järnväg, kollektivtrafik. Statistik och siffror, inte realtidstrafik.",
+            description="Svensk transportstatistik från Trafikanalys (trafa.se) — fordonsbestånd, nyregistreringar, avregistreringar, trafikarbete, vägtrafikskador, sjötrafik, luftfart, järnväg, kollektivtrafik och körkort. Statistik och siffror, inte realtidstrafik.",
             keywords=[
                 "trafikanalys",
                 "transportstatistik",
@@ -1383,18 +1401,39 @@ async def create_supervisor_agent(
                 "kollektivtrafik",
                 "personbilar",
                 "lastbilar",
+                "bussar",
+                "motorcyklar",
                 "nyregistrering",
+                "avregistrering",
                 "trafikarbete",
+                "fordonskilometer",
                 "trafikskador",
+                "trafikdöda",
+                "trafikolyckor",
                 "sjötrafik",
                 "luftfart",
+                "flyg",
                 "järnväg",
+                "tåg",
                 "körkort",
                 "drivmedel",
                 "elbil",
+                "bilbestånd",
+                "fordonsbestånd",
+                "trafa",
+                "hur många bilar",
+                "hur många fordon",
+                "antal bilar",
+                "antal fordon",
             ],
             namespace=("agents", "trafikanalys", "transport"),
             prompt_key="trafikanalys",
+            routes=("trafik-och-transport",),
+            main_identifier="TrafikanalysAgent",
+            core_activity="Hämtar transportstatistik från Trafikanalys (trafa.se)",
+            unique_scope="Svensk transportstatistik — fordon, trafik, olyckor, sjö, luft, järnväg, körkort",
+            geographic_scope="Sverige",
+            excludes=("väder", "realtid", "störning", "vägarbete"),
         ),
         AgentDefinition(
             name="riksdagen-dokument",
@@ -1528,6 +1567,18 @@ async def create_supervisor_agent(
                     if not metadata:
                         merged_agent_definitions.append(definition)
                         continue
+                    _routes_raw = metadata.get("routes") or []
+                    _routes = tuple(
+                        str(r).strip()
+                        for r in _routes_raw
+                        if str(r).strip()
+                    ) if isinstance(_routes_raw, list) else ()
+                    _excludes_raw = metadata.get("excludes") or []
+                    _excludes = tuple(
+                        str(e).strip()
+                        for e in _excludes_raw
+                        if str(e).strip()
+                    ) if isinstance(_excludes_raw, list) else ()
                     merged_agent_definitions.append(
                         AgentDefinition(
                             name=definition.name,
@@ -1543,6 +1594,20 @@ async def create_supervisor_agent(
                             ],
                             namespace=definition.namespace,
                             prompt_key=definition.prompt_key,
+                            routes=_routes or definition.routes,
+                            main_identifier=str(
+                                metadata.get("main_identifier") or definition.main_identifier
+                            ),
+                            core_activity=str(
+                                metadata.get("core_activity") or definition.core_activity
+                            ),
+                            unique_scope=str(
+                                metadata.get("unique_scope") or definition.unique_scope
+                            ),
+                            geographic_scope=str(
+                                metadata.get("geographic_scope") or definition.geographic_scope
+                            ),
+                            excludes=_excludes or definition.excludes,
                         )
                     )
                 agent_definitions = merged_agent_definitions
@@ -2506,11 +2571,20 @@ async def create_supervisor_agent(
         return build_trivial_response(latest_user_query)
 
     def _agent_payload(definition: AgentDefinition) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "name": definition.name,
             "description": definition.description,
             "keywords": list(definition.keywords or []),
         }
+        if definition.main_identifier:
+            payload["main_identifier"] = definition.main_identifier
+        if definition.core_activity:
+            payload["core_activity"] = definition.core_activity
+        if definition.unique_scope:
+            payload["unique_scope"] = definition.unique_scope
+        if definition.excludes:
+            payload["excludes"] = list(definition.excludes)
+        return payload
 
     def _next_plan_step(state: dict[str, Any]) -> dict[str, Any] | None:
         plan_items = state.get("active_plan") or []
