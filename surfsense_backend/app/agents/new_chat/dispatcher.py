@@ -4,7 +4,7 @@ from typing import Any, Iterable
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.intent_router import resolve_route_from_intents
-from app.agents.new_chat.routing import Route
+from app.agents.new_chat.routing import Route, domain_to_route
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.services.intent_definition_service import (
     domains_to_intent_definitions,
@@ -113,6 +113,7 @@ async def dispatch_route(
     conversation_history: list[dict[str, str]] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
     registry: Any | None = None,
+    llm_gate_mode: bool = False,
 ) -> Route:
     route, _meta = await dispatch_route_with_trace(
         user_query,
@@ -123,6 +124,7 @@ async def dispatch_route(
         conversation_history=conversation_history,
         intent_definitions=intent_definitions,
         registry=registry,
+        llm_gate_mode=llm_gate_mode,
     )
     return route
 
@@ -137,6 +139,7 @@ async def dispatch_route_with_trace(
     conversation_history: list[dict[str, str]] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
     registry: Any | None = None,
+    llm_gate_mode: bool = False,
 ) -> tuple[Route, dict[str, Any]]:
     text = (user_query or "").strip()
     if not text:
@@ -252,11 +255,53 @@ async def dispatch_route_with_trace(
                 "reason": "compare_requires_explicit_/compare_command",
                 "candidates": retrieval_decision.candidates,
             }
+        source = retrieval_decision.source
+        if llm_gate_mode:
+            source = "intent_retrieval_llm_gate"
         return retrieval_decision.route, {
-            "source": retrieval_decision.source,
+            "source": source,
             "confidence": retrieval_decision.confidence,
             "reason": retrieval_decision.reason,
             "candidates": retrieval_decision.candidates,
+        }
+
+    # ── LLM Gate shortcut: skip the expensive LLM tiebreak ──
+    # When LLM gate is active the intent node inside the graph will do
+    # authoritative domain routing.  The dispatcher only needs to provide
+    # a reasonable base-route hint.  Use the best retrieval candidate or
+    # domain_to_route() to produce one without an extra LLM call.
+    if llm_gate_mode:
+        if retrieval_decision:
+            base_route = remap_non_explicit_compare(
+                retrieval_decision.route,
+                candidates=retrieval_decision.candidates,
+            )
+            return base_route, {
+                "source": "intent_retrieval_llm_gate",
+                "confidence": max(0.55, retrieval_decision.confidence),
+                "reason": f"llm_gate_hint:{retrieval_decision.reason}",
+                "candidates": retrieval_decision.candidates,
+            }
+        # No retrieval decision at all — try to resolve a base route from
+        # the top intent definition's domain_id via domain_to_route().
+        for defn in normalized_intents:
+            intent_id = str(defn.get("intent_id") or "").strip()
+            if intent_id:
+                try:
+                    base_route = domain_to_route(intent_id)
+                    return base_route, {
+                        "source": "domain_route_llm_gate",
+                        "confidence": 0.50,
+                        "reason": f"llm_gate_domain_fallback:{intent_id}",
+                        "candidates": [],
+                    }
+                except Exception:
+                    continue
+        return Route.KUNSKAP, {
+            "source": "llm_gate_default",
+            "confidence": 0.45,
+            "reason": "llm_gate_no_retrieval_hint",
+            "candidates": [],
         }
 
     try:

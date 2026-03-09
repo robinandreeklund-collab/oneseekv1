@@ -1869,6 +1869,18 @@ async def stream_new_chat(
         except Exception:
             intent_definitions = list(get_default_intent_definitions().values())
 
+        # Determine if LLM gate mode is active so the dispatcher can adapt
+        _llm_gate_mode = False
+        try:
+            from app.services.tool_retrieval_tuning_service import (
+                get_global_tool_retrieval_tuning,
+            )
+
+            _tuning = await get_global_tool_retrieval_tuning(session)
+            _llm_gate_mode = bool(_tuning.get("llm_gate_mode", False))
+        except Exception:
+            pass
+
         route, route_decision = await dispatch_route_with_trace(
             raw_user_query,
             llm,
@@ -1877,6 +1889,7 @@ async def stream_new_chat(
             system_prompt_override=router_prompt,
             conversation_history=routing_history,
             intent_definitions=intent_definitions,
+            llm_gate_mode=_llm_gate_mode,
         )
 
         # Sync compare_mode with route decision
