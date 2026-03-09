@@ -91,6 +91,21 @@ class AdminFlowGraphApiService {
 			{ body: { agent_id: agentId } }
 		);
 	};
+
+	resetAgentToSeed = async (agentId: string) => {
+		return baseApiService.post(
+			`/api/v1/admin/flow-graph/agent/reset-to-seed`,
+			z.object({
+				status: z.string(),
+				agent_id: z.string().optional(),
+				had_override: z.boolean().optional(),
+				seed_default: z.boolean().optional(),
+				reset_count: z.number().optional(),
+				agents: z.array(z.string()).optional(),
+			}),
+			{ body: { agent_id: agentId } }
+		);
+	};
 }
 
 export const adminFlowGraphApiService = new AdminFlowGraphApiService();
