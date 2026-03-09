@@ -68,11 +68,13 @@ class IntentResult(BaseModel):
         ...,
         description="ID för vald intent, måste matcha en av kandidaterna.",
     )
-    route: Literal["kunskap", "skapande", "jämförelse", "konversation", "mixed"] = (
-        Field(
-            ...,
-            description="Övergripande rutt-kategori.",
-        )
+    route: str = Field(
+        ...,
+        description=(
+            "Rutt/domän-ID som matchar den valda intentens domän, "
+            "t.ex. 'väder-och-klimat', 'trafik-och-transport', 'kunskap', "
+            "'skapande', 'konversation', 'jämförelse', eller 'mixed'."
+        ),
     )
     sub_intents: list[str] = Field(
         default_factory=list,
