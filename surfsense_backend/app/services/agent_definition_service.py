@@ -6,8 +6,11 @@ that sit in the middle of the intent → agent → tool hierarchy.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -213,7 +216,6 @@ async def upsert_agent(
         normalized_id = "custom"
     domain_id = _normalize_text(payload.get("domain_id")).lower()
 
-    # Look up existing row so we can preserve domain_id when not provided
     result = await session.execute(
         select(DomainAgentDefinition).filter(
             DomainAgentDefinition.agent_id == normalized_id
@@ -221,17 +223,16 @@ async def upsert_agent(
     )
     existing = result.scalars().first()
 
-    # Fall back to the existing domain_id (or the seed default) when the
-    # payload doesn't supply one — this happens when the optimizer sends
-    # only the changed metadata fields.
-    if not domain_id:
-        if existing:
-            domain_id = existing.domain_id or ""
-        else:
-            defaults = get_default_agent_definitions()
-            default_def = defaults.get(normalized_id, {})
-            routes = default_def.get("routes", [])
-            domain_id = routes[0] if routes else ""
+    # Preserve existing domain_id when payload doesn't supply one
+    if not domain_id and existing:
+        domain_id = existing.domain_id or ""
+
+    if not domain_id and not existing:
+        logger.warning(
+            "upsert_agent: skipping %s — no domain_id could be resolved",
+            normalized_id,
+        )
+        return normalize_agent_payload(payload, agent_id=normalized_id, domain_id="")
 
     normalized = normalize_agent_payload(
         payload, agent_id=normalized_id, domain_id=domain_id

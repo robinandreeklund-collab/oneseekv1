@@ -101,6 +101,61 @@ Returnera en JSON-array med exakt {tool_count} element — ett per verktyg."""
 
 
 # ---------------------------------------------------------------------------
+# Shared helper: resolve agent_id → domain_id
+# ---------------------------------------------------------------------------
+
+
+async def _build_agent_domain_map(session: Any) -> dict[str, str]:
+    """Build a mapping from agent_id to domain_id.
+
+    Checks three sources in order:
+      1. DB agent_definitions table (highest priority)
+      2. Effective agent metadata (registry or hardcoded)
+      3. Seed defaults from agent_definitions.py
+    """
+    from app.seeds.agent_definitions import get_default_agent_definitions
+
+    mapping: dict[str, str] = {}
+
+    # 1. Seed defaults
+    for agent_id, defn in get_default_agent_definitions().items():
+        did = defn.get("domain_id", "")
+        if did:
+            mapping[agent_id] = did
+
+    # 2. Effective agent metadata (includes registry + overrides)
+    try:
+        from app.services.agent_metadata_service import get_effective_agent_metadata
+
+        for agent in await get_effective_agent_metadata(session):
+            agent_id = agent.get("agent_id", "")
+            if not agent_id:
+                continue
+            # Metadata format uses routes=[domain_id] from registry
+            routes = agent.get("routes", [])
+            did = routes[0] if routes else agent.get("domain_id", "")
+            if did:
+                mapping[agent_id] = did
+    except Exception:
+        pass
+
+    # 3. DB agent_definitions (most authoritative)
+    try:
+        from sqlalchemy.future import select
+
+        from app.db import DomainAgentDefinition
+
+        result = await session.execute(select(DomainAgentDefinition))
+        for row in result.scalars():
+            if row.agent_id and row.domain_id:
+                mapping[row.agent_id] = row.domain_id
+    except Exception:
+        pass
+
+    return mapping
+
+
+# ---------------------------------------------------------------------------
 # MetadataOptimizer
 # ---------------------------------------------------------------------------
 
@@ -686,6 +741,7 @@ class IntentLayerOptimizer:
         """Apply approved intent layer suggestions to DB."""
         from app.services.agent_definition_service import upsert_agent
         from app.services.agent_metadata_service import (
+            get_effective_agent_metadata,
             upsert_global_agent_metadata_overrides,
         )
         from app.services.intent_domain_service import upsert_intent_domain
@@ -693,6 +749,10 @@ class IntentLayerOptimizer:
             bump_registry_version,
             notify_registry_changed,
         )
+
+        # Pre-build agent→domain_id lookup so we can inject domain_id into
+        # payloads that only carry the changed metadata fields.
+        agent_domain_map = await _build_agent_domain_map(session)
 
         domain_count = 0
         agent_count = 0
@@ -713,9 +773,18 @@ class IntentLayerOptimizer:
                 domain_count += 1
 
             elif item_type == "agent":
-                # Write to agent_definitions table (used by GraphRegistry /
-                # admin flow routing) as well as prompt-based overrides
-                # (used by NEXUS runtime).
+                # Ensure domain_id is present — the optimizer only sends
+                # changed fields so it's typically missing.
+                if not item.get("domain_id"):
+                    resolved = agent_domain_map.get(item_id, "")
+                    if not resolved:
+                        logger.warning(
+                            "Intent apply: skipping agent %s — cannot resolve domain_id",
+                            item_id,
+                        )
+                        continue
+                    item["domain_id"] = resolved
+
                 await upsert_agent(
                     session,
                     agent_id=item_id,
@@ -1124,14 +1193,28 @@ class DomainAgentOptimizer:
             notify_registry_changed,
         )
 
+        # Pre-build agent→domain_id lookup so we can inject domain_id into
+        # payloads that only carry the changed metadata fields.
+        agent_domain_map = await _build_agent_domain_map(session)
+
         agent_count = 0
         for item in suggestions:
             item_id = item.get("item_id", "")
             if not item_id:
                 continue
-            # Write to agent_definitions table (used by GraphRegistry /
-            # admin flow routing) as well as prompt-based overrides
-            # (used by NEXUS runtime).
+
+            # Ensure domain_id is present — the optimizer only sends
+            # changed fields so it's typically missing.
+            if not item.get("domain_id"):
+                resolved = agent_domain_map.get(item_id, "")
+                if not resolved:
+                    logger.warning(
+                        "Domain agent apply: skipping agent %s — cannot resolve domain_id",
+                        item_id,
+                    )
+                    continue
+                item["domain_id"] = resolved
+
             await upsert_agent(
                 session,
                 agent_id=item_id,
