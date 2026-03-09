@@ -2766,10 +2766,26 @@ class NexusService:
         agent_ns_raw = agent_def.get("primary_namespaces", [])
         # Use full namespace depth (3+ levels) so agents within the same
         # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
+        # DB-backed NexusAgent stores namespaces as joined strings
+        # (e.g. "tools/trafikanalys/transport"), while seed-data uses
+        # nested lists (e.g. [["tools", "trafikanalys", "transport"]]).
         agent_ns_prefixes = []
         for ns in agent_ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
                 agent_ns_prefixes.append("/".join(ns))
+            elif isinstance(ns, str) and "/" in ns:
+                agent_ns_prefixes.append(ns)
+
+        # Fallback: AGENT_NAMESPACE_MAP is the authoritative source
+        if not agent_ns_prefixes and chosen_agent:
+            try:
+                from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP
+
+                ns_tuples = AGENT_NAMESPACE_MAP.get(chosen_agent, [])
+                for ns_tuple in ns_tuples:
+                    agent_ns_prefixes.append("/".join(ns_tuple))
+            except Exception:
+                pass
 
         # Filter tools by agent namespace (full depth match)
         agent_tools = []
@@ -2791,6 +2807,14 @@ class NexusService:
                 tid for tid, td in tool_defs.items() if td.get("agent_id") == chosen_agent
             }
             agent_tools = [pt for pt in platform_tools if pt.tool_id in agent_tool_ids]
+            # Update agent_ns_prefixes from resolved tools for display
+            if agent_tools and not agent_ns_prefixes:
+                seen_ns: set[str] = set()
+                for pt in agent_tools:
+                    ns_str = "/".join(pt.namespace) if pt.namespace else ""
+                    if ns_str and ns_str not in seen_ns:
+                        seen_ns.add(ns_str)
+                        agent_ns_prefixes.append(ns_str)
 
         tool_ids_sorted = [pt.tool_id for pt in agent_tools]
         tool_items = [
@@ -3123,10 +3147,26 @@ class NexusService:
         agent_ns_raw = agent_def.get("primary_namespaces", [])
         # Use full namespace depth (3+ levels) so agents within the same
         # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
+        # DB-backed NexusAgent stores namespaces as joined strings
+        # (e.g. "tools/trafikanalys/transport"), while seed-data uses
+        # nested lists (e.g. [["tools", "trafikanalys", "transport"]]).
         agent_ns_prefixes = []
         for ns in agent_ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
                 agent_ns_prefixes.append("/".join(ns))
+            elif isinstance(ns, str) and "/" in ns:
+                agent_ns_prefixes.append(ns)
+
+        # Fallback: AGENT_NAMESPACE_MAP is the authoritative source
+        if not agent_ns_prefixes and chosen_agent:
+            try:
+                from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP
+
+                ns_tuples = AGENT_NAMESPACE_MAP.get(chosen_agent, [])
+                for ns_tuple in ns_tuples:
+                    agent_ns_prefixes.append("/".join(ns_tuple))
+            except Exception:
+                pass
 
         agent_tools = []
         for pt in platform_tools:
