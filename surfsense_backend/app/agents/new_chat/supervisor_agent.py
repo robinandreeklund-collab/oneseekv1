@@ -869,6 +869,29 @@ async def create_supervisor_agent(
         ),
     }
 
+    # Map fine-grained agent names to coarse worker pool keys.
+    # Agent definitions use specific names (trafik-vag, väder-risk, etc.)
+    # but the worker pool has broader entries (trafik, väder, etc.).
+    _AGENT_TO_WORKER: dict[str, str] = {
+        "trafik-vag": "trafik",
+        "trafik-tag": "trafik",
+        "trafik-vagvader": "trafik",
+        "trafikanalys-transport": "trafik",
+        "väder-vatten": "väder",
+        "väder-risk": "väder",
+        "riksbank-ekonomi": "statistik-ekonomi",
+        "elpris": "statistik-miljo",
+        "skolverket-kursplaner": "statistik-utbildning",
+        "skolverket-skolenheter": "statistik-utbildning",
+        "skolverket-vuxenutbildning": "statistik-utbildning",
+        "skolverket-referens": "statistik-utbildning",
+        "konversation": "kunskap",
+    }
+
+    def _resolve_worker_name(agent_name: str) -> str:
+        """Map a fine-grained agent name to its worker pool key."""
+        return _AGENT_TO_WORKER.get(agent_name, agent_name)
+
     worker_prompts: dict[str, str] = {
         "kunskap": knowledge_prompt,
         "åtgärd": action_prompt,
@@ -2290,7 +2313,7 @@ async def create_supervisor_agent(
             tool_id,
             state=state,
         )
-        worker = await worker_pool.get(selected_agent_name)
+        worker = await worker_pool.get(_resolve_worker_name(selected_agent_name))
         if worker is None:
             return {
                 "status": "failed",
@@ -3547,7 +3570,7 @@ async def create_supervisor_agent(
                 },
                 ensure_ascii=True,
             )
-        worker = await worker_pool.get(name)
+        worker = await worker_pool.get(_resolve_worker_name(name))
         if not worker:
             error_message = f"Agent '{agent_name}' not available."
             return json.dumps(
@@ -4392,7 +4415,7 @@ async def create_supervisor_agent(
                         else None
                     ),
                 }
-            worker = await worker_pool.get(agent_name)
+            worker = await worker_pool.get(_resolve_worker_name(agent_name))
             if not worker:
                 error_message = f"Agent '{agent_name}' not available."
                 result_contract = _build_agent_result_contract(
