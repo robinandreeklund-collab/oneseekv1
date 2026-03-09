@@ -286,6 +286,7 @@ def build_intent_resolver_node(
             gate_result = await llm_gate_select_intent(
                 query=latest_user_query,
                 candidates=candidates,
+                llm=llm,
             )
             chosen_id = str(gate_result.get("chosen") or "").strip()
             resolved = intent_from_route_fn(route_hint)

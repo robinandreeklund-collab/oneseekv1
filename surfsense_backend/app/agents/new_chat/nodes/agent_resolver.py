@@ -95,6 +95,7 @@ def build_agent_resolver_node(
                 query=latest_user_query,
                 chosen_domain=chosen_domain,
                 candidates=all_candidates,
+                llm=llm,
             )
             chosen_name = str(gate_result.get("chosen") or "").strip()
             matched = next(

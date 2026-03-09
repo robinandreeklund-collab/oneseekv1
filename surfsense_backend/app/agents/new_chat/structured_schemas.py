@@ -791,3 +791,68 @@ class DebateConvergenceResult(BaseModel):
         default_factory=list,
         description="Lista med punkter där deltagarna var eniga.",
     )
+
+
+# ────────────────────────────────────────────────────────────────
+# LLM Gate — structured schemas for pure-LLM routing
+# ────────────────────────────────────────────────────────────────
+
+
+class LlmGateIntentResult(BaseModel):
+    """Output schema for LLM gate intent selection."""
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Intern resonering om vilken domän som bäst matchar "
+            "användarens fråga och varför."
+        ),
+    )
+    chosen: str = Field(
+        ...,
+        description="Exakt domän-ID från kandidatlistan, t.ex. 'väder-och-klimat'.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+class LlmGateAgentResult(BaseModel):
+    """Output schema for LLM gate agent selection."""
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Intern resonering om vilken agent som bäst matchar "
+            "frågan inom den valda domänen."
+        ),
+    )
+    chosen: str = Field(
+        ...,
+        description="Exakt agent-ID från kandidatlistan, t.ex. 'väder'.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )
+
+
+class LlmGateToolResult(BaseModel):
+    """Output schema for LLM gate tool selection."""
+
+    thinking: str = Field(
+        ...,
+        description=(
+            "Intern resonering om vilket verktyg som bäst kan "
+            "besvara frågan för den valda agenten."
+        ),
+    )
+    chosen: str = Field(
+        ...,
+        description="Exakt verktygs-ID från kandidatlistan, t.ex. 'smhi_temperatur'.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Kort motivering på svenska.",
+    )

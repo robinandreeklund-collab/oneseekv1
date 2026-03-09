@@ -4971,6 +4971,7 @@ async def create_supervisor_agent(
             _llm_gate_tool_candidates_for_agent if _ns_tool_index else None
         ),
         live_routing_config=live_routing_config,
+        llm=llm,
     )
     execution_router_node = build_execution_router_node(
         latest_user_query_fn=_latest_user_query,

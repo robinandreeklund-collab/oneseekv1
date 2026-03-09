@@ -17,6 +17,7 @@ def build_tool_resolver_node(
     | None = None,
     llm_gate_tool_candidates_fn: Callable[[str], list[dict[str, Any]]] | None = None,
     live_routing_config: dict[str, Any] | None = None,
+    llm: Any = None,
 ):
     async def tool_resolver_node(
         state: dict[str, Any],
@@ -75,6 +76,7 @@ def build_tool_resolver_node(
                     query=resolver_query,
                     chosen_agent=agent_name,
                     candidates=tool_candidates,
+                    llm=llm,
                 )
                 chosen_ids = [
                     str(tid).strip()
