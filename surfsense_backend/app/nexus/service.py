@@ -2762,7 +2762,9 @@ class NexusService:
         # ── Step 3: LLM picks Tool within agent ──
         # Get all tools for the chosen agent from platform registry
         platform_tools = get_platform_tools()
-        agent_def = all_agents.get(chosen_agent, {})
+        # Look up agent in domain_agents first (includes DB overrides),
+        # then fall back to all_agents (seed-only)
+        agent_def = domain_agents.get(chosen_agent, all_agents.get(chosen_agent, {}))
         agent_ns_raw = agent_def.get("primary_namespaces", [])
         # Use full namespace depth (3+ levels) so agents within the same
         # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
@@ -3143,7 +3145,7 @@ class NexusService:
         # ═══════════════════════════════════════════════════════════════
         # Collect agent's tool descriptions for context
         platform_tools = get_platform_tools()
-        agent_def = all_agents.get(chosen_agent, {})
+        agent_def = domain_agents.get(chosen_agent, all_agents.get(chosen_agent, {}))
         agent_ns_raw = agent_def.get("primary_namespaces", [])
         # Use full namespace depth (3+ levels) so agents within the same
         # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
