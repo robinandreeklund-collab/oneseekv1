@@ -635,18 +635,22 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "domain_id": "trafik-och-transport",
         "label": "Trafikanalys Transportstatistik",
         "description": (
-            "Hämtar transportstatistik från Trafikanalys — fordonsbestånd, "
-            "nyregistreringar, trafikarbete, vägtrafikskador, sjötrafik, "
-            "luftfart, järnväg och kollektivtrafik."
+            "Svensk transportstatistik från Trafikanalys (trafa.se) — "
+            "fordonsbestånd, nyregistreringar, trafikarbete, vägtrafikskador, "
+            "sjötrafik, luftfart, järnväg, kollektivtrafik och körkort. "
+            "Statistik och siffror, inte realtidstrafik."
         ),
         "keywords": [
             "trafikanalys",
+            "transportstatistik",
+            "statistik",
+            "fordon",
             "fordonsstatistik",
+            "kollektivtrafik",
             "personbilar",
             "lastbilar",
             "bussar",
             "motorcyklar",
-            "fordon",
             "nyregistrering",
             "avregistrering",
             "trafikarbete",
@@ -657,7 +661,6 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
             "sjötrafik",
             "luftfart",
             "järnväg",
-            "kollektivtrafik",
             "drivmedel",
             "elbil",
         ],

@@ -60,9 +60,14 @@ NAMESPACE_ZONE_MAP: dict[str, str] = {
     "tools/weather": "väder-och-klimat",
     # Trafikverket sub-agent namespaces (all map to same domain)
     "tools/trafik": "trafik-och-transport",
+    # Trafikanalys (transportstatistik) — same domain
+    "tools/trafikanalys": "trafik-och-transport",
     # Other domains
     "tools/politik": "politik-och-beslut",
     "tools/statistics": "ekonomi-och-skatter",
+    # Riksbank and Elpris — same domain
+    "tools/riksbank": "ekonomi-och-skatter",
+    "tools/elpris": "ekonomi-och-skatter",
     "tools/bolag": "näringsliv-och-bolag",
     "tools/marketplace": "handel-och-marknad",
     "tools/action": Zone.SKAPANDE,

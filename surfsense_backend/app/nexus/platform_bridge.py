@@ -138,12 +138,15 @@ def _load_from_registry() -> list[PlatformTool]:
     from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
     from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
     from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.registry import (
         BUILTIN_TOOLS,
     )
+    from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.trafikanalys import TRAFIKANALYS_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 
     tools: list[PlatformTool] = []
@@ -159,6 +162,9 @@ def _load_from_registry() -> list[PlatformTool]:
         (MARKETPLACE_TOOL_DEFINITIONS, "marketplace"),
         (SKOLVERKET_TOOL_DEFINITIONS, "skolverket"),
         (GEOAPIFY_TOOL_DEFINITIONS, "geoapify"),
+        (TRAFIKANALYS_TOOL_DEFINITIONS, "trafikanalys"),
+        (RIKSBANK_TOOL_DEFINITIONS, "riksbank"),
+        (ELPRIS_TOOL_DEFINITIONS, "elpris"),
     ]
 
     for defs, category in domain_defs:
