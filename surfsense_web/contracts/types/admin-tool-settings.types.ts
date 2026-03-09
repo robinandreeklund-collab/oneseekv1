@@ -89,6 +89,7 @@ export const toolRetrievalTuning = z.object({
 	tool_auto_score_threshold: z.number().optional().default(0.6),
 	adaptive_threshold_delta: z.number().optional().default(0.08),
 	adaptive_min_samples: z.number().int().optional().default(8),
+	llm_gate_mode: z.boolean().optional().default(false),
 });
 
 export const toolRetrievalTuningResponse = z.object({

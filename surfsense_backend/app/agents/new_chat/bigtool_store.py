@@ -519,6 +519,7 @@ class ToolRetrievalTuning:
     tool_auto_score_threshold: float = 0.60
     adaptive_threshold_delta: float = 0.08
     adaptive_min_samples: int = 8
+    llm_gate_mode: bool = False
 
 
 DEFAULT_TOOL_RETRIEVAL_TUNING = ToolRetrievalTuning()
@@ -555,6 +556,7 @@ def get_default_tuning_as_dict() -> dict[str, Any]:
         "tool_auto_score_threshold": DEFAULT_TOOL_RETRIEVAL_TUNING.tool_auto_score_threshold,
         "adaptive_threshold_delta": DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_threshold_delta,
         "adaptive_min_samples": DEFAULT_TOOL_RETRIEVAL_TUNING.adaptive_min_samples,
+        "llm_gate_mode": DEFAULT_TOOL_RETRIEVAL_TUNING.llm_gate_mode,
     }
 
 

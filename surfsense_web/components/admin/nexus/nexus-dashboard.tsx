@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -33,7 +33,10 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { ThumbsUp, ThumbsDown, ExternalLink, Settings } from "lucide-react";
+import { ThumbsUp, ThumbsDown, ExternalLink, Settings, Zap } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
 import Link from "next/link";
 import { DarkMatterPanel } from "@/components/admin/nexus/shared/dark-matter-panel";
 import { ZoneHealthCard } from "@/components/admin/nexus/shared/zone-health-card";
@@ -71,6 +74,10 @@ export function NexusDashboard() {
 	const [error, setError] = useState<string | null>(null);
 	const [resetting, setResetting] = useState(false);
 	const [resetResult, setResetResult] = useState<string | null>(null);
+	const [llmGateActive, setLlmGateActive] = useState(false);
+	const [llmGateLoading, setLlmGateLoading] = useState(true);
+	const [llmGateToggling, setLlmGateToggling] = useState(false);
+	const tuningRef = useRef<Record<string, unknown> | null>(null);
 
 	useEffect(() => {
 		nexusApiService
@@ -78,7 +85,35 @@ export function NexusDashboard() {
 			.then(setHealth)
 			.catch((err) => setError(err.message))
 			.finally(() => setLoading(false));
+		adminToolSettingsApiService
+			.getRetrievalTuning()
+			.then((res) => {
+				tuningRef.current = res.tuning as unknown as Record<string, unknown>;
+				setLlmGateActive(Boolean(res.tuning.llm_gate_mode));
+			})
+			.catch(() => {})
+			.finally(() => setLlmGateLoading(false));
 	}, []);
+
+	const handleLlmGateToggle = useCallback(
+		async (enabled: boolean) => {
+			setLlmGateToggling(true);
+			try {
+				const current = tuningRef.current ?? {};
+				const updated = { ...current, llm_gate_mode: enabled };
+				const res = await adminToolSettingsApiService.updateRetrievalTuning(
+					updated as Parameters<typeof adminToolSettingsApiService.updateRetrievalTuning>[0],
+				);
+				tuningRef.current = res.tuning as unknown as Record<string, unknown>;
+				setLlmGateActive(Boolean(res.tuning.llm_gate_mode));
+			} catch {
+				setLlmGateActive(!enabled);
+			} finally {
+				setLlmGateToggling(false);
+			}
+		},
+		[],
+	);
 
 	const handleReset = useCallback(() => {
 		if (!window.confirm("Nollställ ALL NEXUS-data? Routing-händelser, testfall, loop-körningar, snapshots — allt raderas.")) {
@@ -107,7 +142,26 @@ export function NexusDashboard() {
 						självförbättrande eval och embedding-rymd-hälsa
 					</p>
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-3">
+					{/* LLM Gate Mode Toggle */}
+					<div className="flex items-center gap-2 rounded-lg border px-3 py-2">
+						<Zap className={`h-4 w-4 ${llmGateActive ? "text-amber-500" : "text-muted-foreground"}`} />
+						<span className="text-sm font-medium whitespace-nowrap">LLM Gate</span>
+						{llmGateLoading ? (
+							<Loader2 className="h-3.5 w-3.5 animate-spin" />
+						) : (
+							<Switch
+								checked={llmGateActive}
+								onCheckedChange={handleLlmGateToggle}
+								disabled={llmGateToggling}
+							/>
+						)}
+						{llmGateActive && (
+							<Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs">
+								AKTIV
+							</Badge>
+						)}
+					</div>
 					{resetResult && (
 						<span className="text-xs text-muted-foreground">{resetResult}</span>
 					)}
@@ -127,6 +181,18 @@ export function NexusDashboard() {
 					</Button>
 				</div>
 			</div>
+
+			{/* LLM Gate Mode Banner */}
+			{llmGateActive && (
+				<Alert className="border-amber-300 bg-amber-50">
+					<Zap className="h-4 w-4 text-amber-600" />
+					<AlertDescription className="text-amber-800">
+						<strong>LLM Gate-läge aktivt.</strong> Det riktiga LangGraph-flödet använder nu rena
+						LLM-beslut för intent, agent och tool-routing — utan embedding eller reranker.
+						Stäng av för att återgå till hybrid-approach.
+					</AlertDescription>
+				</Alert>
+			)}
 
 			{/* Health Summary */}
 			{loading ? (

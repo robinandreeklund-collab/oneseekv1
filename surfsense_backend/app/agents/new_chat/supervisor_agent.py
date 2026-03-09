@@ -1718,6 +1718,7 @@ async def create_supervisor_agent(
             persisted_tuning.get("adaptive_threshold_delta") or 0.08
         ),
         "adaptive_min_samples": int(persisted_tuning.get("adaptive_min_samples") or 8),
+        "llm_gate_mode": bool(persisted_tuning.get("llm_gate_mode", False)),
     }
 
     subagent_enabled = _coerce_bool(
@@ -5037,6 +5038,30 @@ async def create_supervisor_agent(
     _ns_tool_index = live_tool_index
     _ns_tuning = persisted_tuning
 
+    def _llm_gate_tool_candidates_for_agent(agent_name: str) -> list[dict[str, Any]]:
+        """Return all tools in an agent's namespace as dicts for LLM gate selection."""
+        from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP, _match_namespace
+
+        prefixes = AGENT_NAMESPACE_MAP.get(str(agent_name or "").strip().lower(), [])
+        results: list[dict[str, Any]] = []
+        for entry in _ns_tool_index:
+            matched = False
+            if prefixes:
+                for prefix in prefixes:
+                    if _match_namespace(entry.namespace, prefix):
+                        matched = True
+                        break
+            else:
+                matched = True
+            if matched:
+                results.append({
+                    "tool_id": entry.tool_id,
+                    "name": entry.name,
+                    "description": entry.description,
+                    "keywords": list(entry.keywords or []),
+                })
+        return results
+
     tool_resolver_node = build_tool_resolver_node(
         tool_resolver_prompt_template=tool_resolver_prompt_template,
         latest_user_query_fn=_latest_user_query,
@@ -5064,6 +5089,10 @@ async def create_supervisor_agent(
             if _ns_tool_index
             else None
         ),
+        llm_gate_tool_candidates_fn=(
+            _llm_gate_tool_candidates_for_agent if _ns_tool_index else None
+        ),
+        live_routing_config=live_routing_config,
     )
     execution_router_node = build_execution_router_node(
         latest_user_query_fn=_latest_user_query,

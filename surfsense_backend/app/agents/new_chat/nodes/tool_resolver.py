@@ -15,6 +15,8 @@ def build_tool_resolver_node(
     trafik_tool_ids: list[str],
     namespace_tool_ids_fn: Callable[[str, str], tuple[list[str], dict[str, Any]] | None]
     | None = None,
+    llm_gate_tool_candidates_fn: Callable[[str], list[dict[str, Any]]] | None = None,
+    live_routing_config: dict[str, Any] | None = None,
 ):
     async def tool_resolver_node(
         state: dict[str, Any],
@@ -60,7 +62,40 @@ def build_tool_resolver_node(
 
         resolved: dict[str, list[str]] = {}
         tool_trace: dict[str, Any] = {}
+        _live_cfg = dict(live_routing_config or {})
+        _llm_gate_mode = bool(_live_cfg.get("llm_gate_mode", False))
+
         for agent_name in selected_agent_names[:3]:
+            # ── LLM Gate Mode: bypass embedding/reranker, use pure LLM ──
+            if _llm_gate_mode and llm_gate_tool_candidates_fn is not None:
+                from ..llm_gate import llm_gate_select_tools
+
+                tool_candidates = llm_gate_tool_candidates_fn(agent_name)
+                gate_result = await llm_gate_select_tools(
+                    query=resolver_query,
+                    chosen_agent=agent_name,
+                    candidates=tool_candidates,
+                )
+                chosen_ids = [
+                    str(tid).strip()
+                    for tid in (gate_result.get("chosen") or [])
+                    if str(tid).strip()
+                ]
+                if chosen_ids:
+                    resolved[agent_name] = chosen_ids
+                tool_trace[agent_name] = {
+                    "mode": "llm_gate",
+                    "top1": chosen_ids[0] if chosen_ids else None,
+                    "top2": None,
+                    "margin": None,
+                    "auto_selected": False,
+                    "selected": chosen_ids,
+                    "namespace_full_exposure": False,
+                    "reasoning": str(gate_result.get("reasoning") or ""),
+                    "candidates_shown": gate_result.get("candidates_shown", 0),
+                }
+                continue
+
             # --- Namespace-aware full exposure ---
             # For bounded agents (trafik, weather, etc.) try to expose all
             # namespace tools with retrieval scores as hints instead of

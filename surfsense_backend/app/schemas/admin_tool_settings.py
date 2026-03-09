@@ -154,6 +154,7 @@ class ToolRetrievalTuning(BaseModel):
     tool_auto_score_threshold: float = 0.60
     adaptive_threshold_delta: float = 0.08
     adaptive_min_samples: int = 8
+    llm_gate_mode: bool = False
 
 
 class ToolLatestEvaluationSummary(BaseModel):
