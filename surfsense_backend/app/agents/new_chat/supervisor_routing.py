@@ -79,52 +79,28 @@ def _route_allowed_agents(route_hint: str | None) -> set[str]:
     return set(_ROUTE_STRICT_AGENT_POLICIES.get(route, set()))
 
 
+_registry_route_defaults: dict[str, str] | None = None
+
+
+def set_registry_route_defaults(defaults: dict[str, str]) -> None:
+    """Install registry-built route defaults (called after registry load)."""
+    global _registry_route_defaults
+    _registry_route_defaults = defaults
+
+
 def _route_default_agent(
     route_hint: str | None, allowed: set[str] | None = None
 ) -> str:
     route = _normalize_route_hint_value(route_hint)
-    # Minimal defaults for the 4 broad routes + backward compat aliases.
-    # Domain-specific agent selection is handled by the registry-aware
-    # ``resolve_default_agent_with_registry()`` — this function is only
-    # the final fallback when no registry is available.
-    defaults = {
+    # Use registry-built defaults when available, otherwise fall back to
+    # minimal static defaults for the 4 broad routes.
+    defaults = _registry_route_defaults or {
         "skapande": "åtgärd",
         "jämförelse": "syntes",
         "konversation": "konversation",
-        # Backward compat
         "action": "åtgärd",
         "compare": "syntes",
         "smalltalk": "konversation",
-        # Domain-specific routes that already have a matching agent name
-        "trafik": "trafik-vag",
-        "trafik-tag": "trafik-tag",
-        "trafik-vag": "trafik-vag",
-        "trafik-vagvader": "trafik-vagvader",
-        "trafikanalys": "trafikanalys-transport",
-        "trafikanalys-transport": "trafikanalys-transport",
-        "statistik": "statistik-ekonomi",
-        "statistik-ekonomi": "statistik-ekonomi",
-        "statistik-befolkning": "statistik-befolkning",
-        "statistik-arbetsmarknad": "statistik-arbetsmarknad",
-        "statistik-utbildning": "statistik-utbildning",
-        "statistik-halsa": "statistik-halsa",
-        "statistik-miljo": "statistik-miljo",
-        "statistik-fastighet": "statistik-fastighet",
-        "statistik-naringsliv": "statistik-naringsliv",
-        "statistik-samhalle": "statistik-samhalle",
-        "väder": "väder",
-        "väder-vatten": "väder-vatten",
-        "väder-risk": "väder-risk",
-        "marknad": "marknad",
-        "bolag": "bolag",
-        "riksdagen": "riksdagen-dokument",
-        "riksdagen-dokument": "riksdagen-dokument",
-        "riksdagen-debatt": "riksdagen-debatt",
-        "riksdagen-ledamoter": "riksdagen-ledamoter",
-        "kartor": "kartor",
-        "media": "media",
-        "kod": "kod",
-        "webb": "webb",
     }
     # If the route/domain itself is a valid agent name, use it directly
     preferred = defaults.get(route, route if route else "kunskap")
@@ -171,13 +147,25 @@ def _score_tool_profile(
     return score
 
 
+_registry_tool_profiles: dict[str, list[AgentToolProfile]] | None = None
+
+
+def set_registry_tool_profiles(
+    profiles: dict[str, list[AgentToolProfile]],
+) -> None:
+    """Install registry-built tool profiles (called after registry load)."""
+    global _registry_tool_profiles
+    _registry_tool_profiles = profiles
+
+
 def _select_focused_tool_profiles(
     agent_name: str,
     task: str,
     *,
     limit: int = 4,
 ) -> list[AgentToolProfile]:
-    profiles = list(_AGENT_TOOL_PROFILES.get(str(agent_name or "").strip().lower(), []))
+    tool_profiles = _registry_tool_profiles if _registry_tool_profiles is not None else _AGENT_TOOL_PROFILES
+    profiles = list(tool_profiles.get(str(agent_name or "").strip().lower(), []))
     if not profiles:
         return []
     query_norm = _normalize_text(task)
@@ -205,22 +193,35 @@ def _focused_tool_ids_for_agent(
 ) -> list[str]:
     normalized_task = _normalize_text(task)
     normalized_agent_name = str(agent_name or "").strip().lower()
-    if (
-        normalized_agent_name
-        in {
-            "kunskap",
-            "åtgärd",
-            "knowledge",
-            "statistics",
-            "action",
-        }
-        or normalized_agent_name.startswith("statistik-")
-    ) and any(marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS):
+    # Check if this agent has tool profiles — if not, allow dynamic discovery
+    tool_profiles = _registry_tool_profiles if _registry_tool_profiles is not None else _AGENT_TOOL_PROFILES
+    has_profiles = bool(tool_profiles.get(normalized_agent_name))
+    if not has_profiles and any(
+        marker in normalized_task for marker in _DYNAMIC_TOOL_QUERY_MARKERS
+    ):
         # Allow retrieve_tools to discover dynamic connector tools (for example MCP)
         # instead of locking the worker to static profile IDs.
         return []
     focused = _select_focused_tool_profiles(agent_name, task, limit=limit)
     return [profile.tool_id for profile in focused if profile.tool_id]
+
+
+_registry_alias_map: dict[str, str] | None = None
+_registry_token_rules: list[tuple[tuple[str, ...], str]] | None = None
+
+
+def set_registry_alias_map(alias_map: dict[str, str]) -> None:
+    """Install registry-built alias map (called after registry load)."""
+    global _registry_alias_map
+    _registry_alias_map = alias_map
+
+
+def set_registry_token_rules(
+    rules: list[tuple[tuple[str, ...], str]],
+) -> None:
+    """Install registry-built token rules (called after registry load)."""
+    global _registry_token_rules
+    _registry_token_rules = rules
 
 
 # Agent aliasing
@@ -234,62 +235,36 @@ def _guess_agent_from_alias(alias: str) -> str | None:
     normalized = _normalize_agent_identifier(alias)
     if not normalized:
         return None
-    direct = _AGENT_NAME_ALIAS_MAP.get(normalized)
+    # Try registry-built alias map first, then static fallback
+    alias_map = _registry_alias_map if _registry_alias_map is not None else _AGENT_NAME_ALIAS_MAP
+    direct = alias_map.get(normalized)
     if direct:
         return direct
-    token_rules: list[tuple[tuple[str, ...], str]] = [
-        (
-            (
-                "smhi",
-                "weather",
-                "vader",
-                "väder",
-                "temperatur",
-                "regn",
-                "sno",
-                "snö",
-                "vind",
-            ),
-            "väder",
-        ),
-        (("trafik", "traffic", "road", "vag", "väg"), "trafik-vag"),
-        (("rail", "train", "tåg", "tag", "järnväg"), "trafik-tag"),
-        (("map", "kart", "geo"), "kartor"),
-        (("stat", "scb", "data"), "statistik-ekonomi"),
-        (("befolkning", "folkmangd", "invånare"), "statistik-befolkning"),
-        (("arbetsmarknad", "arbetslöshet", "sysselsättning", "lön"), "statistik-arbetsmarknad"),
-        (("utbildning", "skola", "förskola", "grundskola", "gymnasium"), "statistik-utbildning"),
-        (("omsorg", "äldreomsorg", "hemtjänst", "lss", "ifo"), "statistik-halsa"),
-        (("utsläpp", "miljöstatistik", "energistatistik"), "statistik-miljo"),
-        (("bygglov", "nybyggnation", "bostadsbestånd"), "statistik-fastighet"),
-        (("nyföretagande", "företagsstatistik", "näringsverksamhet"), "statistik-naringsliv"),
-        (("riks", "parliament", "politik", "proposition", "motion", "lagforslag"), "riksdagen-dokument"),
-        (("debatt", "votering", "omrostning", "anforande", "fragestund"), "riksdagen-debatt"),
-        (("ledamot", "ledamoter", "valkrets", "riksdagskalender"), "riksdagen-ledamoter"),
-        (("bolag", "company", "business", "org"), "bolag"),
-        (
-            (
-                "blocket",
-                "tradera",
-                "annons",
-                "begagnat",
-                "köp",
-                "sälj",
-                "marknadsplats",
-            ),
-            "marknad",
-        ),
-        (("browser", "web", "scrape", "search"), "webb"),
-        (("media", "podcast", "image", "video"), "media"),
-        (("code", "python", "calc", "kod"), "kod"),
-        (("synth", "compare", "samman", "syntes"), "syntes"),
-        (("knowledge", "docs", "internal", "external", "local", "kunskap"), "kunskap"),
-        (("action", "travel", "åtgärd"), "åtgärd"),
-    ]
+    # Try registry-built token rules first, then static fallback
+    token_rules = _registry_token_rules if _registry_token_rules is not None else _STATIC_TOKEN_RULES
     for tokens, resolved in token_rules:
         if any(token in normalized for token in tokens):
             return resolved
     return None
+
+
+# Static fallback token rules (used when no registry is loaded)
+_STATIC_TOKEN_RULES: list[tuple[tuple[str, ...], str]] = [
+    (("smhi", "weather", "vader", "temperatur", "regn", "sno", "vind"), "väder"),
+    (("trafik", "traffic", "road", "vag"), "trafik-vag"),
+    (("rail", "train", "tag"), "trafik-tag"),
+    (("map", "kart", "geo"), "kartor"),
+    (("stat", "scb", "data"), "statistik-ekonomi"),
+    (("riks", "parliament", "politik"), "riksdagen-dokument"),
+    (("bolag", "company", "business"), "bolag"),
+    (("blocket", "tradera", "annons", "begagnat", "marknadsplats"), "marknad"),
+    (("browser", "web", "scrape"), "webb"),
+    (("media", "podcast", "image"), "media"),
+    (("code", "python", "calc", "kod"), "kod"),
+    (("synth", "compare", "samman", "syntes"), "syntes"),
+    (("knowledge", "docs", "kunskap"), "kunskap"),
+    (("action", "travel"), "åtgärd"),
+]
 
 
 # ── Registry-aware agent + tool resolution ────────────────────────────

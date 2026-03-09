@@ -46,6 +46,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "SMHI meteorologisk data — prognoser och observationer",
         "geographic_scope": "Sverige",
         "excludes": ["trafik", "statistik", "bolag"],
+        "aliases": ["weather", "weather_agent", "smhi", "smhi_agent", "vader"],
     },
     {
         "agent_id": "väder-vatten",
@@ -158,6 +159,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Tågtrafik, tidtabeller och resplanering",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "statistik", "bolag"],
+        "aliases": ["train", "train_agent", "rail"],
     },
     {
         "agent_id": "trafik-vag",
@@ -201,6 +203,11 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Vägtrafik, störningar, kameror och vägstatus",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "statistik", "bolag"],
+        "aliases": [
+            "traffic_information", "traffic_info", "traffic_agent",
+            "road_works_planner", "roadworks_planner", "road_work_planner",
+            "roadworks", "trafik",
+        ],
     },
     {
         "agent_id": "trafik-vagvader",
@@ -274,6 +281,10 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Svensk ekonomisk statistik",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "skapa"],
+        "aliases": [
+            "municipality_agent", "statistic_agent", "statistics_agent",
+            "statistics", "statistik",
+        ],
     },
     {
         "agent_id": "statistik-befolkning",
@@ -715,6 +726,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Bolagsverkets register",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "skapa"],
+        "aliases": ["company_agent"],
     },
     {
         "agent_id": "riksdagen-dokument",
@@ -755,6 +767,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Riksdagens dokumentarkiv",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "skapa"],
+        "aliases": ["parliament_agent", "riksdagen"],
     },
     {
         "agent_id": "riksdagen-debatt",
@@ -858,6 +871,10 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Blocket, Tradera och liknande tjänster",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "statistik"],
+        "aliases": [
+            "marketplace_agent", "market_agent", "blocket_agent",
+            "tradera_agent", "marketplace",
+        ],
     },
     {
         "agent_id": "kunskap",
@@ -888,6 +905,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Dokumentsökning och kunskapsbas",
         "geographic_scope": "Globalt",
         "excludes": ["skapa", "hej"],
+        "aliases": ["knowledge", "knowledge_agent"],
     },
     {
         "agent_id": "webb",
@@ -917,6 +935,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Extern webbsökning",
         "geographic_scope": "Globalt",
         "excludes": ["skapa"],
+        "aliases": ["browser", "browser_agent"],
     },
     {
         "agent_id": "kod",
@@ -947,6 +966,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Kodgenerering och exekvering",
         "geographic_scope": "",
         "excludes": ["sök", "väder", "trafik"],
+        "aliases": ["code_agent", "code"],
     },
     {
         "agent_id": "kartor",
@@ -973,6 +993,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Kartgenerering",
         "geographic_scope": "Globalt",
         "excludes": ["sök", "statistik"],
+        "aliases": ["map_agent", "maps_agent"],
     },
     {
         "agent_id": "media",
@@ -1026,6 +1047,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Bred skapandefunktion",
         "geographic_scope": "",
         "excludes": ["sök"],
+        "aliases": ["action", "action_agent"],
     },
     {
         "agent_id": "syntes",
@@ -1049,6 +1071,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Jämförelseanalys",
         "geographic_scope": "",
         "excludes": [],
+        "aliases": ["synthesis", "synthesis_agent"],
     },
     # ── Skolverket sub-agents (split by content type) ──
     {
@@ -1091,6 +1114,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Skolverkets kursplaner, ämnesplaner, program och läroplaner",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "bolag"],
+        "aliases": ["skolverket", "skolverket_agent", "skolverket_kursplaner"],
     },
     {
         "agent_id": "skolverket-skolenheter",
@@ -1129,6 +1153,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Skolverkets skolenhetsregister",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "bolag"],
+        "aliases": ["skolverket_skolenheter"],
     },
     {
         "agent_id": "skolverket-vuxenutbildning",
@@ -1169,6 +1194,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Skolverkets vuxenutbildningsregister och planerade utbildningar",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "bolag"],
+        "aliases": ["skolverket_vuxenutbildning"],
     },
     {
         "agent_id": "skolverket-referens",
@@ -1207,6 +1233,7 @@ DEFAULT_AGENT_DEFINITIONS: list[dict[str, Any]] = [
         "unique_scope": "Skolverkets referensdata och nationell utbildningsstatistik",
         "geographic_scope": "Sverige",
         "excludes": ["väder", "trafik", "bolag"],
+        "aliases": ["skolverket_referens"],
     },
 ]
 

@@ -1327,6 +1327,8 @@ async def create_supervisor_agent(
 
     # ── GraphRegistry (Sprint 5: domain-scoped agent/tool resolution) ──
     graph_registry = dependencies.get("graph_registry")
+    # Default to static set; overridden by registry-built set below
+    specialized_agents: set[str] = _SPECIALIZED_AGENTS
 
     # ── Dynamic worker pool from GraphRegistry ─────────────────────────
     # Build one WorkerConfig per agent from the DB-backed registry.
@@ -1365,6 +1367,40 @@ async def create_supervisor_agent(
         if _dyn_configs:
             worker_configs = _dyn_configs
             worker_prompts = _dyn_prompts
+
+    # ── Install registry-aware dynamic structures ────────────────────
+    # Rebuild hardcoded constants from the live registry so that agents/tools
+    # added via admin panel are immediately available without code changes.
+    if graph_registry is not None and graph_registry.agent_index:
+        from app.agents.new_chat.supervisor_constants import (
+            build_alias_map_from_registry,
+            build_route_defaults_from_registry,
+            build_specialized_agents_from_registry,
+            build_token_rules_from_registry,
+            build_tool_profiles_from_registry,
+        )
+        from app.agents.new_chat.supervisor_routing import (
+            set_registry_alias_map,
+            set_registry_route_defaults,
+            set_registry_token_rules,
+            set_registry_tool_profiles,
+        )
+
+        _dyn_specialized = build_specialized_agents_from_registry(graph_registry)
+        _dyn_alias_map = build_alias_map_from_registry(graph_registry)
+        _dyn_route_defaults = build_route_defaults_from_registry(graph_registry)
+        _dyn_token_rules = build_token_rules_from_registry(graph_registry)
+        _dyn_tool_profiles = build_tool_profiles_from_registry(graph_registry)
+
+        # Override module-level specialized agents set for this graph instance
+        specialized_agents = _dyn_specialized
+
+        # Install into routing module globals
+        set_registry_alias_map(_dyn_alias_map)
+        set_registry_route_defaults(_dyn_route_defaults)
+        set_registry_token_rules(_dyn_token_rules)
+        if _dyn_tool_profiles:
+            set_registry_tool_profiles(_dyn_tool_profiles)
 
     db_session = dependencies.get("db_session")
     if isinstance(db_session, AsyncSession):
@@ -2556,7 +2592,7 @@ async def create_supervisor_agent(
             # Specialized agents (statistik, marknad, etc.) must NEVER be
             # remapped by selected_agents_lock — they own domain-specific
             # tools that other agents cannot substitute.
-            if requested_raw in _SPECIALIZED_AGENTS:
+            if requested_raw in specialized_agents:
                 return requested_raw, None
             if selected_agent_set and requested_raw not in selected_agent_set:
                 fallback = _selected_fallback(
