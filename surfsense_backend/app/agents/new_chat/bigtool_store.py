@@ -40,6 +40,7 @@ from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.trafikanalys import TRAFIKANALYS_TOOL_DEFINITIONS
 from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
 from app.utils.text import normalize_text as _normalize_text, tokenize as _tokenize
@@ -143,6 +144,19 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "elpris_imorgon": ("tools", "elpris", "energi"),
     "elpris_historik": ("tools", "elpris", "energi"),
     "elpris_jamforelse": ("tools", "elpris", "energi"),
+    # Trafikanalys tools - under tools/trafikanalys
+    "trafikanalys_fordon_personbilar": ("tools", "trafikanalys", "transport", "fordon"),
+    "trafikanalys_fordon_lastbilar": ("tools", "trafikanalys", "transport", "fordon"),
+    "trafikanalys_fordon_bussar": ("tools", "trafikanalys", "transport", "fordon"),
+    "trafikanalys_fordon_motorcyklar": ("tools", "trafikanalys", "transport", "fordon"),
+    "trafikanalys_fordon_oversikt": ("tools", "trafikanalys", "transport", "fordon"),
+    "trafikanalys_korkort": ("tools", "trafikanalys", "transport", "korkort"),
+    "trafikanalys_trafikarbete": ("tools", "trafikanalys", "transport", "trafik"),
+    "trafikanalys_vagtrafik_skador": ("tools", "trafikanalys", "transport", "skador"),
+    "trafikanalys_sjotrafik": ("tools", "trafikanalys", "transport", "sjofart"),
+    "trafikanalys_luftfart": ("tools", "trafikanalys", "transport", "luftfart"),
+    "trafikanalys_jarnvag": ("tools", "trafikanalys", "transport", "jarnvag"),
+    "trafikanalys_kollektivtrafik": ("tools", "trafikanalys", "transport", "kollektivtrafik"),
     # Marketplace tools - all under tools/marketplace
     "marketplace_unified_search": ("tools", "marketplace", "search"),
     "marketplace_blocket_search": ("tools", "marketplace", "search"),
@@ -455,6 +469,19 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "elpris_imorgon": ["elpris", "imorgon", "morgondagens", "spotpris", "el"],
     "elpris_historik": ["elpris", "historik", "historiska", "prishistorik", "eldata"],
     "elpris_jamforelse": ["elpris", "jämförelse", "jämför", "elzon", "elområde", "se1", "se2", "se3", "se4"],
+    # Trafikanalys tools keywords
+    "trafikanalys_fordon_personbilar": ["personbilar", "bilar", "fordon", "bilbestånd", "nyregistrering", "elbil", "drivmedel", "trafikanalys"],
+    "trafikanalys_fordon_lastbilar": ["lastbilar", "lastbil", "truck", "tunga fordon", "godstransport", "trafikanalys"],
+    "trafikanalys_fordon_bussar": ["bussar", "buss", "busstrafik", "bussbestånd", "trafikanalys"],
+    "trafikanalys_fordon_motorcyklar": ["motorcyklar", "motorcykel", "mc", "tvåhjuling", "trafikanalys"],
+    "trafikanalys_fordon_oversikt": ["fordonsstatistik", "fordonsöversikt", "alla fordon", "fordonsbestånd", "trafikanalys"],
+    "trafikanalys_korkort": ["körkort", "körkortsbehörighet", "behörighet", "körkortsinnehavare", "trafikanalys"],
+    "trafikanalys_trafikarbete": ["trafikarbete", "fordonskilometer", "trafikvolym", "trafikmängd", "trafikanalys"],
+    "trafikanalys_vagtrafik_skador": ["trafikolyckor", "trafikskador", "trafikdöda", "olycksstatistik", "trafiksäkerhet", "trafikanalys"],
+    "trafikanalys_sjotrafik": ["sjötrafik", "sjöfart", "hamn", "gods", "passagerare", "maritim", "trafikanalys"],
+    "trafikanalys_luftfart": ["luftfart", "flyg", "flygplatser", "flygpassagerare", "aviation", "trafikanalys"],
+    "trafikanalys_jarnvag": ["järnväg", "tåg", "tågtrafik", "persontåg", "godståg", "trafikanalys"],
+    "trafikanalys_kollektivtrafik": ["kollektivtrafik", "linjetrafik", "färdtjänst", "busstrafik", "trafikanalys"],
     # Marketplace tools keywords
     "marketplace_unified_search": ["marknadsplats", "sök", "köp", "sälj", "begagnat", "annons"],
     "marketplace_blocket_search": ["blocket", "sök", "köp", "sälj", "begagnat", "annons"],
@@ -941,6 +968,28 @@ def _namespace_for_riksbank_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "riksbank", "ekonomi")
 
 
+def _namespace_for_trafikanalys_tool(tool_id: str) -> tuple[str, ...]:
+    """Map Trafikanalys tools to sub-namespaces."""
+    normalized = str(tool_id or "").strip().lower()
+    if "sjotrafik" in normalized:
+        return ("tools", "trafikanalys", "transport", "sjofart")
+    if "luftfart" in normalized:
+        return ("tools", "trafikanalys", "transport", "luftfart")
+    if "jarnvag" in normalized:
+        return ("tools", "trafikanalys", "transport", "jarnvag")
+    if "kollektivtrafik" in normalized:
+        return ("tools", "trafikanalys", "transport", "kollektivtrafik")
+    if "korkort" in normalized:
+        return ("tools", "trafikanalys", "transport", "korkort")
+    if "skador" in normalized:
+        return ("tools", "trafikanalys", "transport", "skador")
+    if "trafikarbete" in normalized:
+        return ("tools", "trafikanalys", "transport", "trafik")
+    if "fordon" in normalized:
+        return ("tools", "trafikanalys", "transport", "fordon")
+    return ("tools", "trafikanalys", "transport")
+
+
 def _namespace_for_elpris_tool(tool_id: str) -> tuple[str, ...]:
     """Map Elpris tools to sub-namespaces."""
     return ("tools", "elpris", "energi")
@@ -1003,6 +1052,7 @@ _NAMESPACE_REGISTRY: list[
     ("scb_", _namespace_for_scb_tool),
     ("kolada_", _namespace_for_kolada_tool),
     ("riksbank_", _namespace_for_riksbank_tool),
+    ("trafikanalys_", _namespace_for_trafikanalys_tool),
     ("elpris_", _namespace_for_elpris_tool),
     ("bolagsverket_", _namespace_for_bolagsverket_tool),
     ("trafikverket_", _namespace_for_trafikverket_tool),
@@ -2615,6 +2665,7 @@ AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
     ],
     "riksbank-ekonomi": [("tools", "riksbank", "ekonomi")],
     "elpris": [("tools", "elpris", "energi")],
+    "trafikanalys-transport": [("tools", "trafikanalys", "transport")],
     "bolag": [("tools", "bolag")],
     "kartor": [("tools", "kartor")],
     "riksdagen-dokument": [

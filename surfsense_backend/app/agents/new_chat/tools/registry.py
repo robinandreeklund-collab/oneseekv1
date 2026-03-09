@@ -57,6 +57,10 @@ from .elpris import (
     ELPRIS_TOOL_DEFINITIONS,
     create_elpris_tool,
 )
+from .trafikanalys import (
+    TRAFIKANALYS_TOOL_DEFINITIONS,
+    create_trafikanalys_tool,
+)
 from .trafikverket import (
     TRAFIKVERKET_TOOL_DEFINITIONS,
     create_trafikverket_tool,
@@ -447,6 +451,18 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             requires=[],
         )
         for definition in ELPRIS_TOOL_DEFINITIONS
+    ],
+    # =========================================================================
+    # TRAFIKANALYS API TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_trafikanalys_tool(definition),
+            requires=[],
+        )
+        for definition in TRAFIKANALYS_TOOL_DEFINITIONS
     ],
     # =========================================================================
     # ADD YOUR CUSTOM TOOLS BELOW

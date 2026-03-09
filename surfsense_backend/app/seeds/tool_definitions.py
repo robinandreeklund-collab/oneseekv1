@@ -261,6 +261,7 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
         "marknad": "app.agents.new_chat.marketplace_tools:MARKETPLACE_TOOL_DEFINITIONS",
         "riksbank-ekonomi": "app.agents.new_chat.tools.riksbank:RIKSBANK_TOOL_DEFINITIONS",
         "elpris": "app.agents.new_chat.tools.elpris:ELPRIS_TOOL_DEFINITIONS",
+        "trafikanalys-transport": "app.agents.new_chat.tools.trafikanalys:TRAFIKANALYS_TOOL_DEFINITIONS",
     }
 
     for agent_id, import_path in simple_agent_tool_mapping.items():
