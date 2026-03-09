@@ -677,13 +677,8 @@ async def create_supervisor_agent(
     }
     worker_prompts: dict[str, str] = {"kunskap": knowledge_prompt}
 
-    # Create/get process-level shared worker pool for this runtime signature.
-    worker_pool = await get_or_create_shared_worker_pool(
-        configs=worker_configs,
-        llm=llm,
-        dependencies=dependencies,
-        checkpointer=checkpointer,
-    )
+    # NOTE: worker pool creation is deferred until after dynamic configs
+    # are built from GraphRegistry (see below after registry install).
 
     agent_definitions = [
         AgentDefinition(
@@ -1467,6 +1462,17 @@ async def create_supervisor_agent(
                     )
                 agent_definitions = merged_agent_definitions
     agent_by_name = {definition.name: definition for definition in agent_definitions}
+
+    # Create/get process-level shared worker pool AFTER dynamic configs are
+    # built from GraphRegistry.  This ensures all DB-defined agents have a
+    # WorkerConfig entry so LazyWorkerPool.get(agent_name) never returns None.
+    worker_pool = await get_or_create_shared_worker_pool(
+        configs=worker_configs,
+        llm=llm,
+        dependencies=dependencies,
+        checkpointer=checkpointer,
+    )
+
     connector_service = dependencies.get("connector_service")
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
