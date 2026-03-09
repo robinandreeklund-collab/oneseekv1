@@ -116,12 +116,9 @@ def build_agent_resolver_node(
             trace["agent"] = {
                 "mode": "llm_gate",
                 "phase": str(live_cfg.get("phase") or "shadow"),
-                "top1": chosen_name,
-                "top2": None,
-                "margin": None,
-                "shortlist_size": len(all_candidates),
                 "selected": selected_payload[0].get("name") if selected_payload else None,
                 "reasoning": str(gate_result.get("reasoning") or ""),
+                "candidates_shown": len(all_candidates),
             }
             logger.info(
                 "llm-gate agent-selection domain=%s chosen=%s candidates=%d",

@@ -806,8 +806,8 @@ class LlmGateIntentResult(BaseModel):
     thinking: str = Field(
         ...,
         description=(
-            "Intern resonering om vilken domän som bäst matchar "
-            "användarens fråga och varför."
+            "Din interna resonering PÅ SVENSKA om vilken domän som bäst matchar "
+            "användarens fråga och varför. Skriv alltid på svenska."
         ),
     )
     chosen: str = Field(
@@ -816,7 +816,7 @@ class LlmGateIntentResult(BaseModel):
     )
     reasoning: str = Field(
         ...,
-        description="Kort motivering på svenska.",
+        description="Kort motivering på svenska som förklarar ditt val.",
     )
 
 
@@ -826,8 +826,8 @@ class LlmGateAgentResult(BaseModel):
     thinking: str = Field(
         ...,
         description=(
-            "Intern resonering om vilken agent som bäst matchar "
-            "frågan inom den valda domänen."
+            "Din interna resonering PÅ SVENSKA om vilken agent som bäst matchar "
+            "frågan inom den valda domänen. Skriv alltid på svenska."
         ),
     )
     chosen: str = Field(
@@ -836,7 +836,7 @@ class LlmGateAgentResult(BaseModel):
     )
     reasoning: str = Field(
         ...,
-        description="Kort motivering på svenska.",
+        description="Kort motivering på svenska som förklarar ditt val.",
     )
 
 
@@ -846,8 +846,8 @@ class LlmGateToolResult(BaseModel):
     thinking: str = Field(
         ...,
         description=(
-            "Intern resonering om vilka verktyg som behövs "
-            "för att besvara frågan för den valda agenten."
+            "Din interna resonering PÅ SVENSKA om vilka verktyg som behövs "
+            "för att besvara frågan. Skriv alltid på svenska."
         ),
     )
     chosen: list[str] = Field(
@@ -860,5 +860,5 @@ class LlmGateToolResult(BaseModel):
     )
     reasoning: str = Field(
         ...,
-        description="Kort motivering på svenska.",
+        description="Kort motivering på svenska som förklarar ditt val.",
     )

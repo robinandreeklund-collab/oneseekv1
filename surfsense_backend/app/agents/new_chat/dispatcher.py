@@ -239,6 +239,29 @@ async def dispatch_route_with_trace(
             return candidate_route
         return route
 
+    # ── LLM Gate Mode: skip ALL retrieval/embedding scoring ──
+    # When LLM gate is active the intent node inside the graph will do
+    # authoritative domain routing via a pure LLM call.  The dispatcher
+    # only needs to provide a lightweight base-route hint from the intent
+    # definitions — NO embedding scoring, NO reranker, NO confidence bands.
+    if llm_gate_mode:
+        # Try to derive a hint from domain_to_route() on the first definition
+        for defn in normalized_intents:
+            intent_id = str(defn.get("intent_id") or "").strip()
+            if intent_id:
+                try:
+                    base_route = domain_to_route(intent_id)
+                    return base_route, {
+                        "source": "llm_gate_hint",
+                        "reason": f"llm_gate_dispatcher_hint:{intent_id}",
+                    }
+                except Exception:
+                    continue
+        return Route.KUNSKAP, {
+            "source": "llm_gate_hint",
+            "reason": "llm_gate_default_kunskap",
+        }
+
     retrieval_decision = resolve_route_from_intents(
         query=text,
         definitions=normalized_intents,
@@ -255,53 +278,11 @@ async def dispatch_route_with_trace(
                 "reason": "compare_requires_explicit_/compare_command",
                 "candidates": retrieval_decision.candidates,
             }
-        source = retrieval_decision.source
-        if llm_gate_mode:
-            source = "intent_retrieval_llm_gate"
         return retrieval_decision.route, {
-            "source": source,
+            "source": retrieval_decision.source,
             "confidence": retrieval_decision.confidence,
             "reason": retrieval_decision.reason,
             "candidates": retrieval_decision.candidates,
-        }
-
-    # ── LLM Gate shortcut: skip the expensive LLM tiebreak ──
-    # When LLM gate is active the intent node inside the graph will do
-    # authoritative domain routing.  The dispatcher only needs to provide
-    # a reasonable base-route hint.  Use the best retrieval candidate or
-    # domain_to_route() to produce one without an extra LLM call.
-    if llm_gate_mode:
-        if retrieval_decision:
-            base_route = remap_non_explicit_compare(
-                retrieval_decision.route,
-                candidates=retrieval_decision.candidates,
-            )
-            return base_route, {
-                "source": "intent_retrieval_llm_gate",
-                "confidence": max(0.55, retrieval_decision.confidence),
-                "reason": f"llm_gate_hint:{retrieval_decision.reason}",
-                "candidates": retrieval_decision.candidates,
-            }
-        # No retrieval decision at all — try to resolve a base route from
-        # the top intent definition's domain_id via domain_to_route().
-        for defn in normalized_intents:
-            intent_id = str(defn.get("intent_id") or "").strip()
-            if intent_id:
-                try:
-                    base_route = domain_to_route(intent_id)
-                    return base_route, {
-                        "source": "domain_route_llm_gate",
-                        "confidence": 0.50,
-                        "reason": f"llm_gate_domain_fallback:{intent_id}",
-                        "candidates": [],
-                    }
-                except Exception:
-                    continue
-        return Route.KUNSKAP, {
-            "source": "llm_gate_default",
-            "confidence": 0.45,
-            "reason": "llm_gate_no_retrieval_hint",
-            "candidates": [],
         }
 
     try:

@@ -304,7 +304,6 @@ def build_intent_resolver_node(
                         (matched_candidate or {}).get("route") or chosen_id
                     ),
                     "reason": str(gate_result.get("reasoning") or "LLM gate valde intent."),
-                    "confidence": 0.85,
                 }
             intent_ranked = []
             top1_row = None
@@ -316,7 +315,7 @@ def build_intent_resolver_node(
                 for item in candidates
                 if str(item.get("intent_id") or "").strip()
             }
-            # Skip the normal LLM resolver block below
+            # Skip the normal LLM resolver block AND coerce override below
             should_resolve_with_llm = False
 
         else:
@@ -411,7 +410,9 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
-        if coerce_resolved_intent_fn is not None:
+        # When LLM gate mode is active, the LLM made the authoritative
+        # decision — do NOT let coerce_resolved_intent_fn override it.
+        if coerce_resolved_intent_fn is not None and not llm_gate_mode:
             try:
                 coerced_resolved = coerce_resolved_intent_fn(
                     resolved if isinstance(resolved, dict) else {},
@@ -487,15 +488,25 @@ def build_intent_resolver_node(
             "orchestration_phase": "select_agent",
             "live_routing_trace": {
                 **dict(state.get("live_routing_trace") or {}),
-                "intent": {
-                    "mode": "llm_gate" if llm_gate_mode else ("llm_shortlist" if use_intent_shortlist else "llm_full"),
-                    "phase": str(live_cfg.get("phase") or "shadow"),
-                    "top1": (top1_row or {}).get("intent_id"),
-                    "top2": (top2_row or {}).get("intent_id"),
-                    "margin": intent_margin,
-                    "shortlist_size": len(llm_candidates),
-                    "selected": str((resolved or {}).get("intent_id") or ""),
-                },
+                "intent": (
+                    {
+                        "mode": "llm_gate",
+                        "phase": str(live_cfg.get("phase") or "shadow"),
+                        "selected": str((resolved or {}).get("intent_id") or ""),
+                        "reasoning": str((resolved or {}).get("reason") or ""),
+                        "candidates_shown": len(llm_candidates),
+                    }
+                    if llm_gate_mode
+                    else {
+                        "mode": "llm_shortlist" if use_intent_shortlist else "llm_full",
+                        "phase": str(live_cfg.get("phase") or "shadow"),
+                        "top1": (top1_row or {}).get("intent_id"),
+                        "top2": (top2_row or {}).get("intent_id"),
+                        "margin": intent_margin,
+                        "shortlist_size": len(llm_candidates),
+                        "selected": str((resolved or {}).get("intent_id") or ""),
+                    }
+                ),
             },
         }
         if new_user_turn:

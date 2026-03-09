@@ -94,6 +94,9 @@ async def llm_gate_select_intent(
     system_prompt = (
         "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
         "från listan som bäst matchar frågan.\n\n"
+        "Tänk ALLTID på svenska i din interna resonering.\n\n"
+        "Du fattar beslutet — det finns inga poäng, rerankers eller confidence-scorer. "
+        "DU är den som avgör vilken domän som passar bäst baserat på frågan.\n\n"
         "Domäner:\n" + _format_candidate_list(items) + "\n\n"
         "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
         "INTE ett nummer."
@@ -200,6 +203,9 @@ async def llm_gate_select_agent(
     system_prompt = (
         "Du är en agent-router. Givet användarens fråga och den valda domänen, "
         "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
+        "Tänk ALLTID på svenska i din interna resonering.\n\n"
+        "Du fattar beslutet — det finns inga poäng, rerankers eller confidence-scorer. "
+        "DU är den som avgör vilken agent som passar bäst baserat på frågan.\n\n"
         f"Vald domän: {chosen_domain}\n\n"
         "Agenter:\n" + _format_candidate_list(items) + "\n\n"
         "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
@@ -308,6 +314,9 @@ async def llm_gate_select_tools(
     system_prompt = (
         "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
         "välj de verktyg (1-3 st) från listan som behövs för att besvara frågan.\n\n"
+        "Tänk ALLTID på svenska i din interna resonering.\n\n"
+        "Du fattar beslutet — det finns inga poäng, rerankers eller confidence-scorer. "
+        "DU är den som avgör vilka verktyg som behövs baserat på frågan.\n\n"
         f"Vald agent: {chosen_agent}\n\n"
         "Verktyg:\n" + _format_candidate_list(items) + "\n\n"
         "VIKTIGT: Svara med de exakta verktygs-ID:na. "
