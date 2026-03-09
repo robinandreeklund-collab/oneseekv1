@@ -223,7 +223,20 @@ def build_agents_from_metadata(
         if flow_tools:
             primary_namespaces = _resolve_namespaces_from_flow_tools(flow_tools)
 
-        # Fallback: derive from the namespace field if flow_tools didn't resolve
+        # Fallback: use primary_namespaces from seed/metadata if present
+        if not primary_namespaces:
+            seed_ns = meta.get("primary_namespaces", [])
+            if isinstance(seed_ns, list) and seed_ns:
+                prefixes: list[str] = []
+                for ns in seed_ns:
+                    if isinstance(ns, list) and len(ns) >= 2:
+                        prefixes.append("/".join(ns))
+                    elif isinstance(ns, str):
+                        prefixes.append(ns)
+                if prefixes:
+                    primary_namespaces = tuple(prefixes)
+
+        # Fallback: derive from the namespace field if nothing resolved yet
         if not primary_namespaces:
             ns_parts = meta.get("namespace", [])
             if isinstance(ns_parts, list) and len(ns_parts) >= 2:
