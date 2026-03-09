@@ -214,7 +214,8 @@ def _resolve_llm_choice(raw: str, sorted_keys: list[str]) -> str:
     1. Tries exact match first
     2. Tries case-insensitive match
     3. Tries partial/substring match
-    4. Falls back to interpreting the response as a 1-based list index
+    4. Tries hyphen-normalized match (e.g. "trafik-analys-transport" ≈ "trafikanalys-transport")
+    5. Falls back to interpreting the response as a 1-based list index
     """
     if not raw:
         return ""
@@ -230,7 +231,13 @@ def _resolve_llm_choice(raw: str, sorted_keys: list[str]) -> str:
     for key in sorted_keys:
         if lower in key.lower() or key.lower() in lower:
             return key
-    # 4. Numeric → 1-based index
+    # 4. Hyphen-normalized match — the LLM often inserts or removes hyphens
+    #    (e.g. "trafik-analys-transport" vs "trafikanalys-transport")
+    norm = lower.replace("-", "")
+    for key in sorted_keys:
+        if key.lower().replace("-", "") == norm:
+            return key
+    # 5. Numeric → 1-based index
     try:
         idx = int(raw) - 1
         if 0 <= idx < len(sorted_keys):
