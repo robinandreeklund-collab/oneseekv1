@@ -381,6 +381,11 @@ class MetadataOptimizer:
         # Lower temperature for consistent, well-structured JSON output
         kwargs["temperature"] = 0.3
 
+        # Reset global litellm.api_base to prevent cross-provider pollution
+        # — ChatLiteLLM mutates it globally, so a previous provider's base
+        # URL can leak into this direct acompletion call.
+        litellm.api_base = None
+
         logger.info(
             "Optimizer LLM call: model=%s, prompt_len=%d",
             model_string,
@@ -831,6 +836,9 @@ class IntentLayerOptimizer:
                 kwargs[key] = value
 
         kwargs["temperature"] = 0.3
+
+        # Reset global litellm.api_base to prevent cross-provider pollution
+        litellm.api_base = None
 
         logger.info(
             "Intent layer optimizer LLM call: model=%s, prompt_len=%d",
