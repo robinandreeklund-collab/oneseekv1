@@ -286,6 +286,7 @@ async def llm_gate_select_tools(
     """Select tool(s) using a structured LLM call.
 
     ``candidates`` should be dicts with at least ``tool_id`` and ``description``.
+    The LLM may select 1-3 tools when multiple are needed to answer the query.
     Returns ``{"chosen": [tool_id, ...], "reasoning": str, "candidates_shown": int}``.
     """
     sorted_ids: list[str] = []
@@ -306,19 +307,20 @@ async def llm_gate_select_tools(
 
     system_prompt = (
         "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
-        "välj EXAKT ETT verktyg från listan som bäst kan besvara frågan.\n\n"
+        "välj de verktyg (1-3 st) från listan som behövs för att besvara frågan.\n\n"
         f"Vald agent: {chosen_agent}\n\n"
         "Verktyg:\n" + _format_candidate_list(items) + "\n\n"
-        "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
-        "INTE ett nummer."
+        "VIKTIGT: Svara med de exakta verktygs-ID:na. "
+        "Välj bara de verktyg som faktiskt behövs — ofta räcker 1, "
+        "men välj 2-3 om frågan kräver data från flera verktyg."
     )
     user_prompt = f"Fråga: {query}"
 
-    chosen = ""
+    chosen_list: list[str] = []
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateToolResult, "llm_gate_tool_result"
@@ -333,7 +335,7 @@ async def llm_gate_select_tools(
             _raw = str(getattr(message, "content", "") or "")
             try:
                 _structured = LlmGateToolResult.model_validate_json(_raw)
-                chosen = _structured.chosen
+                chosen_list = list(_structured.chosen)
                 reasoning = _structured.reasoning
             except Exception:
                 import json
@@ -343,15 +345,19 @@ async def llm_gate_select_tools(
                 if m:
                     try:
                         parsed = json.loads(m.group())
-                        chosen = str(parsed.get("chosen") or "").strip()
+                        raw_chosen = parsed.get("chosen") or []
+                        if isinstance(raw_chosen, list):
+                            chosen_list = [str(t).strip() for t in raw_chosen if str(t).strip()]
+                        elif isinstance(raw_chosen, str) and raw_chosen.strip():
+                            chosen_list = [raw_chosen.strip()]
                         reasoning = str(parsed.get("reasoning") or "").strip()
                     except json.JSONDecodeError:
                         pass
-                if not chosen:
+                if not chosen_list:
                     for line in _raw.strip().splitlines():
                         ls = line.strip()
                         if ls.upper().startswith("VERKTYG:"):
-                            chosen = ls.split(":", 1)[1].strip()
+                            chosen_list.append(ls.split(":", 1)[1].strip())
                         elif ls.upper().startswith("MOTIVERING:"):
                             reasoning = ls.split(":", 1)[1].strip()
         else:
@@ -359,26 +365,32 @@ async def llm_gate_select_tools(
 
             prompt = system_prompt + "\n\n" + user_prompt + (
                 "\n\nSvara EXAKT i detta format (inget annat):\n"
-                "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
-                "VERKTYG: <tool_id>\n"
+                "MOTIVERING: <en mening som förklarar varför dessa verktyg behövs>\n"
+                "VERKTYG: <tool_id_1>\n"
+                "VERKTYG: <tool_id_2>  (om fler behövs)\n"
             )
             response = await nexus_llm_call(prompt)
             for line in response.strip().splitlines():
                 ls = line.strip()
                 if ls.upper().startswith("VERKTYG:"):
-                    chosen = ls.split(":", 1)[1].strip()
+                    chosen_list.append(ls.split(":", 1)[1].strip())
                 elif ls.upper().startswith("MOTIVERING:"):
                     reasoning = ls.split(":", 1)[1].strip()
 
-        if chosen:
-            chosen = _resolve_llm_choice(chosen, sorted_ids)
+        # Resolve each chosen tool against the candidate list
+        resolved_list: list[str] = []
+        for raw_tool in chosen_list[:3]:
+            resolved = _resolve_llm_choice(raw_tool, sorted_ids)
+            if resolved and resolved not in resolved_list:
+                resolved_list.append(resolved)
+        chosen_list = resolved_list
     except Exception as exc:
         logger.warning("LLM gate tool step failed: %s", exc)
-        chosen = sorted_ids[0] if sorted_ids else ""
+        chosen_list = [sorted_ids[0]] if sorted_ids else []
         reasoning = f"LLM-anrop misslyckades: {exc}"
 
     return {
-        "chosen": [chosen] if chosen else [],
+        "chosen": chosen_list,
         "reasoning": reasoning,
         "candidates_shown": len(items),
     }

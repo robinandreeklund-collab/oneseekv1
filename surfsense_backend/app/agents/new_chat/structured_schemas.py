@@ -846,13 +846,17 @@ class LlmGateToolResult(BaseModel):
     thinking: str = Field(
         ...,
         description=(
-            "Intern resonering om vilket verktyg som bäst kan "
-            "besvara frågan för den valda agenten."
+            "Intern resonering om vilka verktyg som behövs "
+            "för att besvara frågan för den valda agenten."
         ),
     )
-    chosen: str = Field(
+    chosen: list[str] = Field(
         ...,
-        description="Exakt verktygs-ID från kandidatlistan, t.ex. 'smhi_temperatur'.",
+        description=(
+            "Lista med exakta verktygs-ID:n från kandidatlistan, "
+            "t.ex. ['smhi_temperatur', 'smhi_prognos']. "
+            "Välj 1-3 verktyg som behövs."
+        ),
     )
     reasoning: str = Field(
         ...,
