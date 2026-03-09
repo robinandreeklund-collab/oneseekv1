@@ -2514,16 +2514,31 @@ async def create_supervisor_agent(
         if normalized_route in {"jämförelse", "compare", "mixed"}:
             return resolved
 
-        # Previously, hardcoded heuristic overrides forced weather/traffic/
-        # marketplace/map/filesystem queries back to "kunskap" or "skapande",
-        # undoing the dynamic domain-level resolution from the registry.
-        # Now we trust the DB-driven intent resolution.  The agent-level
-        # routing (_route_default_agent_for_intent) still picks the correct
-        # specialist agent (väder, trafik, marknad, kod, kartor) based on
-        # query content, so the right tools are invoked regardless.
-        #
-        # Only filesystem/sandbox override is kept because it crosses the
-        # route boundary (kunskap → skapande) which affects tool availability.
+        # Domain-to-route override: When intent resolution identifies a
+        # specialized domain (e.g. väder-och-klimat), the fallback_route
+        # is still "kunskap" for backward compat with the 4-route enum.
+        # We override the route here so the agent resolver picks the
+        # correct specialist agent instead of the generic kunskap agent.
+        _DOMAIN_ROUTE_OVERRIDES: dict[str, str] = {
+            "väder-och-klimat": "väder",
+            "trafik-och-transport": "trafik",
+            "ekonomi-och-skatter": "statistik-ekonomi",
+            "arbetsmarknad": "statistik-arbetsmarknad",
+            "befolkning-och-demografi": "statistik-befolkning",
+            "utbildning": "statistik-utbildning",
+            "näringsliv-och-bolag": "bolag",
+            "fastighet-och-mark": "statistik-fastighet",
+            "energi-och-miljö": "statistik-miljo",
+            "handel-och-marknad": "marknad",
+            "politik-och-beslut": "riksdagen",
+            "hälsa-och-vård": "statistik-halsa",
+            "rättsväsende": "kunskap",
+        }
+        intent_id = str(resolved.get("intent_id") or "").strip().lower()
+        domain_route = _DOMAIN_ROUTE_OVERRIDES.get(intent_id)
+        if domain_route and normalized_route in {"kunskap", "knowledge"}:
+            resolved["route"] = domain_route
+
         if sandbox_enabled and _has_filesystem_intent(query):
             override_route = "skapande"
             override_reason = "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
