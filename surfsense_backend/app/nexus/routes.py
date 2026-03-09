@@ -22,6 +22,7 @@ from app.nexus.schemas import (
     CalibrationParamsResponse,
     ConfusionPair,
     DarkMatterCluster,
+    DomainAgentGenerateRequest,
     ECEReport,
     ForgeGenerateRequest,
     ForgeRunResult,
@@ -1265,6 +1266,75 @@ async def intent_layer_apply(
 ):
     """Apply approved intent layer suggestions as DB overrides."""
     optimizer = _get_intent_optimizer()
+    result = await optimizer.apply_suggestions(
+        session,
+        request.suggestions,
+        user_id=user.id if user else None,
+    )
+    return result
+
+
+# ------------------------------------------------------------------
+# Domain-Scoped Agent Optimizer
+# ------------------------------------------------------------------
+
+_domain_agent_optimizer = None
+
+
+def _get_domain_agent_optimizer():
+    global _domain_agent_optimizer
+    if _domain_agent_optimizer is None:
+        from app.nexus.optimizer import DomainAgentOptimizer
+
+        _domain_agent_optimizer = DomainAgentOptimizer()
+    return _domain_agent_optimizer
+
+
+@nexus_router.post(
+    "/optimizer/domain-agents/generate",
+    response_model=IntentLayerResultResponse,
+)
+async def domain_agent_generate(
+    request: DomainAgentGenerateRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Generate optimized metadata for agents within a specific domain.
+
+    Focuses on maximizing separation between agents in the same domain,
+    e.g. the 4 agents under "trafik-och-transport".
+    """
+    optimizer = _get_domain_agent_optimizer()
+    result = await optimizer.generate_suggestions(
+        session, request.domain_id, llm_config_id=request.llm_config_id
+    )
+    return IntentLayerResultResponse(
+        total_domains=result.total_domains,
+        total_agents=result.total_agents,
+        suggestions=[
+            {
+                "item_id": s.item_id,
+                "item_type": s.item_type,
+                "current": s.current,
+                "suggested": s.suggested,
+                "reasoning": s.reasoning,
+                "fields_changed": s.fields_changed,
+            }
+            for s in result.suggestions
+        ],
+        model_used=result.model_used,
+        error=result.error,
+    )
+
+
+@nexus_router.post("/optimizer/domain-agents/apply")
+async def domain_agent_apply(
+    request: IntentLayerApplyRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    """Apply approved domain-scoped agent suggestions as DB overrides."""
+    optimizer = _get_domain_agent_optimizer()
     result = await optimizer.apply_suggestions(
         session,
         request.suggestions,
