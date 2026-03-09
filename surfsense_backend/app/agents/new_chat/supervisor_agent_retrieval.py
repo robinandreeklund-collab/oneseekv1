@@ -63,6 +63,10 @@ def _build_agent_rerank_text(definition: AgentDefinition) -> str:
         parts.append(definition.description)
     if definition.keywords:
         parts.append("Keywords: " + ", ".join(definition.keywords))
+    if definition.core_activity:
+        parts.append("Activity: " + definition.core_activity)
+    if definition.unique_scope:
+        parts.append("Scope: " + definition.unique_scope)
     return "\n".join(part for part in parts if part)
 
 

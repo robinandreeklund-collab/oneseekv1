@@ -949,6 +949,19 @@ class NexusApiService {
 			body: JSON.stringify({ suggestions }),
 		});
 
+	// Domain-Scoped Agent Optimizer
+	domainAgentGenerate = (request: { domain_id: string; llm_config_id?: number }) =>
+		fetchNexus<IntentLayerResultResponse>("/optimizer/domain-agents/generate", {
+			method: "POST",
+			body: JSON.stringify(request),
+		});
+
+	domainAgentApply = (suggestions: Record<string, unknown>[]) =>
+		fetchNexus<IntentLayerApplyResponse>("/optimizer/domain-agents/apply", {
+			method: "POST",
+			body: JSON.stringify({ suggestions }),
+		});
+
 	// Dynamic domain/agent metadata
 	getDomainMetadata = () =>
 		fetchNexus<{ domains: DomainMetadata[] }>("/config/domains");

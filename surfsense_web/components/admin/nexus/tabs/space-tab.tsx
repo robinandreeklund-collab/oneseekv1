@@ -60,9 +60,10 @@ export function SpaceTab() {
 		const zoneSet = new Set<string>();
 		for (const p of snapshot.points) {
 			if (p.namespace) {
-				// Use first 2 segments as namespace prefix
+				// Use up to 3 segments for agent-aligned namespace prefix
 				const parts = (p.namespace as string).split("/");
-				nsSet.add(parts.length >= 2 ? `${parts[0]}/${parts[1]}` : p.namespace as string);
+				const depth = parts.length > 3 ? 3 : Math.min(3, parts.length);
+				nsSet.add(depth >= 2 ? parts.slice(0, depth).join("/") : (p.namespace as string));
 			}
 			zoneSet.add(p.zone);
 		}

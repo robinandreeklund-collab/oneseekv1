@@ -100,6 +100,8 @@ def _route_default_agent(
         "trafik-tag": "trafik-tag",
         "trafik-vag": "trafik-vag",
         "trafik-vagvader": "trafik-vagvader",
+        "trafikanalys": "trafikanalys-transport",
+        "trafikanalys-transport": "trafikanalys-transport",
         "statistik": "statistik-ekonomi",
         "statistik-ekonomi": "statistik-ekonomi",
         "statistik-befolkning": "statistik-befolkning",

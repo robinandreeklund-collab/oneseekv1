@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.db import SearchSpaceMembership, User, get_async_session
+from app.db import DomainAgentDefinition, SearchSpaceMembership, User, get_async_session
 from app.services.agent_definition_service import (
     delete_agent as delete_agent_def,
     get_agent as get_agent_def,
@@ -1203,6 +1203,59 @@ async def delete_agent(
         )
     await _bump_and_invalidate(session)
     return {"status": "ok"}
+
+
+class ResetAgentToSeedRequest(BaseModel):
+    agent_id: str
+
+
+@router.post("/flow-graph/agent/reset-to-seed")
+async def reset_agent_to_seed(
+    request: ResetAgentToSeedRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """Remove DB override for an agent so it reverts to seed defaults.
+
+    If agent_id is "__all__", all DB overrides are removed.
+    Returns the seed default payload for the agent(s).
+    """
+    await _require_admin(session, user)
+    from app.seeds.agent_definitions import get_default_agent_definitions
+
+    defaults = get_default_agent_definitions()
+
+    if request.agent_id == "__all__":
+        # Remove ALL agent DB overrides
+        result = await session.execute(
+            select(DomainAgentDefinition)
+        )
+        rows = result.scalars().all()
+        count = 0
+        for row in rows:
+            await session.delete(row)
+            count += 1
+        await _bump_and_invalidate(session)
+        return {"status": "ok", "reset_count": count, "agents": list(defaults.keys())}
+
+    # Single agent reset
+    result = await session.execute(
+        select(DomainAgentDefinition).filter(
+            DomainAgentDefinition.agent_id == request.agent_id
+        )
+    )
+    existing = result.scalars().first()
+    if existing:
+        await session.delete(existing)
+
+    seed = defaults.get(request.agent_id)
+    await _bump_and_invalidate(session)
+    return {
+        "status": "ok",
+        "agent_id": request.agent_id,
+        "had_override": existing is not None,
+        "seed_default": seed is not None,
+    }
 
 
 @router.patch("/flow-graph/agent-routes")

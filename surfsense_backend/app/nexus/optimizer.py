@@ -679,10 +679,15 @@ class IntentLayerOptimizer:
         user_id: Any = None,
     ) -> dict[str, Any]:
         """Apply approved intent layer suggestions to DB."""
+        from app.services.agent_definition_service import upsert_agent
         from app.services.agent_metadata_service import (
             upsert_global_agent_metadata_overrides,
         )
         from app.services.intent_domain_service import upsert_intent_domain
+        from app.services.registry_events import (
+            bump_registry_version,
+            notify_registry_changed,
+        )
 
         domain_count = 0
         agent_count = 0
@@ -703,6 +708,15 @@ class IntentLayerOptimizer:
                 domain_count += 1
 
             elif item_type == "agent":
+                # Write to agent_definitions table (used by GraphRegistry /
+                # admin flow routing) as well as prompt-based overrides
+                # (used by NEXUS runtime).
+                await upsert_agent(
+                    session,
+                    agent_id=item_id,
+                    payload=item,
+                    updated_by_id=user_id,
+                )
                 await upsert_global_agent_metadata_overrides(
                     session,
                     [(item_id, item)],
@@ -711,7 +725,9 @@ class IntentLayerOptimizer:
                 agent_count += 1
 
         if domain_count or agent_count:
+            new_version = await bump_registry_version(session)
             await session.commit()
+            await notify_registry_changed(session, new_version)
             # Invalidate caches
             invalidate_cache()
             try:
@@ -925,6 +941,304 @@ class IntentLayerOptimizer:
         self, current: dict[str, Any], item: dict[str, Any]
     ) -> tuple[dict[str, Any], list[str]]:
         """Compare current and suggested metadata, return (suggested, changed_fields)."""
+        suggested: dict[str, Any] = {}
+        changed: list[str] = []
+        for field_name in (
+            "description",
+            "keywords",
+            "excludes",
+            "main_identifier",
+            "core_activity",
+            "unique_scope",
+        ):
+            if field_name in item:
+                new_val = item[field_name]
+                old_val = current.get(field_name)
+                suggested[field_name] = new_val
+                if new_val != old_val:
+                    changed.append(field_name)
+        return suggested, changed
+
+
+# ---------------------------------------------------------------------------
+# Domain-Scoped Agent Optimizer
+# ---------------------------------------------------------------------------
+
+_DOMAIN_AGENT_SYSTEM_PROMPT = """\
+Du är en expert på information retrieval, embedding-optimering och agent-routing.
+Din uppgift är att optimera metadata för alla agenter inom EN specifik domän,
+så att de skiljer sig maximalt från varandra i embedding-rymden.
+
+KONTEXT:
+Varje domän (t.ex. "Trafik & Transport") kan ha flera agenter som hanterar
+olika delaspekter. När en fråga routas till domänen väljs EN agent baserat på
+embedding-likhet mot agentens metadata. Om agenterna har överlappande keywords
+eller liknande descriptions hamnar de för nära varandra → felrouting.
+
+REGLER:
+- Keywords MÅSTE vara unika per agent — ingen keyword får förekomma i flera agenter
+- Description ska tydligt skilja agenterna: vad den gör OCH vad den INTE gör
+- main_identifier ska vara en kort, unik etikett (t.ex. "Tågtrafik-agent")
+- core_activity ska beskriva agentens HUVUDfunktion i en mening
+- unique_scope ska förklara vad som skiljer just denna agent från de andra
+- excludes ska lista termer/ämnen som INTE ska matcha denna agent
+  (typiskt: termer som tillhör en systeragent)
+- Tänk på svenska sammansatta ord: "tågförseningar" bör matcha tåg-agenten,
+  "vägarbeten" bör matcha väg-agenten
+- Keyword-matchning använder \\b word-boundary regex, men substringsmatchning
+  finns också (≥4 tecken) — undvik korta generiska termer
+
+STRATEGI:
+1. Identifiera överlapp mellan agenterna
+2. Flytta överlappande keywords till den mest lämpliga agenten
+3. Lägg till excludes som pekar bort trafik från fel agent
+4. Gör descriptions mer specifika — undvik vaga formuleringar
+5. Kontrollera att main_identifier och core_activity är unika per agent
+
+Svara ENBART med valid JSON. Ingen markdown utanför JSON."""
+
+_DOMAIN_AGENT_USER_TEMPLATE = """\
+Domän: {domain_label} (domain_id: {domain_id})
+Beskrivning: {domain_description}
+
+Denna domän har {agent_count} agenter som behöver optimeras:
+
+{agents_json}
+
+Optimera metadata för alla {agent_count} agenter så de skiljer sig maximalt.
+
+Svara med en JSON-objekt:
+{{
+  "agents": [
+    {{
+      "agent_id": "...",
+      "description": "optimerad description",
+      "keywords": ["lista", "av", "keywords"],
+      "excludes": ["termer som INTE ska matcha"],
+      "main_identifier": "...",
+      "core_activity": "...",
+      "unique_scope": "...",
+      "reasoning": "kort motivering av ändringar"
+    }}
+  ]
+}}
+
+Returnera exakt {agent_count} agenter."""
+
+
+class DomainAgentOptimizer:
+    """LLM-powered optimizer for agents within a single domain."""
+
+    async def generate_suggestions(
+        self,
+        session: AsyncSession,
+        domain_id: str,
+        *,
+        llm_config_id: int = -24,
+    ) -> IntentLayerResult:
+        """Generate optimized metadata for agents in a specific domain."""
+        from app.services.agent_metadata_service import get_effective_agent_metadata
+        from app.services.intent_domain_service import get_effective_intent_domains
+
+        domains = await get_effective_intent_domains(session)
+        agents = await get_effective_agent_metadata(session)
+
+        # Find the target domain
+        domain_meta = None
+        for d in domains:
+            if d.get("domain_id") == domain_id:
+                domain_meta = d
+                break
+
+        if not domain_meta:
+            return IntentLayerResult(error=f"Domän '{domain_id}' hittades inte")
+
+        # Filter agents belonging to this domain
+        domain_agents = [
+            a
+            for a in agents
+            if domain_id in (a.get("routes") or [])
+        ]
+
+        if not domain_agents:
+            return IntentLayerResult(
+                error=f"Inga agenter hittade för domän '{domain_id}'"
+            )
+
+        # Build metadata for LLM
+        agent_meta = self._build_agent_meta(domain_agents)
+
+        # Build prompt
+        prompt = _DOMAIN_AGENT_USER_TEMPLATE.format(
+            domain_id=domain_id,
+            domain_label=domain_meta.get("label", domain_id),
+            domain_description=domain_meta.get("description", ""),
+            agent_count=len(agent_meta),
+            agents_json=json.dumps(agent_meta, ensure_ascii=False, indent=2),
+        )
+
+        # Call LLM
+        try:
+            model_string, response_text = await self._call_llm(
+                _DOMAIN_AGENT_SYSTEM_PROMPT, prompt, llm_config_id
+            )
+        except Exception as e:
+            logger.error("Domain agent optimizer LLM call failed: %s", e)
+            return IntentLayerResult(
+                total_agents=len(domain_agents),
+                error=str(e),
+            )
+
+        # Parse response
+        suggestions = self._parse_response(response_text, agent_meta)
+
+        return IntentLayerResult(
+            total_domains=1,
+            total_agents=len(domain_agents),
+            suggestions=suggestions,
+            model_used=model_string,
+        )
+
+    async def apply_suggestions(
+        self,
+        session: AsyncSession,
+        suggestions: list[dict[str, Any]],
+        *,
+        user_id: Any = None,
+    ) -> dict[str, Any]:
+        """Apply approved agent suggestions to DB."""
+        from app.services.agent_definition_service import upsert_agent
+        from app.services.agent_metadata_service import (
+            upsert_global_agent_metadata_overrides,
+        )
+        from app.services.registry_events import (
+            bump_registry_version,
+            notify_registry_changed,
+        )
+
+        agent_count = 0
+        for item in suggestions:
+            item_id = item.get("item_id", "")
+            if not item_id:
+                continue
+            # Write to agent_definitions table (used by GraphRegistry /
+            # admin flow routing) as well as prompt-based overrides
+            # (used by NEXUS runtime).
+            await upsert_agent(
+                session,
+                agent_id=item_id,
+                payload=item,
+                updated_by_id=user_id,
+            )
+            await upsert_global_agent_metadata_overrides(
+                session,
+                [(item_id, item)],
+                updated_by_id=user_id,
+            )
+            agent_count += 1
+
+        if agent_count:
+            new_version = await bump_registry_version(session)
+            await session.commit()
+            await notify_registry_changed(session, new_version)
+            invalidate_cache()
+            try:
+                from app.agents.new_chat.bigtool_store import clear_tool_caches
+
+                clear_tool_caches()
+            except (ImportError, AttributeError):
+                pass
+
+        return {"applied_domains": 0, "applied_agents": agent_count, "skipped": 0}
+
+    def _build_agent_meta(
+        self, agents: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        result = []
+        for a in agents:
+            result.append(
+                {
+                    "agent_id": a.get("agent_id", ""),
+                    "label": a.get("label", ""),
+                    "description": a.get("description", ""),
+                    "keywords": a.get("keywords", [])[:40],
+                    "excludes": a.get("excludes", [])[:15],
+                    "main_identifier": a.get("main_identifier", ""),
+                    "core_activity": a.get("core_activity", ""),
+                    "unique_scope": a.get("unique_scope", ""),
+                    "geographic_scope": a.get("geographic_scope", ""),
+                }
+            )
+        return result
+
+    async def _call_llm(
+        self, system_prompt: str, user_prompt: str, config_id: int
+    ) -> tuple[str, str]:
+        """Call LLM — delegates to IntentLayerOptimizer's method."""
+        optimizer = IntentLayerOptimizer()
+        return await optimizer._call_llm_with_system(
+            system_prompt, user_prompt, config_id
+        )
+
+    def _parse_response(
+        self,
+        response_text: str,
+        agent_meta: list[dict[str, Any]],
+    ) -> list[IntentLayerSuggestion]:
+        """Parse LLM response into agent suggestions."""
+        agent_by_id = {a["agent_id"]: a for a in agent_meta}
+
+        text = response_text.strip()
+        if text.startswith("```"):
+            first_nl = text.find("\n")
+            if first_nl != -1:
+                text = (
+                    text[first_nl + 1 : -3].strip()
+                    if text.endswith("```")
+                    else text[first_nl + 1 :].strip()
+                )
+
+        parsed = None
+        with contextlib.suppress(json.JSONDecodeError):
+            parsed = json.loads(text)
+
+        if parsed is None:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                with contextlib.suppress(json.JSONDecodeError):
+                    parsed = json.loads(text[start : end + 1])
+
+        if parsed is None or not isinstance(parsed, dict):
+            logger.warning("Failed to parse domain agent response as JSON")
+            return []
+
+        suggestions: list[IntentLayerSuggestion] = []
+        for item in parsed.get("agents", []):
+            if not isinstance(item, dict):
+                continue
+            agent_id = item.get("agent_id", "")
+            if agent_id not in agent_by_id:
+                continue
+            current = agent_by_id[agent_id]
+            suggested, changed = self._diff_fields(current, item)
+            if changed:
+                suggestions.append(
+                    IntentLayerSuggestion(
+                        item_id=agent_id,
+                        item_type="agent",
+                        current=current,
+                        suggested=suggested,
+                        reasoning=item.get("reasoning", ""),
+                        fields_changed=changed,
+                    )
+                )
+
+        return suggestions
+
+    def _diff_fields(
+        self, current: dict[str, Any], item: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[str]]:
         suggested: dict[str, Any] = {}
         changed: list[str] = []
         for field_name in (

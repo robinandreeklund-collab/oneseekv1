@@ -365,11 +365,11 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "prompt_key": "bolag",
         "routes": ["näringsliv-och-bolag"],
         "flow_tools": [
-            {"tool_id": "bolagsverket_info_basic", "label": "Företagsinfo"},
-            {"tool_id": "bolagsverket_info_status", "label": "Företagsstatus"},
-            {"tool_id": "bolagsverket_sok_namn", "label": "Sök Namn"},
             {"tool_id": "bolagsverket_sok_orgnr", "label": "Sök Orgnr"},
-            {"tool_id": "bolagsverket_ekonomi_bokslut", "label": "Bokslut"},
+            {"tool_id": "bolagsverket_info_grunddata", "label": "Grunddata"},
+            {"tool_id": "bolagsverket_funktionarer", "label": "Funktionärer"},
+            {"tool_id": "bolagsverket_registrering", "label": "Registrering"},
+            {"tool_id": "bolagsverket_dokument_lista", "label": "Dokumentlista"},
         ],
         "main_identifier": "Bolagsagent",
         "core_activity": "Hamtar foretagsinformation fran Bolagsverket som orgnr, styrelse och ekonomi",
@@ -663,6 +663,72 @@ _DEFAULT_AGENT_METADATA: tuple[dict[str, Any], ...] = (
         "excludes": ["vader", "trafik", "statistik", "bolag"],
     },
     {
+        "agent_id": "trafikanalys-transport",
+        "label": "Trafikanalys Transportstatistik",
+        "description": (
+            "Svensk transportstatistik fran Trafikanalys (trafa.se) — "
+            "fordonsbestand, nyregistreringar, avregistreringar, trafikarbete, "
+            "vagtrafikskador, sjotrafik, luftfart, jarnvag, kollektivtrafik "
+            "och korkort. Statistik och siffror, inte realtidstrafik."
+        ),
+        "keywords": [
+            "trafikanalys",
+            "transportstatistik",
+            "statistik",
+            "fordon",
+            "fordonsstatistik",
+            "kollektivtrafik",
+            "personbilar",
+            "lastbilar",
+            "bussar",
+            "motorcyklar",
+            "nyregistrering",
+            "avregistrering",
+            "trafikarbete",
+            "fordonskilometer",
+            "trafikskador",
+            "trafikdöda",
+            "trafikolyckor",
+            "sjötrafik",
+            "luftfart",
+            "flyg",
+            "järnväg",
+            "tåg",
+            "körkort",
+            "drivmedel",
+            "elbil",
+            "bilbestånd",
+            "fordonsbestånd",
+            "trafa",
+            "hur många bilar",
+            "hur många fordon",
+            "antal bilar",
+            "antal fordon",
+        ],
+        "namespace": ["agents", "trafikanalys", "transport"],
+        "prompt_key": "trafikanalys",
+        "routes": ["trafik-och-transport"],
+        "flow_tools": [
+            {"tool_id": "trafikanalys_fordon_personbilar", "label": "Personbilar"},
+            {"tool_id": "trafikanalys_fordon_lastbilar", "label": "Lastbilar"},
+            {"tool_id": "trafikanalys_fordon_bussar", "label": "Bussar"},
+            {"tool_id": "trafikanalys_fordon_motorcyklar", "label": "Motorcyklar"},
+            {"tool_id": "trafikanalys_fordon_oversikt", "label": "Fordonsöversikt"},
+            {"tool_id": "trafikanalys_korkort", "label": "Körkort"},
+            {"tool_id": "trafikanalys_trafikarbete", "label": "Trafikarbete"},
+            {"tool_id": "trafikanalys_vagtrafik_skador", "label": "Vägtrafikskador"},
+            {"tool_id": "trafikanalys_sjotrafik", "label": "Sjötrafik"},
+            {"tool_id": "trafikanalys_luftfart", "label": "Luftfart"},
+            {"tool_id": "trafikanalys_jarnvag", "label": "Järnväg"},
+            {"tool_id": "trafikanalys_kollektivtrafik", "label": "Kollektivtrafik"},
+        ],
+        "main_identifier": "TrafikanalysAgent",
+        "core_activity": "Hamtar transportstatistik fran Trafikanalys (trafa.se)",
+        "unique_scope": "Svensk transportstatistik — fordon, trafik, olyckor, sjo, luft, jarnvag, korkort",
+        "geographic_scope": "Sverige",
+        "excludes": ["vader", "realtid", "storning", "vagarbete"],
+    },
+    {
         "agent_id": "syntes",
         "label": "Syntes",
         "description": "Syntes och jamforelser av flera kallor och modeller.",
@@ -832,6 +898,10 @@ def normalize_agent_metadata_payload(
         _normalize_text(payload.get("geographic_scope")) or fallback_geographic_scope
     )
     excludes = _normalize_text_list(payload.get("excludes")) or fallback_excludes
+    # Preserve primary_namespaces for NEXUS namespace-based tool filtering
+    primary_namespaces = payload.get("primary_namespaces") or default_payload.get(
+        "primary_namespaces", []
+    )
     return {
         "agent_id": resolved_agent_id,
         "label": label,
@@ -846,6 +916,7 @@ def normalize_agent_metadata_payload(
         "unique_scope": unique_scope,
         "geographic_scope": geographic_scope,
         "excludes": excludes,
+        "primary_namespaces": primary_namespaces,
     }
 
 
@@ -943,6 +1014,7 @@ def _registry_agents_to_metadata(
                     "unique_scope": agent.get("unique_scope", ""),
                     "geographic_scope": agent.get("geographic_scope", ""),
                     "excludes": agent.get("excludes", []),
+                    "primary_namespaces": raw_ns,
                 }
             )
     return results

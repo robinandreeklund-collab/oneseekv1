@@ -652,6 +652,24 @@ function AgentDetail({
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState(false);
+	const [resetting, setResetting] = useState(false);
+
+	const handleResetToSeed = useCallback(async () => {
+		setResetting(true);
+		try {
+			const result = await adminFlowGraphApiService.resetAgentToSeed(agent.agent_id);
+			if (result.had_override) {
+				toast.success("DB-override borttagen — seed-data gäller nu");
+			} else {
+				toast.info("Ingen DB-override hittades — agenten använder redan seed-data");
+			}
+			onDataChanged?.();
+		} catch {
+			toast.error("Kunde inte återställa agent");
+		} finally {
+			setResetting(false);
+		}
+	}, [agent.agent_id, onDataChanged]);
 
 	const handleToggleRoute = useCallback((route: string, checked: boolean) => {
 		setSelectedRoutes((prev) =>
@@ -1003,6 +1021,18 @@ function AgentDetail({
 			)}
 
 			<Separator />
+
+			{/* Reset to seed */}
+			<Button
+				variant="outline"
+				size="sm"
+				className="h-7 text-xs w-full"
+				onClick={handleResetToSeed}
+				disabled={resetting}
+			>
+				{resetting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RotateCcw className="h-3 w-3 mr-1.5" />}
+				Återställ seed-data
+			</Button>
 
 			{/* Delete */}
 			{!confirmDelete ? (

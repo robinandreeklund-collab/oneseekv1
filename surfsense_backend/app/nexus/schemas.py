@@ -498,6 +498,11 @@ class IntentLayerApplyRequest(BaseModel):
     )
 
 
+class DomainAgentGenerateRequest(BaseModel):
+    domain_id: str
+    llm_config_id: int = -24
+
+
 # ---------------------------------------------------------------------------
 # Overview Metrics
 # ---------------------------------------------------------------------------

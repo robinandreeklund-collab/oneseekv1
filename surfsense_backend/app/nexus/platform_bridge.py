@@ -99,9 +99,14 @@ _AGENT_TO_ZONE: dict[str, str] = _build_agent_to_zone()
 
 
 def _zone_from_namespace(ns: tuple[str, ...]) -> str:
-    """Determine intent zone from a namespace tuple."""
-    if len(ns) >= 2:
-        prefix = f"{ns[0]}/{ns[1]}"
+    """Determine intent zone from a namespace tuple.
+
+    Tries most-specific prefix first (4 segments down to 2 segments).
+    This allows fine-grained zone mapping like
+    tools/statistics/scb/befolkning → befolkning-och-demografi.
+    """
+    for depth in range(min(len(ns), 4), 1, -1):
+        prefix = "/".join(ns[:depth])
         if prefix in _NAMESPACE_TO_ZONE:
             return _NAMESPACE_TO_ZONE[prefix]
     # Fallback: first available domain zone
@@ -138,12 +143,15 @@ def _load_from_registry() -> list[PlatformTool]:
     from app.agents.new_chat.skolverket_tools import SKOLVERKET_TOOL_DEFINITIONS
     from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.external_models import EXTERNAL_MODEL_SPECS
     from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.registry import (
         BUILTIN_TOOLS,
     )
+    from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
+    from app.agents.new_chat.tools.trafikanalys import TRAFIKANALYS_TOOL_DEFINITIONS
     from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
 
     tools: list[PlatformTool] = []
@@ -159,6 +167,9 @@ def _load_from_registry() -> list[PlatformTool]:
         (MARKETPLACE_TOOL_DEFINITIONS, "marketplace"),
         (SKOLVERKET_TOOL_DEFINITIONS, "skolverket"),
         (GEOAPIFY_TOOL_DEFINITIONS, "geoapify"),
+        (TRAFIKANALYS_TOOL_DEFINITIONS, "trafikanalys"),
+        (RIKSBANK_TOOL_DEFINITIONS, "riksbank"),
+        (ELPRIS_TOOL_DEFINITIONS, "elpris"),
     ]
 
     for defs, category in domain_defs:
@@ -275,11 +286,18 @@ def get_category_names() -> list[str]:
 
 
 def get_namespace_prefixes() -> list[str]:
-    """List all unique namespace prefixes (first two segments)."""
+    """List all unique namespace prefixes (full agent-aligned paths).
+
+    The tool namespace is already the agent-aligned grouping level
+    (e.g. ``("tools", "statistics", "scb", "ekonomi")``), so we use
+    the full namespace to preserve sub-domain granularity instead of
+    truncating to 3 segments (which collapsed all SCB sub-namespaces
+    into a single ``tools/statistics/scb``).
+    """
     prefixes: set[str] = set()
     for t in get_platform_tools():
         if len(t.namespace) >= 2:
-            prefixes.add(f"{t.namespace[0]}/{t.namespace[1]}")
+            prefixes.add("/".join(t.namespace))
     return sorted(prefixes)
 
 

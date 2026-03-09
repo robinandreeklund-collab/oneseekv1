@@ -13,6 +13,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
 	AlertCircle,
+	Bot,
 	Check,
 	ChevronDown,
 	ChevronRight,
@@ -29,10 +30,11 @@ import {
 	type IntentLayerItemSuggestion,
 	type IntentLayerResultResponse,
 	type PlatformToolResponse,
+	type DomainMetadata,
 } from "@/lib/apis/nexus-api.service";
 import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
-type FilterMode = "namespace" | "category" | "intent-layer";
+type FilterMode = "namespace" | "category" | "intent-layer" | "domain-agents";
 
 // ---------------------------------------------------------------------------
 // Shared diff view component
@@ -323,9 +325,11 @@ export function OptimizerTab() {
 	const CATEGORY_LABELS = useCategoryLabels();
 	const [platformTools, setPlatformTools] = useState<PlatformToolResponse[]>([]);
 	const [categories, setCategories] = useState<string[]>([]);
+	const [domains, setDomains] = useState<DomainMetadata[]>([]);
 	const [filterMode, setFilterMode] = useState<FilterMode>("namespace");
 	const [selectedNamespace, setSelectedNamespace] = useState<string>("");
 	const [selectedCategory, setSelectedCategory] = useState<string>("");
+	const [selectedDomain, setSelectedDomain] = useState<string>("");
 	const [loading, setLoading] = useState(true);
 	const [generating, setGenerating] = useState(false);
 	const [applying, setApplying] = useState(false);
@@ -340,28 +344,25 @@ export function OptimizerTab() {
 	const [approvalMap, setApprovalMap] = useState<Record<string, boolean | null>>({});
 	const [applyResult, setApplyResult] = useState<string | null>(null);
 
-	// Derive unique namespace prefixes from tools
+	// Derive unique namespace prefixes from tools.  The tool namespace is
+	// already the agent-aligned grouping level (e.g. "tools/statistics/scb/ekonomi"),
+	// so we use the full namespace as the prefix to preserve sub-domain granularity.
 	const namespaces = Array.from(
-		new Set(
-			platformTools
-				.map((t) => {
-					const parts = t.namespace.split("/");
-					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
-				})
-				.filter(Boolean),
-		),
+		new Set(platformTools.map((t) => t.namespace).filter(Boolean)),
 	).sort();
 
-	// Load platform tools + categories on mount
+	// Load platform tools + categories + domains on mount
 	useEffect(() => {
 		setLoading(true);
 		Promise.all([
 			nexusApiService.getPlatformTools(),
 			nexusApiService.getOptimizerCategories(),
+			nexusApiService.getDomainMetadata(),
 		])
-			.then(([toolsRes, catRes]) => {
+			.then(([toolsRes, catRes, domainRes]) => {
 				setPlatformTools(toolsRes.tools);
 				setCategories(catRes.categories);
+				setDomains(domainRes.domains || []);
 			})
 			.catch(() => {})
 			.finally(() => setLoading(false));
@@ -380,6 +381,7 @@ export function OptimizerTab() {
 
 	const canGenerate =
 		filterMode === "intent-layer" ||
+		(filterMode === "domain-agents" && !!selectedDomain) ||
 		(filterMode === "namespace" && !!selectedNamespace) ||
 		(filterMode === "category" && !!selectedCategory);
 
@@ -400,10 +402,13 @@ export function OptimizerTab() {
 		setApprovalMap({});
 		setApplyResult(null);
 
-		if (filterMode === "intent-layer") {
-			// Intent layer optimization
+		if (filterMode === "intent-layer" || filterMode === "domain-agents") {
+			// Intent layer or domain-scoped agent optimization
 			try {
-				const res = await nexusApiService.intentLayerGenerate({});
+				const res =
+					filterMode === "domain-agents"
+						? await nexusApiService.domainAgentGenerate({ domain_id: selectedDomain })
+						: await nexusApiService.intentLayerGenerate({});
 				setIntentResult(res);
 				const map: Record<string, boolean | null> = {};
 				for (const s of res.suggestions) {
@@ -451,7 +456,7 @@ export function OptimizerTab() {
 		} finally {
 			setGenerating(false);
 		}
-	}, [canGenerate, filterMode, selectedNamespace, selectedCategory]);
+	}, [canGenerate, filterMode, selectedNamespace, selectedCategory, selectedDomain]);
 
 	const handleApprove = (key: string) => {
 		setApprovalMap((prev) => ({
@@ -468,7 +473,7 @@ export function OptimizerTab() {
 	};
 
 	const handleApproveAll = () => {
-		if (filterMode === "intent-layer" && intentResult) {
+		if ((filterMode === "intent-layer" || filterMode === "domain-agents") && intentResult) {
 			const map: Record<string, boolean | null> = {};
 			for (const s of intentResult.suggestions) {
 				map[`${s.item_type}:${s.item_id}`] = true;
@@ -487,8 +492,8 @@ export function OptimizerTab() {
 		setApplying(true);
 		setApplyResult(null);
 
-		if (filterMode === "intent-layer" && intentResult) {
-			// Intent layer apply
+		if ((filterMode === "intent-layer" || filterMode === "domain-agents") && intentResult) {
+			// Intent layer or domain-scoped agent apply
 			const approved = intentResult.suggestions
 				.filter((s) => approvalMap[`${s.item_type}:${s.item_id}`] === true)
 				.map((s) => ({
@@ -504,9 +509,15 @@ export function OptimizerTab() {
 			}
 
 			try {
-				const res = await nexusApiService.intentLayerApply(approved);
+				const applyFn =
+					filterMode === "domain-agents"
+						? nexusApiService.domainAgentApply
+						: nexusApiService.intentLayerApply;
+				const res = await applyFn(approved);
 				setApplyResult(
-					`Tillämpat ${res.applied_domains} domäner och ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu de uppdaterade definitionerna.`,
+					filterMode === "domain-agents"
+						? `Tillämpat ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu optimerade agentdefinitioner.`
+						: `Tillämpat ${res.applied_domains} domäner och ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu de uppdaterade definitionerna.`,
 				);
 			} catch (err) {
 				setApplyResult(`Fel: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -551,20 +562,17 @@ export function OptimizerTab() {
 	const rejectedCount = Object.values(approvalMap).filter((v) => v === false).length;
 	const pendingCount = Object.values(approvalMap).filter((v) => v === null).length;
 
-	// Active result (either tool or intent layer)
-	const activeModelUsed =
-		filterMode === "intent-layer" ? intentResult?.model_used : result?.model_used;
-	const activeError =
-		filterMode === "intent-layer" ? intentResult?.error : result?.error;
-	const activeSuggestionCount =
-		filterMode === "intent-layer"
-			? (intentResult?.suggestions.length ?? 0)
-			: (result?.suggestions.length ?? 0);
-	const activeTotalCount =
-		filterMode === "intent-layer"
-			? (intentResult?.total_domains ?? 0) + (intentResult?.total_agents ?? 0)
-			: (result?.total_tools ?? 0);
-	const hasResult = filterMode === "intent-layer" ? !!intentResult : !!result;
+	// Active result (either tool or intent layer / domain-agents)
+	const isIntentLike = filterMode === "intent-layer" || filterMode === "domain-agents";
+	const activeModelUsed = isIntentLike ? intentResult?.model_used : result?.model_used;
+	const activeError = isIntentLike ? intentResult?.error : result?.error;
+	const activeSuggestionCount = isIntentLike
+		? (intentResult?.suggestions.length ?? 0)
+		: (result?.suggestions.length ?? 0);
+	const activeTotalCount = isIntentLike
+		? (intentResult?.total_domains ?? 0) + (intentResult?.total_agents ?? 0)
+		: (result?.total_tools ?? 0);
+	const hasResult = isIntentLike ? !!intentResult : !!result;
 
 	return (
 		<div className="space-y-6">
@@ -573,9 +581,9 @@ export function OptimizerTab() {
 				<Sparkles className="h-4 w-4" />
 				<AlertDescription>
 					Använd AI (Claude Sonnet) för att optimera metadata. Välj
-					namespace/kategori för verktyg, eller &quot;Intent-lager&quot; för att
-					optimera alla domäner och agenter samtidigt. LLM:en maximerar
-					embedding-separation. Godkända förslag sparas som DB-overrides.
+					namespace/kategori för verktyg, &quot;Intent-lager&quot; för alla domäner
+					och agenter, eller &quot;Domän-agenter&quot; för att optimera agenter
+					inom en specifik domän. Godkända förslag sparas som DB-overrides.
 				</AlertDescription>
 			</Alert>
 
@@ -610,16 +618,45 @@ export function OptimizerTab() {
 								<Layers className="h-3.5 w-3.5 mr-1.5" />
 								Intent-lager
 							</Button>
+							<Button
+								variant={filterMode === "domain-agents" ? "default" : "outline"}
+								size="sm"
+								onClick={() => switchMode("domain-agents")}
+							>
+								<Bot className="h-3.5 w-3.5 mr-1.5" />
+								Domän-agenter
+							</Button>
 						</div>
 
 						<div className="flex items-end gap-3">
 							<div className="flex-1 max-w-sm">
 								{filterMode === "intent-layer" ? (
 									<p className="text-sm text-muted-foreground py-2">
-										Optimerar hela intent-lagret: alla 17 domäner och 13 agenter
+										Optimerar hela intent-lagret: alla domäner och agenter
 										skickas till LLM för batch-optimering av keywords,
 										descriptions och excludes.
 									</p>
+								) : filterMode === "domain-agents" ? (
+									<>
+										<label className="text-sm text-muted-foreground mb-1.5 block">
+											Välj domän att optimera agenter för
+										</label>
+										<Select
+											value={selectedDomain}
+											onValueChange={setSelectedDomain}
+										>
+											<SelectTrigger>
+												<SelectValue placeholder="Välj domän..." />
+											</SelectTrigger>
+											<SelectContent>
+												{domains.map((d) => (
+													<SelectItem key={d.domain_id} value={d.domain_id}>
+														{d.label || d.domain_id}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</>
 								) : loading ? (
 									<div className="flex items-center gap-2 text-muted-foreground h-9">
 										<Loader2 className="h-4 w-4 animate-spin" />
@@ -639,12 +676,19 @@ export function OptimizerTab() {
 											</SelectTrigger>
 											<SelectContent>
 												{namespaces.map((ns) => {
-													const count = platformTools.filter((t) =>
+													const exact = platformTools.filter(
+														(t) => t.namespace === ns,
+													).length;
+													const total = platformTools.filter((t) =>
 														t.namespace.startsWith(ns),
 													).length;
+													const label =
+														exact < total
+															? `${ns} (${exact} direkt, ${total} totalt)`
+															: `${ns} (${total} verktyg)`;
 													return (
 														<SelectItem key={ns} value={ns}>
-															{ns} ({count} verktyg)
+															{label}
 														</SelectItem>
 													);
 												})}
@@ -694,6 +738,11 @@ export function OptimizerTab() {
 										<Layers className="h-4 w-4 mr-2" />
 										Optimera Intent-lager
 									</>
+								) : filterMode === "domain-agents" ? (
+									<>
+										<Bot className="h-4 w-4 mr-2" />
+										Optimera agenter
+									</>
 								) : (
 									<>
 										<Sparkles className="h-4 w-4 mr-2" />
@@ -727,7 +776,7 @@ export function OptimizerTab() {
 						<div>
 							<CardTitle className="text-base">
 								Förslag ({activeSuggestionCount} av {activeTotalCount}{" "}
-								{filterMode === "intent-layer" ? "objekt" : "verktyg"})
+								{isIntentLike ? "objekt" : "verktyg"})
 							</CardTitle>
 							<p className="text-xs text-muted-foreground mt-1">
 								{approvedCount} godkända · {rejectedCount} avvisade · {pendingCount}{" "}
@@ -765,7 +814,7 @@ export function OptimizerTab() {
 						)}
 
 						<div className="space-y-3">
-							{filterMode === "intent-layer" && intentResult
+							{isIntentLike && intentResult
 								? intentResult.suggestions.map((s) => {
 										const key = `${s.item_type}:${s.item_id}`;
 										return (

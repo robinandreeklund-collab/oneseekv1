@@ -214,7 +214,8 @@ def _resolve_llm_choice(raw: str, sorted_keys: list[str]) -> str:
     1. Tries exact match first
     2. Tries case-insensitive match
     3. Tries partial/substring match
-    4. Falls back to interpreting the response as a 1-based list index
+    4. Tries hyphen-normalized match (e.g. "trafik-analys-transport" ≈ "trafikanalys-transport")
+    5. Falls back to interpreting the response as a 1-based list index
     """
     if not raw:
         return ""
@@ -230,7 +231,13 @@ def _resolve_llm_choice(raw: str, sorted_keys: list[str]) -> str:
     for key in sorted_keys:
         if lower in key.lower() or key.lower() in lower:
             return key
-    # 4. Numeric → 1-based index
+    # 4. Hyphen-normalized match — the LLM often inserts or removes hyphens
+    #    (e.g. "trafik-analys-transport" vs "trafikanalys-transport")
+    norm = lower.replace("-", "")
+    for key in sorted_keys:
+        if key.lower().replace("-", "") == norm:
+            return key
+    # 5. Numeric → 1-based index
     try:
         idx = int(raw) - 1
         if 0 <= idx < len(sorted_keys):
@@ -2550,8 +2557,8 @@ class NexusService:
             f"Fråga: {query}\n\n"
             f"Kandidater:\n" + "\n".join(tool_lines) + "\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
             "VERKTYG: <tool_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2668,8 +2675,8 @@ class NexusService:
             "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna domän matchar>\n"
             "DOMÄN: <domain_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2733,8 +2740,8 @@ class NexusService:
             "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna agent passar bäst>\n"
             "AGENT: <agent_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2762,14 +2769,32 @@ class NexusService:
         # ── Step 3: LLM picks Tool within agent ──
         # Get all tools for the chosen agent from platform registry
         platform_tools = get_platform_tools()
-        agent_def = all_agents.get(chosen_agent, {})
+        # Look up agent in domain_agents first (includes DB overrides),
+        # then fall back to all_agents (seed-only)
+        agent_def = domain_agents.get(chosen_agent, all_agents.get(chosen_agent, {}))
         agent_ns_raw = agent_def.get("primary_namespaces", [])
         # Use full namespace depth (3+ levels) so agents within the same
         # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
+        # DB-backed NexusAgent stores namespaces as joined strings
+        # (e.g. "tools/trafikanalys/transport"), while seed-data uses
+        # nested lists (e.g. [["tools", "trafikanalys", "transport"]]).
         agent_ns_prefixes = []
         for ns in agent_ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
                 agent_ns_prefixes.append("/".join(ns))
+            elif isinstance(ns, str) and "/" in ns:
+                agent_ns_prefixes.append(ns)
+
+        # Fallback: AGENT_NAMESPACE_MAP is the authoritative source
+        if not agent_ns_prefixes and chosen_agent:
+            try:
+                from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP
+
+                ns_tuples = AGENT_NAMESPACE_MAP.get(chosen_agent, [])
+                for ns_tuple in ns_tuples:
+                    agent_ns_prefixes.append("/".join(ns_tuple))
+            except Exception:
+                pass
 
         # Filter tools by agent namespace (full depth match)
         agent_tools = []
@@ -2791,6 +2816,14 @@ class NexusService:
                 tid for tid, td in tool_defs.items() if td.get("agent_id") == chosen_agent
             }
             agent_tools = [pt for pt in platform_tools if pt.tool_id in agent_tool_ids]
+            # Update agent_ns_prefixes from resolved tools for display
+            if agent_tools and not agent_ns_prefixes:
+                seen_ns: set[str] = set()
+                for pt in agent_tools:
+                    ns_str = "/".join(pt.namespace) if pt.namespace else ""
+                    if ns_str and ns_str not in seen_ns:
+                        seen_ns.add(ns_str)
+                        agent_ns_prefixes.append(ns_str)
 
         tool_ids_sorted = [pt.tool_id for pt in agent_tools]
         tool_items = [
@@ -2811,8 +2844,8 @@ class NexusService:
                 "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
                 "INTE ett nummer.\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
+                "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
                 "VERKTYG: <tool_id>\n"
-                "MOTIVERING: <en mening>\n"
             )
 
             try:
@@ -2991,9 +3024,9 @@ class NexusService:
             "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna domän matchar>\n"
             "DOMÄN: <domain_id>\n"
             "KOMPLEXITET: <trivial|simple|complex>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         chosen_domain = ""
@@ -3076,8 +3109,8 @@ class NexusService:
             "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna agent passar bäst>\n"
             "AGENT: <agent_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         chosen_agent = ""
@@ -3119,14 +3152,30 @@ class NexusService:
         # ═══════════════════════════════════════════════════════════════
         # Collect agent's tool descriptions for context
         platform_tools = get_platform_tools()
-        agent_def = all_agents.get(chosen_agent, {})
+        agent_def = domain_agents.get(chosen_agent, all_agents.get(chosen_agent, {}))
         agent_ns_raw = agent_def.get("primary_namespaces", [])
         # Use full namespace depth (3+ levels) so agents within the same
         # domain (e.g. trafik-tag vs trafik-vag) get distinct tool sets.
+        # DB-backed NexusAgent stores namespaces as joined strings
+        # (e.g. "tools/trafikanalys/transport"), while seed-data uses
+        # nested lists (e.g. [["tools", "trafikanalys", "transport"]]).
         agent_ns_prefixes = []
         for ns in agent_ns_raw:
             if isinstance(ns, list) and len(ns) >= 2:
                 agent_ns_prefixes.append("/".join(ns))
+            elif isinstance(ns, str) and "/" in ns:
+                agent_ns_prefixes.append(ns)
+
+        # Fallback: AGENT_NAMESPACE_MAP is the authoritative source
+        if not agent_ns_prefixes and chosen_agent:
+            try:
+                from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP
+
+                ns_tuples = AGENT_NAMESPACE_MAP.get(chosen_agent, [])
+                for ns_tuple in ns_tuples:
+                    agent_ns_prefixes.append("/".join(ns_tuple))
+            except Exception:
+                pass
 
         agent_tools = []
         for pt in platform_tools:
@@ -3209,8 +3258,8 @@ class NexusService:
                 "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
                 "INTE ett nummer.\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
+                "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
                 "VERKTYG: <tool_id>\n"
-                "MOTIVERING: <en mening>\n"
             )
             try:
                 tool_response = await nexus_llm_call(tool_prompt)

@@ -126,6 +126,25 @@ def build_agent_resolver_node(
                     {"definition": item, "score": float(max(0, len(selected) - idx))}
                     for idx, item in enumerate(selected)
                 ]
+        # Domain-based boosting: when intent resolves to a specific domain,
+        # boost agents whose routes include that domain so they rank higher.
+        resolved_domain_id = str(intent_data.get("intent_id") or "").strip().lower()
+        if resolved_domain_id and ranked_candidates:
+            domain_boost = 8.0
+            for item in ranked_candidates:
+                if not isinstance(item, dict):
+                    continue
+                defn = item.get("definition")
+                if defn is None:
+                    continue
+                agent_routes = getattr(defn, "routes", ()) or ()
+                if resolved_domain_id in agent_routes:
+                    item["score"] = float(item.get("score") or 0.0) + domain_boost
+            ranked_candidates.sort(
+                key=lambda x: float(x.get("score") or 0.0) if isinstance(x, dict) else 0.0,
+                reverse=True,
+            )
+
         selected = [
             item.get("definition")
             for item in ranked_candidates
