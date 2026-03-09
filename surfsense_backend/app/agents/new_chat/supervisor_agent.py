@@ -621,6 +621,49 @@ async def create_supervisor_agent(
         ),
         include_think_instructions=False,
     )
+    # Prompt-key → prompt string lookup.  Falls back to knowledge_prompt
+    # for unknown keys so new agents always get a usable prompt.
+    _prompt_key_map: dict[str, str] = {
+        "knowledge_prompt": knowledge_prompt,
+        "action_prompt": action_prompt,
+        "weather_prompt": action_prompt,
+        "statistics_prompt": statistics_prompt,
+        "synthesis_prompt": (
+            synthesis_prompt or statistics_prompt or knowledge_prompt
+        ),
+        "bolag_prompt": bolag_prompt or knowledge_prompt,
+        "trafik_prompt": trafik_prompt or action_prompt,
+        "trafikanalys_prompt": (
+            trafik_prompt or statistics_prompt or action_prompt
+        ),
+        "media_prompt": media_prompt or action_prompt,
+        "browser_prompt": browser_prompt or knowledge_prompt,
+        "code_prompt": code_prompt or knowledge_prompt,
+        "kartor_prompt": kartor_prompt or action_prompt,
+        "riksdagen_prompt": riksdagen_prompt or knowledge_prompt,
+        "riksdagen_dokument_prompt": (
+            riksdagen_dokument_prompt
+            or riksdagen_prompt
+            or knowledge_prompt
+        ),
+        "riksdagen_debatt_prompt": (
+            riksdagen_debatt_prompt
+            or riksdagen_prompt
+            or knowledge_prompt
+        ),
+        "riksdagen_ledamoter_prompt": (
+            riksdagen_ledamoter_prompt
+            or riksdagen_prompt
+            or knowledge_prompt
+        ),
+        "marketplace_prompt": marketplace_prompt or action_prompt,
+        "elpris_prompt": statistics_prompt or action_prompt,
+        "riksbank_prompt": statistics_prompt or knowledge_prompt,
+        "skolverket_prompt": statistics_prompt or knowledge_prompt,
+    }
+
+    # Minimal static fallback — rebuilt dynamically from GraphRegistry
+    # after it loads (see below after ``graph_registry = ...``).
     worker_configs: dict[str, WorkerConfig] = {
         "kunskap": WorkerConfig(
             name="kunskap-worker",
@@ -631,293 +674,8 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "åtgärd": WorkerConfig(
-            name="åtgärd-worker",
-            primary_namespaces=[("tools", "action")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "statistics"),
-                ("tools", "kartor"),
-                ("tools", "general"),
-            ],
-        ),
-        "väder": WorkerConfig(
-            name="väder-worker",
-            primary_namespaces=[("tools", "weather")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "kartor": WorkerConfig(
-            name="kartor-worker",
-            primary_namespaces=[("tools", "kartor")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "media": WorkerConfig(
-            name="media-worker",
-            primary_namespaces=[("tools", "action", "media")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "statistics"),
-                ("tools", "kartor"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-ekonomi": WorkerConfig(
-            name="statistik-ekonomi-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "ekonomi"),
-                ("tools", "statistics", "kolada", "ekonomi"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-befolkning": WorkerConfig(
-            name="statistik-befolkning-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "befolkning"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-arbetsmarknad": WorkerConfig(
-            name="statistik-arbetsmarknad-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "arbetsmarknad"),
-                ("tools", "statistics", "kolada", "arbetsmarknad"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-utbildning": WorkerConfig(
-            name="statistik-utbildning-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "utbildning"),
-                ("tools", "statistics", "kolada", "utbildning"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-halsa": WorkerConfig(
-            name="statistik-halsa-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "halsa"),
-                ("tools", "statistics", "kolada", "halsa"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-miljo": WorkerConfig(
-            name="statistik-miljo-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "miljo"),
-                ("tools", "statistics", "kolada", "miljo"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-fastighet": WorkerConfig(
-            name="statistik-fastighet-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "fastighet"),
-                ("tools", "statistics", "kolada", "fastighet"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-naringsliv": WorkerConfig(
-            name="statistik-naringsliv-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "naringsliv"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-samhalle": WorkerConfig(
-            name="statistik-samhalle-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "samhalle"),
-                ("tools", "statistics", "kolada", "samhalle"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "webb": WorkerConfig(
-            name="webb-worker",
-            primary_namespaces=[("tools", "knowledge", "web")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "action"),
-                ("tools", "statistics"),
-                ("tools", "general"),
-            ],
-        ),
-        "kod": WorkerConfig(
-            name="kod-worker",
-            primary_namespaces=[("tools", "code")],
-            fallback_namespaces=[
-                ("tools", "general"),
-                ("tools", "knowledge"),
-                ("tools", "action"),
-                ("tools", "statistics"),
-            ],
-        ),
-        "bolag": WorkerConfig(
-            name="bolag-worker",
-            primary_namespaces=[("tools", "bolag")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "general"),
-            ],
-        ),
-        "trafik": WorkerConfig(
-            name="trafik-worker",
-            primary_namespaces=[("tools", "trafik")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "riksdagen-dokument": WorkerConfig(
-            name="riksdagen-dokument-worker",
-            primary_namespaces=[("tools", "politik", "dokument"), ("tools", "politik", "status")],
-            fallback_namespaces=[
-                ("tools", "politik"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "riksdagen-debatt": WorkerConfig(
-            name="riksdagen-debatt-worker",
-            primary_namespaces=[("tools", "politik", "anforanden"), ("tools", "politik", "voteringar")],
-            fallback_namespaces=[
-                ("tools", "politik"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "riksdagen-ledamoter": WorkerConfig(
-            name="riksdagen-ledamoter-worker",
-            primary_namespaces=[("tools", "politik", "ledamoter"), ("tools", "politik", "kalender")],
-            fallback_namespaces=[
-                ("tools", "politik"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "marknad": WorkerConfig(
-            name="marknad-worker",
-            primary_namespaces=[("tools", "marketplace")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "syntes": WorkerConfig(
-            name="syntes-worker",
-            primary_namespaces=[("tools", "knowledge")],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "general"),
-            ],
-        ),
     }
-
-    # Map fine-grained agent names to coarse worker pool keys.
-    # Agent definitions use specific names (trafik-vag, väder-risk, etc.)
-    # but the worker pool has broader entries (trafik, väder, etc.).
-    _AGENT_TO_WORKER: dict[str, str] = {
-        "trafik-vag": "trafik",
-        "trafik-tag": "trafik",
-        "trafik-vagvader": "trafik",
-        "trafikanalys-transport": "trafik",
-        "väder-vatten": "väder",
-        "väder-risk": "väder",
-        "riksbank-ekonomi": "statistik-ekonomi",
-        "elpris": "statistik-miljo",
-        "skolverket-kursplaner": "statistik-utbildning",
-        "skolverket-skolenheter": "statistik-utbildning",
-        "skolverket-vuxenutbildning": "statistik-utbildning",
-        "skolverket-referens": "statistik-utbildning",
-        "konversation": "kunskap",
-    }
-
-    def _resolve_worker_name(agent_name: str) -> str:
-        """Map a fine-grained agent name to its worker pool key."""
-        return _AGENT_TO_WORKER.get(agent_name, agent_name)
-
-    worker_prompts: dict[str, str] = {
-        "kunskap": knowledge_prompt,
-        "åtgärd": action_prompt,
-        "väder": action_prompt,
-        "kartor": action_prompt,
-        "media": media_prompt or action_prompt,
-        "statistik-ekonomi": statistics_prompt,
-        "statistik-befolkning": statistics_prompt,
-        "statistik-arbetsmarknad": statistics_prompt,
-        "statistik-utbildning": statistics_prompt,
-        "statistik-halsa": statistics_prompt,
-        "statistik-miljo": statistics_prompt,
-        "statistik-fastighet": statistics_prompt,
-        "statistik-naringsliv": statistics_prompt,
-        "statistik-samhalle": statistics_prompt,
-        "webb": browser_prompt or knowledge_prompt,
-        "kod": code_prompt or knowledge_prompt,
-        "bolag": bolag_prompt or knowledge_prompt,
-        "trafik": trafik_prompt or action_prompt,
-        "kartor": kartor_prompt or action_prompt,
-        "riksdagen-dokument": riksdagen_dokument_prompt or riksdagen_prompt or knowledge_prompt,
-        "riksdagen-debatt": riksdagen_debatt_prompt or riksdagen_prompt or knowledge_prompt,
-        "riksdagen-ledamoter": riksdagen_ledamoter_prompt or riksdagen_prompt or knowledge_prompt,
-        "marknad": marketplace_prompt or action_prompt,
-        "syntes": synthesis_prompt or statistics_prompt or knowledge_prompt,
-    }
+    worker_prompts: dict[str, str] = {"kunskap": knowledge_prompt}
 
     # Create/get process-level shared worker pool for this runtime signature.
     worker_pool = await get_or_create_shared_worker_pool(
@@ -1569,6 +1327,44 @@ async def create_supervisor_agent(
 
     # ── GraphRegistry (Sprint 5: domain-scoped agent/tool resolution) ──
     graph_registry = dependencies.get("graph_registry")
+
+    # ── Dynamic worker pool from GraphRegistry ─────────────────────────
+    # Build one WorkerConfig per agent from the DB-backed registry.
+    # Any agent added via the admin panel is immediately available.
+    if graph_registry is not None and graph_registry.agent_index:
+        _dyn_configs: dict[str, WorkerConfig] = {}
+        _dyn_prompts: dict[str, str] = {}
+        for _aid, _adata in graph_registry.agent_index.items():
+            if not _adata.get("enabled", True):
+                continue
+            _raw_pri = _adata.get("primary_namespaces") or []
+            _raw_fb = _adata.get("fallback_namespaces") or []
+            _pri_ns = [
+                tuple(ns) for ns in _raw_pri
+                if isinstance(ns, (list, tuple)) and ns
+            ]
+            _fb_ns = [
+                tuple(ns) for ns in _raw_fb
+                if isinstance(ns, (list, tuple)) and ns
+            ]
+            if not _pri_ns and not _fb_ns:
+                _fb_ns = [("tools", "knowledge"), ("tools", "general")]
+            _wc = _adata.get("worker_config") or {}
+            _dyn_configs[_aid] = WorkerConfig(
+                name=f"{_aid}-worker",
+                primary_namespaces=_pri_ns,
+                fallback_namespaces=_fb_ns,
+                tool_limit=int(_wc.get("tool_limit", 3)),
+            )
+            _pk = str(
+                _adata.get("prompt_key") or "knowledge_prompt"
+            ).strip()
+            _dyn_prompts[_aid] = _prompt_key_map.get(
+                _pk, knowledge_prompt
+            )
+        if _dyn_configs:
+            worker_configs = _dyn_configs
+            worker_prompts = _dyn_prompts
 
     db_session = dependencies.get("db_session")
     if isinstance(db_session, AsyncSession):
@@ -2313,7 +2109,7 @@ async def create_supervisor_agent(
             tool_id,
             state=state,
         )
-        worker = await worker_pool.get(_resolve_worker_name(selected_agent_name))
+        worker = await worker_pool.get(selected_agent_name)
         if worker is None:
             return {
                 "status": "failed",
@@ -2537,30 +2333,32 @@ async def create_supervisor_agent(
         if normalized_route in {"jämförelse", "compare", "mixed"}:
             return resolved
 
-        # Domain-to-route override: When intent resolution identifies a
-        # specialized domain (e.g. väder-och-klimat), the fallback_route
-        # is still "kunskap" for backward compat with the 4-route enum.
-        # We override the route here so the agent resolver picks the
-        # correct specialist agent instead of the generic kunskap agent.
-        _DOMAIN_ROUTE_OVERRIDES: dict[str, str] = {
-            "väder-och-klimat": "väder",
-            "trafik-och-transport": "trafik",
-            "ekonomi-och-skatter": "statistik-ekonomi",
-            "arbetsmarknad": "statistik-arbetsmarknad",
-            "befolkning-och-demografi": "statistik-befolkning",
-            "utbildning": "statistik-utbildning",
-            "näringsliv-och-bolag": "bolag",
-            "fastighet-och-mark": "statistik-fastighet",
-            "energi-och-miljö": "statistik-miljo",
-            "handel-och-marknad": "marknad",
-            "politik-och-beslut": "riksdagen",
-            "hälsa-och-vård": "statistik-halsa",
-            "rättsväsende": "kunskap",
-        }
+        # Dynamic domain→agent route override from GraphRegistry.
+        # When intent resolution identifies a specialized domain, the
+        # fallback_route is "kunskap" for legacy compat.  We override
+        # the route to the first agent in that domain so the agent
+        # resolver picks the correct specialist agent.
         intent_id = str(resolved.get("intent_id") or "").strip().lower()
-        domain_route = _DOMAIN_ROUTE_OVERRIDES.get(intent_id)
-        if domain_route and normalized_route in {"kunskap", "knowledge"}:
-            resolved["route"] = domain_route
+        if (
+            intent_id
+            and normalized_route in {"kunskap", "knowledge"}
+            and graph_registry is not None
+            and graph_registry.agents_by_domain
+        ):
+            domain_agents = graph_registry.agents_by_domain.get(intent_id) or []
+            if domain_agents:
+                # Use the first enabled agent in the domain as the route
+                first_agent = next(
+                    (
+                        str(a.get("agent_id") or "").strip()
+                        for a in domain_agents
+                        if a.get("enabled", True)
+                        and str(a.get("agent_id") or "").strip()
+                    ),
+                    "",
+                )
+                if first_agent:
+                    resolved["route"] = first_agent
 
         if sandbox_enabled and _has_filesystem_intent(query):
             override_route = "skapande"
@@ -3570,7 +3368,7 @@ async def create_supervisor_agent(
                 },
                 ensure_ascii=True,
             )
-        worker = await worker_pool.get(_resolve_worker_name(name))
+        worker = await worker_pool.get(name)
         if not worker:
             error_message = f"Agent '{agent_name}' not available."
             return json.dumps(
@@ -4415,7 +4213,7 @@ async def create_supervisor_agent(
                         else None
                     ),
                 }
-            worker = await worker_pool.get(_resolve_worker_name(agent_name))
+            worker = await worker_pool.get(agent_name)
             if not worker:
                 error_message = f"Agent '{agent_name}' not available."
                 result_contract = _build_agent_result_contract(
