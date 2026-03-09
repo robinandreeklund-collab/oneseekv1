@@ -62,12 +62,31 @@ NAMESPACE_ZONE_MAP: dict[str, str] = {
     "tools/trafik": "trafik-och-transport",
     # Trafikanalys (transportstatistik) — same domain
     "tools/trafikanalys": "trafik-och-transport",
-    # Other domains
-    "tools/politik": "politik-och-beslut",
+    # ── Statistics: 3-level prefixes for agent-aligned routing ──
+    # SCB sub-namespaces → distinct domains per agent
+    "tools/statistics/scb/ekonomi": "ekonomi-och-skatter",
+    "tools/statistics/scb/befolkning": "befolkning-och-demografi",
+    "tools/statistics/scb/arbetsmarknad": "arbetsmarknad",
+    "tools/statistics/scb/utbildning": "utbildning",
+    "tools/statistics/scb/halsa": "hälsa-och-vård",
+    "tools/statistics/scb/miljo": "energi-och-miljö",
+    "tools/statistics/scb/fastighet": "fastighet-och-mark",
+    "tools/statistics/scb/naringsliv": "näringsliv-och-bolag",
+    "tools/statistics/scb/samhalle": Zone.KUNSKAP,
+    # Kolada sub-namespaces → same domain alignment
+    "tools/statistics/kolada/ekonomi": "ekonomi-och-skatter",
+    "tools/statistics/kolada/utbildning": "utbildning",
+    "tools/statistics/kolada/halsa": "hälsa-och-vård",
+    "tools/statistics/kolada/miljo": "energi-och-miljö",
+    "tools/statistics/kolada/arbetsmarknad": "arbetsmarknad",
+    "tools/statistics/kolada/samhalle": Zone.KUNSKAP,
+    # Fallback for unmatched statistics tools
     "tools/statistics": "ekonomi-och-skatter",
     # Riksbank and Elpris — same domain
     "tools/riksbank": "ekonomi-och-skatter",
     "tools/elpris": "ekonomi-och-skatter",
+    # Other domains
+    "tools/politik": "politik-och-beslut",
     "tools/bolag": "näringsliv-och-bolag",
     "tools/marketplace": "handel-och-marknad",
     "tools/action": Zone.SKAPANDE,

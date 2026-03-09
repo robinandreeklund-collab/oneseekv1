@@ -340,13 +340,15 @@ export function OptimizerTab() {
 	const [approvalMap, setApprovalMap] = useState<Record<string, boolean | null>>({});
 	const [applyResult, setApplyResult] = useState<string | null>(null);
 
-	// Derive unique namespace prefixes from tools
+	// Derive unique namespace prefixes from tools (up to 3 segments for
+	// agent-aligned grouping, e.g. "tools/statistics/scb" not "tools/statistics")
 	const namespaces = Array.from(
 		new Set(
 			platformTools
 				.map((t) => {
 					const parts = t.namespace.split("/");
-					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
+					const depth = parts.length > 3 ? 3 : Math.min(3, parts.length);
+					return depth >= 2 ? parts.slice(0, depth).join("/") : t.namespace;
 				})
 				.filter(Boolean),
 		),

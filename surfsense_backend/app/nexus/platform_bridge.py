@@ -99,9 +99,14 @@ _AGENT_TO_ZONE: dict[str, str] = _build_agent_to_zone()
 
 
 def _zone_from_namespace(ns: tuple[str, ...]) -> str:
-    """Determine intent zone from a namespace tuple."""
-    if len(ns) >= 2:
-        prefix = f"{ns[0]}/{ns[1]}"
+    """Determine intent zone from a namespace tuple.
+
+    Tries most-specific prefix first (4 segments down to 2 segments).
+    This allows fine-grained zone mapping like
+    tools/statistics/scb/befolkning → befolkning-och-demografi.
+    """
+    for depth in range(min(len(ns), 4), 1, -1):
+        prefix = "/".join(ns[:depth])
         if prefix in _NAMESPACE_TO_ZONE:
             return _NAMESPACE_TO_ZONE[prefix]
     # Fallback: first available domain zone
@@ -281,11 +286,18 @@ def get_category_names() -> list[str]:
 
 
 def get_namespace_prefixes() -> list[str]:
-    """List all unique namespace prefixes (first two segments)."""
+    """List all unique namespace prefixes (up to 3 segments).
+
+    Uses min(3, len-1) segments so that agent-aligned sub-namespaces
+    are preserved (e.g. "tools/statistics/scb" instead of lumping
+    all statistics tools under "tools/statistics").
+    """
     prefixes: set[str] = set()
     for t in get_platform_tools():
         if len(t.namespace) >= 2:
-            prefixes.add(f"{t.namespace[0]}/{t.namespace[1]}")
+            # Use up to 3 segments, but not the leaf (tool-specific) segment
+            depth = min(3, len(t.namespace) - 1) if len(t.namespace) > 3 else min(3, len(t.namespace))
+            prefixes.add("/".join(t.namespace[:depth]))
     return sorted(prefixes)
 
 
