@@ -344,18 +344,11 @@ export function OptimizerTab() {
 	const [approvalMap, setApprovalMap] = useState<Record<string, boolean | null>>({});
 	const [applyResult, setApplyResult] = useState<string | null>(null);
 
-	// Derive unique namespace prefixes from tools (up to 3 segments for
-	// agent-aligned grouping, e.g. "tools/statistics/scb" not "tools/statistics")
+	// Derive unique namespace prefixes from tools.  The tool namespace is
+	// already the agent-aligned grouping level (e.g. "tools/statistics/scb/ekonomi"),
+	// so we use the full namespace as the prefix to preserve sub-domain granularity.
 	const namespaces = Array.from(
-		new Set(
-			platformTools
-				.map((t) => {
-					const parts = t.namespace.split("/");
-					const depth = parts.length > 3 ? 3 : Math.min(3, parts.length);
-					return depth >= 2 ? parts.slice(0, depth).join("/") : t.namespace;
-				})
-				.filter(Boolean),
-		),
+		new Set(platformTools.map((t) => t.namespace).filter(Boolean)),
 	).sort();
 
 	// Load platform tools + categories + domains on mount
@@ -683,12 +676,19 @@ export function OptimizerTab() {
 											</SelectTrigger>
 											<SelectContent>
 												{namespaces.map((ns) => {
-													const count = platformTools.filter((t) =>
+													const exact = platformTools.filter(
+														(t) => t.namespace === ns,
+													).length;
+													const total = platformTools.filter((t) =>
 														t.namespace.startsWith(ns),
 													).length;
+													const label =
+														exact < total
+															? `${ns} (${exact} direkt, ${total} totalt)`
+															: `${ns} (${total} verktyg)`;
 													return (
 														<SelectItem key={ns} value={ns}>
-															{ns} ({count} verktyg)
+															{label}
 														</SelectItem>
 													);
 												})}

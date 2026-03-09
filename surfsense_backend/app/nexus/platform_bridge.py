@@ -286,18 +286,18 @@ def get_category_names() -> list[str]:
 
 
 def get_namespace_prefixes() -> list[str]:
-    """List all unique namespace prefixes (up to 3 segments).
+    """List all unique namespace prefixes (full agent-aligned paths).
 
-    Uses min(3, len-1) segments so that agent-aligned sub-namespaces
-    are preserved (e.g. "tools/statistics/scb" instead of lumping
-    all statistics tools under "tools/statistics").
+    The tool namespace is already the agent-aligned grouping level
+    (e.g. ``("tools", "statistics", "scb", "ekonomi")``), so we use
+    the full namespace to preserve sub-domain granularity instead of
+    truncating to 3 segments (which collapsed all SCB sub-namespaces
+    into a single ``tools/statistics/scb``).
     """
     prefixes: set[str] = set()
     for t in get_platform_tools():
         if len(t.namespace) >= 2:
-            # Use up to 3 segments, but not the leaf (tool-specific) segment
-            depth = min(3, len(t.namespace) - 1) if len(t.namespace) > 3 else min(3, len(t.namespace))
-            prefixes.add("/".join(t.namespace[:depth]))
+            prefixes.add("/".join(t.namespace))
     return sorted(prefixes)
 
 
