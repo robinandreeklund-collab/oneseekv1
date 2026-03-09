@@ -2550,8 +2550,8 @@ class NexusService:
             f"Fråga: {query}\n\n"
             f"Kandidater:\n" + "\n".join(tool_lines) + "\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
             "VERKTYG: <tool_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2668,8 +2668,8 @@ class NexusService:
             "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna domän matchar>\n"
             "DOMÄN: <domain_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2733,8 +2733,8 @@ class NexusService:
             "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna agent passar bäst>\n"
             "AGENT: <agent_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         try:
@@ -2837,8 +2837,8 @@ class NexusService:
                 "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
                 "INTE ett nummer.\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
+                "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
                 "VERKTYG: <tool_id>\n"
-                "MOTIVERING: <en mening>\n"
             )
 
             try:
@@ -3017,9 +3017,9 @@ class NexusService:
             "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna domän matchar>\n"
             "DOMÄN: <domain_id>\n"
             "KOMPLEXITET: <trivial|simple|complex>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         chosen_domain = ""
@@ -3102,8 +3102,8 @@ class NexusService:
             "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
             "INTE ett nummer.\n\n"
             "Svara EXAKT i detta format (inget annat):\n"
+            "MOTIVERING: <en mening som förklarar varför just denna agent passar bäst>\n"
             "AGENT: <agent_id>\n"
-            "MOTIVERING: <en mening>\n"
         )
 
         chosen_agent = ""
@@ -3251,8 +3251,8 @@ class NexusService:
                 "VIKTIGT: Svara med det exakta verktygs-ID:t (t.ex. 'smhi_temperatur'), "
                 "INTE ett nummer.\n\n"
                 "Svara EXAKT i detta format (inget annat):\n"
+                "MOTIVERING: <en mening som förklarar varför just detta verktyg passar>\n"
                 "VERKTYG: <tool_id>\n"
-                "MOTIVERING: <en mening>\n"
             )
             try:
                 tool_response = await nexus_llm_call(tool_prompt)
