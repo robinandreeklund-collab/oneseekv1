@@ -38,6 +38,8 @@ from app.agents.new_chat.tools.registry import (
 )
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikverket import TRAFIKVERKET_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
+from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
 from app.services.cache_control import is_cache_disabled
 from app.services.reranker_service import RerankerService
 from app.utils.text import normalize_text as _normalize_text, tokenize as _tokenize
@@ -127,6 +129,20 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "riksdag_kalender": ("tools", "politik", "kalender"),
     "riksdag_kalender_kammare": ("tools", "politik", "kalender", "kammare"),
     "riksdag_kalender_utskott": ("tools", "politik", "kalender", "utskott"),
+    # Riksbank tools - under tools/riksbank
+    "riksbank_ranta_styrranta": ("tools", "riksbank", "ekonomi", "rantor"),
+    "riksbank_ranta_marknadsrantor": ("tools", "riksbank", "ekonomi", "rantor"),
+    "riksbank_valuta_kurser": ("tools", "riksbank", "ekonomi", "valuta"),
+    "riksbank_valuta_korsrantor": ("tools", "riksbank", "ekonomi", "valuta"),
+    "riksbank_swestr": ("tools", "riksbank", "ekonomi", "swestr"),
+    "riksbank_prognos_inflation": ("tools", "riksbank", "ekonomi", "prognos"),
+    "riksbank_prognos_bnp": ("tools", "riksbank", "ekonomi", "prognos"),
+    "riksbank_prognos_ovrigt": ("tools", "riksbank", "ekonomi", "prognos"),
+    # Elpris tools - under tools/elpris
+    "elpris_idag": ("tools", "elpris", "energi"),
+    "elpris_imorgon": ("tools", "elpris", "energi"),
+    "elpris_historik": ("tools", "elpris", "energi"),
+    "elpris_jamforelse": ("tools", "elpris", "energi"),
     # Marketplace tools - all under tools/marketplace
     "marketplace_unified_search": ("tools", "marketplace", "search"),
     "marketplace_blocket_search": ("tools", "marketplace", "search"),
@@ -425,6 +441,20 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "kolada_kultur": ["kultur", "bibliotek", "museum", "teater", "fritid", "idrottsanlaggning", "idrottsanläggning", "kulturhus", "kolada"],
     "kolada_arbetsmarknad": ["arbetsmarknad", "sysselsattning", "sysselsättning", "arbetsloshet", "arbetslöshet", "arbete", "jobb", "arbetsmarknadsatgard", "arbetsmarknadsåtgärd", "kolada"],
     "kolada_demokrati": ["demokrati", "val", "valdeltagande", "medborgarengagemang", "medborgarservice", "kommunikation", "deltagande", "kolada"],
+    # Riksbank tools keywords
+    "riksbank_ranta_styrranta": ["styrränta", "reporänta", "riksbanken", "ränta", "penningpolitik", "inlåningsränta"],
+    "riksbank_ranta_marknadsrantor": ["stibor", "statsobligation", "marknadsränta", "bostadsränta", "obligationsränta"],
+    "riksbank_valuta_kurser": ["valutakurs", "växelkurs", "sek", "euro", "dollar", "pund", "nok", "dkk", "valuta"],
+    "riksbank_valuta_korsrantor": ["korskurs", "cross rate", "valutapar", "eur/usd"],
+    "riksbank_swestr": ["swestr", "dagslåneränta", "referensränta", "overnight", "interbankränta"],
+    "riksbank_prognos_inflation": ["inflationsprognos", "kpi", "kpif", "inflation", "riksbanken prognos"],
+    "riksbank_prognos_bnp": ["bnp-prognos", "tillväxtprognos", "ekonomisk tillväxt", "riksbanken"],
+    "riksbank_prognos_ovrigt": ["makroprognos", "arbetslöshetsprognos", "ränteprognos", "makroekonomi"],
+    # Elpris tools keywords
+    "elpris_idag": ["elpris", "elpriser", "spotpris", "idag", "kwh", "el", "timpris"],
+    "elpris_imorgon": ["elpris", "imorgon", "morgondagens", "spotpris", "el"],
+    "elpris_historik": ["elpris", "historik", "historiska", "prishistorik", "eldata"],
+    "elpris_jamforelse": ["elpris", "jämförelse", "jämför", "elzon", "elområde", "se1", "se2", "se3", "se4"],
     # Marketplace tools keywords
     "marketplace_unified_search": ["marknadsplats", "sök", "köp", "sälj", "begagnat", "annons"],
     "marketplace_blocket_search": ["blocket", "sök", "köp", "sälj", "begagnat", "annons"],
@@ -897,6 +927,25 @@ def _namespace_for_skolverket_tool(tool_id: str) -> tuple[str, ...]:
     return ("tools", "knowledge", "skolverket")
 
 
+def _namespace_for_riksbank_tool(tool_id: str) -> tuple[str, ...]:
+    """Map Riksbank tools to sub-namespaces."""
+    normalized = str(tool_id or "").strip().lower()
+    if "valuta" in normalized:
+        return ("tools", "riksbank", "ekonomi", "valuta")
+    if "swestr" in normalized:
+        return ("tools", "riksbank", "ekonomi", "swestr")
+    if "prognos" in normalized:
+        return ("tools", "riksbank", "ekonomi", "prognos")
+    if "ranta" in normalized:
+        return ("tools", "riksbank", "ekonomi", "rantor")
+    return ("tools", "riksbank", "ekonomi")
+
+
+def _namespace_for_elpris_tool(tool_id: str) -> tuple[str, ...]:
+    """Map Elpris tools to sub-namespaces."""
+    return ("tools", "elpris", "energi")
+
+
 def _namespace_for_bolagsverket_tool(tool_id: str) -> tuple[str, ...]:
     parts = tool_id.split("_")
     if len(parts) >= 2:
@@ -953,6 +1002,8 @@ _NAMESPACE_REGISTRY: list[
     ("trafikverket_vader_", _namespace_for_weather_tool),
     ("scb_", _namespace_for_scb_tool),
     ("kolada_", _namespace_for_kolada_tool),
+    ("riksbank_", _namespace_for_riksbank_tool),
+    ("elpris_", _namespace_for_elpris_tool),
     ("bolagsverket_", _namespace_for_bolagsverket_tool),
     ("trafikverket_", _namespace_for_trafikverket_tool),
     ("geoapify_", _namespace_for_geoapify_tool),
@@ -2562,6 +2613,8 @@ AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
         ("tools", "statistics", "scb", "samhalle"),
         ("tools", "statistics", "kolada", "samhalle"),
     ],
+    "riksbank-ekonomi": [("tools", "riksbank", "ekonomi")],
+    "elpris": [("tools", "elpris", "energi")],
     "bolag": [("tools", "bolag")],
     "kartor": [("tools", "kartor")],
     "riksdagen-dokument": [

@@ -49,6 +49,14 @@ from .bolagsverket import (
     BOLAGSVERKET_TOOL_DEFINITIONS,
     create_bolagsverket_tool,
 )
+from .riksbank import (
+    RIKSBANK_TOOL_DEFINITIONS,
+    create_riksbank_tool,
+)
+from .elpris import (
+    ELPRIS_TOOL_DEFINITIONS,
+    create_elpris_tool,
+)
 from .trafikverket import (
     TRAFIKVERKET_TOOL_DEFINITIONS,
     create_trafikverket_tool,
@@ -415,6 +423,30 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             enabled_by_default=False,
         )
         for spec in EXTERNAL_MODEL_SPECS
+    ],
+    # =========================================================================
+    # RIKSBANK API TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_riksbank_tool(definition),
+            requires=[],
+        )
+        for definition in RIKSBANK_TOOL_DEFINITIONS
+    ],
+    # =========================================================================
+    # ELPRIS API TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: create_elpris_tool(definition),
+            requires=[],
+        )
+        for definition in ELPRIS_TOOL_DEFINITIONS
     ],
     # =========================================================================
     # ADD YOUR CUSTOM TOOLS BELOW

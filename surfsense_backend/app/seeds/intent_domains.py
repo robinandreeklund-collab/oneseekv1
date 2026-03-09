@@ -88,7 +88,8 @@ DEFAULT_INTENT_DOMAINS: list[dict[str, Any]] = [
         "label": "Ekonomi & Skatter",
         "description": (
             "Frågor om ekonomi, skatter, moms, deklaration, räntor, "
-            "riksbanken, finansinspektionen, ekonomisk statistik."
+            "riksbanken, finansinspektionen, ekonomisk statistik, "
+            "riksbankens räntor, valutakurser, prognoser."
         ),
         "keywords": [
             "ekonomi",
@@ -103,6 +104,16 @@ DEFAULT_INTENT_DOMAINS: list[dict[str, Any]] = [
             "bnp",
             "budget",
             "statsbudget",
+            "styrränta",
+            "växelkurs",
+            "valutakurs",
+            "sek",
+            "swestr",
+            "stibor",
+            "reporänta",
+            "dagslåneränta",
+            "penningpolitik",
+            "valuta",
         ],
         "priority": 150,
         "enabled": True,
@@ -268,12 +279,14 @@ DEFAULT_INTENT_DOMAINS: list[dict[str, Any]] = [
         "label": "Energi & Miljö",
         "description": (
             "Frågor om energi, el, elpriser, kärnkraft, vindkraft, "
-            "miljö, utsläpp, klimatmål, naturvårdsverket."
+            "miljö, utsläpp, klimatmål, naturvårdsverket, "
+            "aktuella elpriser, spotpriser och elmarknadsdata."
         ),
         "keywords": [
             "energi",
             "el",
             "elpris",
+            "elpriser",
             "kärnkraft",
             "vindkraft",
             "solenergi",
@@ -282,6 +295,14 @@ DEFAULT_INTENT_DOMAINS: list[dict[str, Any]] = [
             "klimatmål",
             "naturvårdsverket",
             "energimyndigheten",
+            "spotpris",
+            "kwh",
+            "elzon",
+            "elområde",
+            "timpris",
+            "elmarknad",
+            "elräkning",
+            "elavtal",
         ],
         "priority": 200,
         "enabled": True,
