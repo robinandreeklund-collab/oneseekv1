@@ -5,6 +5,7 @@ Single source of truth for all NEXUS-specific configuration values.
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Zone Architecture
@@ -186,23 +187,52 @@ def _resolve_namespaces_from_flow_tools(
     namespace prefixes (full depth, e.g. "tools/statistics/scb/befolkning")
     that the agent's tools actually belong to.
 
-    Falls back to an empty tuple if no tools can be resolved.
+    Falls back to TOOL_NAMESPACE_OVERRIDES if platform tools are not yet
+    available (import-order / cache-timing edge case).
     """
+    tools_by_id: dict[str, Any] = {}
+
+    # Primary: platform tools (richest source — includes all domain tools)
     try:
         from app.nexus.platform_bridge import get_platform_tools
 
         tools_by_id = {t.tool_id: t for t in get_platform_tools()}
     except Exception:
-        return ()
+        pass
 
     prefixes: list[str] = []
+    unresolved: list[str] = []
     for ft in flow_tools:
         tid = ft.get("tool_id", "")
+        if not tid:
+            continue
         pt = tools_by_id.get(tid)
         if pt and len(pt.namespace) >= 2:
             prefix = "/".join(pt.namespace)
             if prefix not in prefixes:
                 prefixes.append(prefix)
+        else:
+            unresolved.append(tid)
+
+    # Fallback: resolve unresolved tools via TOOL_NAMESPACE_OVERRIDES
+    if unresolved:
+        try:
+            from app.agents.new_chat.bigtool_store import (
+                TOOL_NAMESPACE_OVERRIDES,
+                namespace_for_tool,
+            )
+
+            for tid in unresolved:
+                ns = TOOL_NAMESPACE_OVERRIDES.get(tid)
+                if ns is None:
+                    ns = namespace_for_tool(tid)
+                if len(ns) >= 2:
+                    prefix = "/".join(ns)
+                    if prefix not in prefixes:
+                        prefixes.append(prefix)
+        except Exception:
+            pass
+
     return tuple(prefixes)
 
 
@@ -241,6 +271,19 @@ def build_agents_from_metadata(
         primary_namespaces: tuple[str, ...] = ()
         if flow_tools:
             primary_namespaces = _resolve_namespaces_from_flow_tools(flow_tools)
+
+        # Fallback: use AGENT_NAMESPACE_MAP from bigtool_store (authoritative source)
+        if not primary_namespaces:
+            try:
+                from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP
+
+                ns_tuples = AGENT_NAMESPACE_MAP.get(agent_id, [])
+                if ns_tuples:
+                    primary_namespaces = tuple(
+                        "/".join(ns) for ns in ns_tuples
+                    )
+            except Exception:
+                pass
 
         # Fallback: use primary_namespaces from seed/metadata if present
         if not primary_namespaces:
