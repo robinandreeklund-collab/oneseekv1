@@ -279,6 +279,12 @@ class ScbService:
             maxsize=200, ttl=cache_ttl,
         )
 
+        from app.services.cache_control import register_service_cache
+
+        register_service_cache(self._node_cache)
+        register_service_cache(self._metadata_cache)
+        register_service_cache(self._codelist_cache)
+
     # -- Lifecycle -----------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:

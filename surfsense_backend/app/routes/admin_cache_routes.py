@@ -6,14 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.new_chat.bigtool_store import clear_tool_caches
 from app.agents.new_chat.supervisor_cache import clear_agent_combo_cache
-from app.db import AgentComboCache, SearchSpaceMembership, User
-from app.db import get_async_session
+from app.db import AgentComboCache, SearchSpaceMembership, User, get_async_session
 from app.schemas.admin_cache import (
     CacheClearResponse,
     CacheStateResponse,
     CacheToggleRequest,
 )
-from app.services.cache_control import is_cache_disabled, set_cache_disabled
+from app.services.cache_control import (
+    clear_all_service_caches,
+    is_cache_disabled,
+    set_cache_disabled,
+)
 from app.users import current_active_user
 
 logger = logging.getLogger(__name__)
@@ -79,7 +82,12 @@ async def clear_cache(
 
     clear_agent_combo_cache()
     clear_tool_caches()
-    cleared["in_memory"] = 1
+    cleared["in_memory_agent_combo"] = 1
+    cleared["in_memory_tool_embed"] = 1
+
+    # Flush all registered service TTL caches (SCB, Elpris, Riksbank, etc.)
+    service_flushed = clear_all_service_caches()
+    cleared["service_ttl_caches"] = service_flushed
 
     try:
         result = await session.execute(delete(AgentComboCache))

@@ -126,6 +126,11 @@ class TrafikanalysService:
             ttl=TRAFIKANALYS_CACHE_TTL_META,
         )
 
+        from app.services.cache_control import register_service_cache
+
+        register_service_cache(self._data_cache)
+        register_service_cache(self._meta_cache)
+
     # -- Lifecycle -----------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
