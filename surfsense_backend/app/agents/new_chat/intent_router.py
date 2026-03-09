@@ -252,7 +252,14 @@ def resolve_route_from_intents(
     try:
         selected_route = Route(route_value)
     except Exception:
-        return None
+        # Domain-specific routes (e.g. "trafik-och-transport") are not valid
+        # Route enum values.  Fall back to the fallback_route field which
+        # maps domains → one of the 4 base routes (kunskap / skapande / …).
+        fallback_value = str(top.get("fallback_route") or "").strip().lower()
+        try:
+            selected_route = Route(fallback_value)
+        except Exception:
+            return None
     confidence = _compute_confidence(scored)
     top_intent = str(top.get("intent_id") or selected_route.value)
     reason = f"intent_retrieval:{top_intent}"
