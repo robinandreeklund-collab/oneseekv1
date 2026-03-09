@@ -29,7 +29,9 @@ _SPECIALIZED_AGENTS = {
     "statistik-fastighet",  # SCB/Kolada housing & property
     "statistik-naringsliv",  # SCB business/enterprise
     "statistik-samhalle",  # SCB/Kolada society catch-all
-    "riksdagen",  # Parliament data + demokrati statistics
+    "riksdagen-dokument",  # Parliament documents + legislation
+    "riksdagen-debatt",  # Debates, speeches + voting records
+    "riksdagen-ledamoter",  # Members + calendar
     "bolag",  # Company registry tools
     "trafik-tag",  # Train/rail + route planning tools
     "trafik-vag",  # Road traffic/incidents/cameras tools
@@ -172,7 +174,9 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "statistik-fastighet": [],
         "statistik-naringsliv": [],
         "statistik-samhalle": [],
-        "riksdagen": [],
+        "riksdagen-dokument": [],
+        "riksdagen-debatt": [],
+        "riksdagen-ledamoter": [],
         "bolag": [],
         "marknad": [],
         "skolverket-kursplaner": [],
@@ -251,7 +255,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "scb_hushall": "statistik-ekonomi",
         "scb_handel": "statistik-ekonomi",
         "scb_transporter": "statistik-samhalle",
-        "scb_demokrati": "riksdagen",
+        "scb_demokrati": "riksdagen-dokument",
         "scb_kultur": "statistik-samhalle",
         "scb_jordbruk": "statistik-samhalle",
         "scb_amnesovergripande": "statistik-samhalle",
@@ -287,7 +291,7 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
         "kolada_miljo": "statistik-miljo",
         "kolada_boende": "statistik-fastighet",
         "kolada_arbetsmarknad": "statistik-arbetsmarknad",
-        "kolada_demokrati": "riksdagen",
+        "kolada_demokrati": "riksdagen-ledamoter",
         "kolada_kultur": "statistik-samhalle",
         "kolada_sammanfattning": "statistik-samhalle",
     }
@@ -308,11 +312,22 @@ def _build_agent_tool_profiles() -> dict[str, list[AgentToolProfile]]:
                 ),
             )
         )
+    # Riksdagen: split by category → sub-agent
+    _riksdagen_agent_by_category = {
+        "riksdagen_dokument": "riksdagen-dokument",
+        "riksdagen_status": "riksdagen-dokument",
+        "riksdagen_anforanden": "riksdagen-debatt",
+        "riksdagen_voteringar": "riksdagen-debatt",
+        "riksdagen_ledamoter": "riksdagen-ledamoter",
+        "riksdagen_kalender": "riksdagen-ledamoter",
+    }
     for definition in RIKSDAGEN_TOOL_DEFINITIONS:
-        profiles["riksdagen"].append(
+        category = str(getattr(definition, "category", "riksdagen_dokument"))
+        sub_agent = _riksdagen_agent_by_category.get(category, "riksdagen-dokument")
+        profiles[sub_agent].append(
             AgentToolProfile(
                 tool_id=str(getattr(definition, "tool_id", "")),
-                category=str(getattr(definition, "category", "riksdagen")),
+                category=category,
                 description=str(getattr(definition, "description", "")),
                 keywords=tuple(
                     str(item) for item in list(getattr(definition, "keywords", []))
@@ -472,7 +487,8 @@ _AGENT_NAME_ALIAS_MAP = {
     "map_agent": "kartor",
     "maps_agent": "kartor",
     # Parliament
-    "parliament_agent": "riksdagen",
+    "parliament_agent": "riksdagen-dokument",
+    "riksdagen": "riksdagen-dokument",
     # Company
     "company_agent": "bolag",
     # Code → kod

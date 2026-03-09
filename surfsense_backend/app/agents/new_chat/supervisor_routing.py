@@ -115,7 +115,10 @@ def _route_default_agent(
         "väder-risk": "väder-risk",
         "marknad": "marknad",
         "bolag": "bolag",
-        "riksdagen": "riksdagen",
+        "riksdagen": "riksdagen-dokument",
+        "riksdagen-dokument": "riksdagen-dokument",
+        "riksdagen-debatt": "riksdagen-debatt",
+        "riksdagen-ledamoter": "riksdagen-ledamoter",
         "kartor": "kartor",
         "media": "media",
         "kod": "kod",
@@ -258,7 +261,9 @@ def _guess_agent_from_alias(alias: str) -> str | None:
         (("utsläpp", "miljöstatistik", "energistatistik"), "statistik-miljo"),
         (("bygglov", "nybyggnation", "bostadsbestånd"), "statistik-fastighet"),
         (("nyföretagande", "företagsstatistik", "näringsverksamhet"), "statistik-naringsliv"),
-        (("riks", "parliament", "politik"), "riksdagen"),
+        (("riks", "parliament", "politik", "proposition", "motion", "lagforslag"), "riksdagen-dokument"),
+        (("debatt", "votering", "omrostning", "anforande", "fragestund"), "riksdagen-debatt"),
+        (("ledamot", "ledamoter", "valkrets", "riksdagskalender"), "riksdagen-ledamoter"),
         (("bolag", "company", "business", "org"), "bolag"),
         (
             (

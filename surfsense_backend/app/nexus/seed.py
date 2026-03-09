@@ -155,7 +155,15 @@ def _get_sample_queries(catalog: list[dict]) -> list[tuple]:
         )
 
     # Riksdagen queries
-    riks_tools = by_cat.get("riksdagen", [])
+    riks_tools = (
+        by_cat.get("riksdagen", [])
+        + by_cat.get("riksdagen_dokument", [])
+        + by_cat.get("riksdagen_anforanden", [])
+        + by_cat.get("riksdagen_voteringar", [])
+        + by_cat.get("riksdagen_ledamoter", [])
+        + by_cat.get("riksdagen_kalender", [])
+        + by_cat.get("riksdagen_status", [])
+    )
     if riks_tools:
         dok = next(
             (t for t in riks_tools if t["tool_id"] == "riksdag_dokument"), riks_tools[0]

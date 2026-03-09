@@ -257,7 +257,6 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
 
     # Simple agents: one import path → one agent_id
     simple_agent_tool_mapping = {
-        "riksdagen": "app.agents.new_chat.riksdagen_agent:RIKSDAGEN_TOOL_DEFINITIONS",
         "bolag": "app.agents.new_chat.tools.bolagsverket:BOLAGSVERKET_TOOL_DEFINITIONS",
         "marknad": "app.agents.new_chat.marketplace_tools:MARKETPLACE_TOOL_DEFINITIONS",
     }
@@ -293,6 +292,49 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
                     "priority": 100,
                 }
             )
+
+    # ── Riksdagen: split across 3 sub-agents by category ──
+    riksdagen_agent_by_category = {
+        "riksdagen_dokument": "riksdagen-dokument",
+        "riksdagen_status": "riksdagen-dokument",
+        "riksdagen_anforanden": "riksdagen-debatt",
+        "riksdagen_voteringar": "riksdagen-debatt",
+        "riksdagen_ledamoter": "riksdagen-ledamoter",
+        "riksdagen_kalender": "riksdagen-ledamoter",
+    }
+    riksdagen_ns_by_agent = {
+        "riksdagen-dokument": ["tools", "politik", "dokument"],
+        "riksdagen-debatt": ["tools", "politik", "debatt"],
+        "riksdagen-ledamoter": ["tools", "politik", "ledamoter"],
+    }
+    try:
+        from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
+
+        for definition in RIKSDAGEN_TOOL_DEFINITIONS:
+            tool_id = str(getattr(definition, "tool_id", ""))
+            if not tool_id:
+                continue
+            category = str(getattr(definition, "category", ""))
+            sub_agent = riksdagen_agent_by_category.get(category, "riksdagen-dokument")
+            additional.append(
+                {
+                    "tool_id": tool_id,
+                    "agent_id": sub_agent,
+                    "label": str(getattr(definition, "name", tool_id)),
+                    "description": str(getattr(definition, "description", "")),
+                    "keywords": list(getattr(definition, "keywords", [])),
+                    "category": category,
+                    "namespace": list(
+                        riksdagen_ns_by_agent.get(
+                            sub_agent, ["tools", "politik", "dokument"]
+                        )
+                    ),
+                    "enabled": True,
+                    "priority": 100,
+                }
+            )
+    except Exception:
+        pass
 
     # ── SMHI: split across 3 sub-agents by category ──
     smhi_agent_by_category = {
@@ -403,7 +445,7 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
         "scb_hushall": "statistik-ekonomi",
         "scb_handel": "statistik-ekonomi",
         "scb_transporter": "statistik-samhalle",
-        "scb_demokrati": "riksdagen",
+        "scb_demokrati": "riksdagen-dokument",
         "scb_kultur": "statistik-samhalle",
         "scb_jordbruk": "statistik-samhalle",
         "scb_amnesovergripande": "statistik-samhalle",
@@ -418,7 +460,7 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
         "statistik-fastighet": ["tools", "statistics", "scb", "fastighet"],
         "statistik-naringsliv": ["tools", "statistics", "scb", "naringsliv"],
         "statistik-samhalle": ["tools", "statistics", "scb", "samhalle"],
-        "riksdagen": ["tools", "politik", "riksdagen"],
+        "riksdagen-dokument": ["tools", "politik", "dokument"],
     }
     try:
         from app.agents.new_chat.statistics_agent import SCB_TOOL_DEFINITIONS
@@ -466,7 +508,7 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
         "kolada_miljo": "statistik-miljo",
         "kolada_boende": "statistik-fastighet",
         "kolada_arbetsmarknad": "statistik-arbetsmarknad",
-        "kolada_demokrati": "riksdagen",
+        "kolada_demokrati": "riksdagen-ledamoter",
         "kolada_kultur": "statistik-samhalle",
         "kolada_sammanfattning": "statistik-samhalle",
     }
@@ -478,7 +520,7 @@ def build_tool_definitions_from_profiles() -> list[dict[str, Any]]:
         "statistik-miljo": ["tools", "statistics", "kolada", "miljo"],
         "statistik-fastighet": ["tools", "statistics", "kolada", "fastighet"],
         "statistik-samhalle": ["tools", "statistics", "kolada", "samhalle"],
-        "riksdagen": ["tools", "politik", "riksdagen"],
+        "riksdagen-ledamoter": ["tools", "politik", "ledamoter"],
     }
     try:
         from app.agents.new_chat.kolada_tools import KOLADA_TOOL_DEFINITIONS

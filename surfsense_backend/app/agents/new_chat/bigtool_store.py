@@ -99,13 +99,9 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "call_perplexity": ("tools", "compare", "external"),
     "call_qwen": ("tools", "compare", "external"),
     "call_oneseek": ("tools", "compare", "research"),
-    # Riksdagen tools - all under tools/politik
+    # Riksdagen dokument tools (riksdagen-dokument agent)
     "riksdag_dokument": ("tools", "politik", "dokument"),
-    "riksdag_ledamoter": ("tools", "politik", "ledamoter"),
-    "riksdag_voteringar": ("tools", "politik", "voteringar"),
-    "riksdag_anforanden": ("tools", "politik", "anforanden"),
     "riksdag_dokumentstatus": ("tools", "politik", "status"),
-    # Riksdagen document sub-tools
     "riksdag_dokument_proposition": ("tools", "politik", "dokument", "proposition"),
     "riksdag_dokument_motion": ("tools", "politik", "dokument", "motion"),
     "riksdag_dokument_betankande": ("tools", "politik", "dokument", "betankande"),
@@ -118,14 +114,19 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "riksdag_dokument_rskr": ("tools", "politik", "dokument", "rskr"),
     "riksdag_dokument_eu": ("tools", "politik", "dokument", "eu"),
     "riksdag_dokument_rir": ("tools", "politik", "dokument", "rir"),
-    # Riksdagen anförande sub-tools
+    # Riksdagen debatt & votering tools (riksdagen-debatt agent)
+    "riksdag_anforanden": ("tools", "politik", "anforanden"),
     "riksdag_anforanden_debatt": ("tools", "politik", "anforanden", "debatt"),
     "riksdag_anforanden_fragestund": ("tools", "politik", "anforanden", "fragestund"),
-    # Riksdagen ledamot sub-tools
+    "riksdag_voteringar": ("tools", "politik", "voteringar"),
+    "riksdag_voteringar_resultat": ("tools", "politik", "voteringar", "resultat"),
+    # Riksdagen ledamöter & kalender tools (riksdagen-ledamoter agent)
+    "riksdag_ledamoter": ("tools", "politik", "ledamoter"),
     "riksdag_ledamoter_parti": ("tools", "politik", "ledamoter", "parti"),
     "riksdag_ledamoter_valkrets": ("tools", "politik", "ledamoter", "valkrets"),
-    # Riksdagen votering sub-tools
-    "riksdag_voteringar_resultat": ("tools", "politik", "voteringar", "resultat"),
+    "riksdag_kalender": ("tools", "politik", "kalender"),
+    "riksdag_kalender_kammare": ("tools", "politik", "kalender", "kammare"),
+    "riksdag_kalender_utskott": ("tools", "politik", "kalender", "utskott"),
     # Marketplace tools - all under tools/marketplace
     "marketplace_unified_search": ("tools", "marketplace", "search"),
     "marketplace_blocket_search": ("tools", "marketplace", "search"),
@@ -405,6 +406,9 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "riksdag_ledamoter_parti": ["parti", "socialdemokraterna", "moderaterna", "sverigedemokraterna"],
     "riksdag_ledamoter_valkrets": ["valkrets", "län", "stockholms", "skåne", "västra"],
     "riksdag_voteringar_resultat": ["resultat", "röstresultat", "detaljerat", "parti"],
+    "riksdag_kalender": ["kalender", "schema", "möte", "sammanträde", "händelse", "agenda"],
+    "riksdag_kalender_kammare": ["kammare", "debatt", "votering", "frågestund", "plenum"],
+    "riksdag_kalender_utskott": ["utskott", "EU-nämnden", "sammanträde", "kommitté"],
     # Kolada tools keywords
     "kolada_aldreomsorg": ["aldreomsorg", "äldreomsorg", "aldrevard", "äldrevård", "hemtjanst", "hemtjänst", "sarskilt", "särskilt", "boende", "alderdomshem", "älderdomshem", "kolada"],
     "kolada_lss": ["lss", "funktionshinder", "funktionsnedsattning", "funktionsnedsättning", "personlig", "assistans", "boende", "sarskild", "särskild", "service", "kolada"],
@@ -2560,9 +2564,18 @@ AGENT_NAMESPACE_MAP: dict[str, list[tuple[str, ...]]] = {
     ],
     "bolag": [("tools", "bolag")],
     "kartor": [("tools", "kartor")],
-    "riksdagen": [
-        ("tools", "politik"),
+    "riksdagen-dokument": [
+        ("tools", "politik", "dokument"),
+        ("tools", "politik", "status"),
         ("tools", "statistics", "scb", "demokrati"),
+    ],
+    "riksdagen-debatt": [
+        ("tools", "politik", "anforanden"),
+        ("tools", "politik", "voteringar"),
+    ],
+    "riksdagen-ledamoter": [
+        ("tools", "politik", "ledamoter"),
+        ("tools", "politik", "kalender"),
         ("tools", "statistics", "kolada", "demokrati"),
     ],
     "marketplace": [("tools", "marketplace")],

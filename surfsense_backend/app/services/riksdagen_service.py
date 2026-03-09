@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -26,7 +28,7 @@ _DIACRITIC_MAP = str.maketrans(
 @dataclass(frozen=True)
 class RiksdagenDocument:
     """Represents a document from Riksdagen."""
-    
+
     id: str
     doktyp: str
     rm: str
@@ -43,7 +45,7 @@ class RiksdagenDocument:
 @dataclass(frozen=True)
 class RiksdagenVotering:
     """Represents a voting record from Riksdagen."""
-    
+
     votering_id: str
     rm: str
     beteckning: str
@@ -60,7 +62,7 @@ class RiksdagenVotering:
 @dataclass(frozen=True)
 class RiksdagenLedamot:
     """Represents a member of parliament."""
-    
+
     intressent_id: str
     fornamn: str
     efternamn: str
@@ -73,7 +75,7 @@ class RiksdagenLedamot:
 @dataclass(frozen=True)
 class RiksdagenAnforande:
     """Represents a speech/statement in parliament."""
-    
+
     anforande_id: str
     dok_id: str
     rm: str
@@ -96,7 +98,7 @@ def _parse_document(item: dict[str, Any]) -> RiksdagenDocument | None:
         dok_id = str(item.get("id") or item.get("dok_id") or "")
         if not dok_id:
             return None
-        
+
         return RiksdagenDocument(
             id=dok_id,
             doktyp=str(item.get("doktyp") or ""),
@@ -120,7 +122,7 @@ def _parse_votering(item: dict[str, Any]) -> RiksdagenVotering | None:
         votering_id = str(item.get("votering_id") or item.get("id") or "")
         if not votering_id:
             return None
-        
+
         return RiksdagenVotering(
             votering_id=votering_id,
             rm=str(item.get("rm") or ""),
@@ -132,7 +134,8 @@ def _parse_votering(item: dict[str, Any]) -> RiksdagenVotering | None:
             ja_antal=item.get("ja_antal"),
             nej_antal=item.get("nej_antal"),
             avstår_antal=item.get("avstar_antal") or item.get("avstår_antal"),
-            frånvarande_antal=item.get("franvarande_antal") or item.get("frånvarande_antal"),
+            frånvarande_antal=item.get("franvarande_antal")
+            or item.get("frånvarande_antal"),
         )
     except Exception:
         return None
@@ -144,13 +147,13 @@ def _parse_ledamot(item: dict[str, Any]) -> RiksdagenLedamot | None:
         intressent_id = str(item.get("intressent_id") or item.get("id") or "")
         if not intressent_id:
             return None
-        
+
         fornamn = str(item.get("fornamn") or item.get("förnamn") or "")
         efternamn = str(item.get("efternamn") or "")
-        
+
         if not fornamn and not efternamn:
             return None
-        
+
         return RiksdagenLedamot(
             intressent_id=intressent_id,
             fornamn=fornamn,
@@ -158,7 +161,9 @@ def _parse_ledamot(item: dict[str, Any]) -> RiksdagenLedamot | None:
             parti=item.get("parti"),
             valkrets=item.get("valkrets"),
             status=item.get("status"),
-            bild_url=item.get("bild_url") or item.get("bild_url_80") or item.get("bild_url_192"),
+            bild_url=item.get("bild_url")
+            or item.get("bild_url_80")
+            or item.get("bild_url_192"),
         )
     except Exception:
         return None
@@ -170,7 +175,7 @@ def _parse_anforande(item: dict[str, Any]) -> RiksdagenAnforande | None:
         anforande_id = str(item.get("anforande_id") or item.get("id") or "")
         if not anforande_id:
             return None
-        
+
         return RiksdagenAnforande(
             anforande_id=anforande_id,
             dok_id=str(item.get("dok_id") or ""),
@@ -185,9 +190,71 @@ def _parse_anforande(item: dict[str, Any]) -> RiksdagenAnforande | None:
         return None
 
 
+@dataclass(frozen=True)
+class RiksdagenKalenderPost:
+    """Represents a calendar entry from Riksdagen."""
+
+    uid: str
+    summary: str
+    categories: str
+    location: str | None = None
+    dtstart: str | None = None
+    dtend: str | None = None
+    description: str | None = None
+    rm: str | None = None
+    dok_id: str | None = None
+
+
+def _parse_kalender_xml(xml_text: str) -> list[RiksdagenKalenderPost]:
+    """Parse calendar entries from Riksdagen XML response."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+
+    entries: list[RiksdagenKalenderPost] = []
+    for item in root.findall("kalender"):
+        uid = (item.findtext("UID") or "").strip()
+        if not uid:
+            continue
+
+        dtstart_raw = (item.findtext("DTSTART") or "").strip()
+        dtend_raw = (item.findtext("DTEND") or "").strip()
+
+        # Convert 20260624T090000 → 2026-06-24 09:00
+        dtstart = None
+        dtend = None
+        for raw, setter in [(dtstart_raw, "start"), (dtend_raw, "end")]:
+            if raw:
+                try:
+                    dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
+                    formatted = dt.strftime("%Y-%m-%d %H:%M")
+                    if setter == "start":
+                        dtstart = formatted
+                    else:
+                        dtend = formatted
+                except ValueError:
+                    pass
+
+        entries.append(
+            RiksdagenKalenderPost(
+                uid=uid,
+                summary=(item.findtext("SUMMARY") or "").strip(),
+                categories=(item.findtext("CATEGORIES") or "").strip(),
+                location=(item.findtext("LOCATION") or "").strip() or None,
+                dtstart=dtstart,
+                dtend=dtend,
+                description=(item.findtext("DESCRIPTION") or "").strip() or None,
+                rm=(item.findtext("XRDRM") or "").strip() or None,
+                dok_id=(item.findtext("XRDDOKID") or "").strip() or None,
+            )
+        )
+    return entries
+
+
 class RiksdagenService:
     """Service for communicating with Riksdagen's open data API."""
-    
+
     def __init__(
         self,
         base_url: str = RIKSDAGEN_BASE_URL,
@@ -195,14 +262,21 @@ class RiksdagenService:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-    
+
     async def _get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
         """Make GET request and return JSON response."""
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(url, params=params or {})
             response.raise_for_status()
             return response.json()
-    
+
+    async def _get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
+        """Make GET request and return raw text response."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(url, params=params or {})
+            response.raise_for_status()
+            return response.text
+
     async def search_documents(
         self,
         *,
@@ -217,7 +291,7 @@ class RiksdagenService:
     ) -> list[RiksdagenDocument]:
         """
         Search documents in Riksdagen.
-        
+
         Args:
             sokord: Search term
             doktyp: Document type (prop, mot, bet, etc.)
@@ -227,12 +301,12 @@ class RiksdagenService:
             organ: Committee (e.g. "FiU", "FöU")
             parti: Party code (s, m, sd, c, v, kd, mp, l, -)
             antal: Maximum number of results (default 20, max 100)
-        
+
         Returns:
             List of RiksdagenDocument objects
         """
         params: dict[str, Any] = {}
-        
+
         if sokord:
             params["sok"] = sokord
         if doktyp:
@@ -247,15 +321,15 @@ class RiksdagenService:
             params["org"] = organ
         if parti:
             params["parti"] = parti
-        
+
         params["utformat"] = "json"
         params["p"] = min(max(antal, 1), 100)
-        
+
         url = f"{self.base_url}/dokumentlista/"
-        
+
         try:
             data = await self._get_json(url, params)
-            
+
             # Handle different response structures
             if isinstance(data, dict):
                 items = data.get("dokumentlista", {}).get("dokument", [])
@@ -263,21 +337,21 @@ class RiksdagenService:
                 items = data
             else:
                 return []
-            
+
             if not isinstance(items, list):
                 items = [items] if items else []
-            
+
             documents = []
             for item in items:
                 doc = _parse_document(item)
                 if doc:
                     documents.append(doc)
-            
+
             return documents[:antal]
-        
+
         except httpx.HTTPError:
             return []
-    
+
     async def search_voteringar(
         self,
         *,
@@ -294,7 +368,7 @@ class RiksdagenService:
     ) -> list[RiksdagenVotering]:
         """
         Search voting records in Riksdagen.
-        
+
         Args:
             sokord: Search term
             rm: Parliamentary year
@@ -306,12 +380,12 @@ class RiksdagenService:
             valkrets: Electoral district
             iid: Member ID
             antal: Maximum number of results
-        
+
         Returns:
             List of RiksdagenVotering objects
         """
         params: dict[str, Any] = {}
-        
+
         if sokord:
             params["sok"] = sokord
         if rm:
@@ -330,36 +404,36 @@ class RiksdagenService:
             params["valkrets"] = valkrets
         if iid:
             params["iid"] = iid
-        
+
         params["utformat"] = "json"
         params["p"] = min(max(antal, 1), 100)
-        
+
         url = f"{self.base_url}/voteringlista/"
-        
+
         try:
             data = await self._get_json(url, params)
-            
+
             if isinstance(data, dict):
                 items = data.get("voteringlista", {}).get("votering", [])
             elif isinstance(data, list):
                 items = data
             else:
                 return []
-            
+
             if not isinstance(items, list):
                 items = [items] if items else []
-            
+
             voteringar = []
             for item in items:
                 votering = _parse_votering(item)
                 if votering:
                     voteringar.append(votering)
-            
+
             return voteringar[:antal]
-        
+
         except httpx.HTTPError:
             return []
-    
+
     async def search_ledamoter(
         self,
         *,
@@ -373,7 +447,7 @@ class RiksdagenService:
     ) -> list[RiksdagenLedamot]:
         """
         Search members of parliament.
-        
+
         Args:
             fnamn: First name
             enamn: Last name
@@ -382,12 +456,12 @@ class RiksdagenService:
             iid: Member ID
             rdlstatus: Status (samtida=current, historisk=historical)
             antal: Maximum number of results
-        
+
         Returns:
             List of RiksdagenLedamot objects
         """
         params: dict[str, Any] = {}
-        
+
         if fnamn:
             params["fnamn"] = fnamn
         if enamn:
@@ -398,37 +472,37 @@ class RiksdagenService:
             params["valkrets"] = valkrets
         if iid:
             params["iid"] = iid
-        
+
         params["rdlstatus"] = rdlstatus
         params["utformat"] = "json"
         params["p"] = min(max(antal, 1), 100)
-        
+
         url = f"{self.base_url}/personlista/"
-        
+
         try:
             data = await self._get_json(url, params)
-            
+
             if isinstance(data, dict):
                 items = data.get("personlista", {}).get("person", [])
             elif isinstance(data, list):
                 items = data
             else:
                 return []
-            
+
             if not isinstance(items, list):
                 items = [items] if items else []
-            
+
             ledamoter = []
             for item in items:
                 ledamot = _parse_ledamot(item)
                 if ledamot:
                     ledamoter.append(ledamot)
-            
+
             return ledamoter[:antal]
-        
+
         except httpx.HTTPError:
             return []
-    
+
     async def search_anforanden(
         self,
         *,
@@ -443,7 +517,7 @@ class RiksdagenService:
     ) -> list[RiksdagenAnforande]:
         """
         Search speeches/statements in parliament.
-        
+
         Args:
             sokord: Search term
             anftyp: Speech type (kam-ad, kam-bu, etc.)
@@ -453,12 +527,12 @@ class RiksdagenService:
             parti: Party code
             iid: Member ID
             antal: Maximum number of results
-        
+
         Returns:
             List of RiksdagenAnforande objects
         """
         params: dict[str, Any] = {}
-        
+
         if sokord:
             params["sok"] = sokord
         if anftyp:
@@ -473,36 +547,36 @@ class RiksdagenService:
             params["parti"] = parti
         if iid:
             params["iid"] = iid
-        
+
         params["utformat"] = "json"
         params["p"] = min(max(antal, 1), 100)
-        
+
         url = f"{self.base_url}/anforandelista/"
-        
+
         try:
             data = await self._get_json(url, params)
-            
+
             if isinstance(data, dict):
                 items = data.get("anforandelista", {}).get("anforande", [])
             elif isinstance(data, list):
                 items = data
             else:
                 return []
-            
+
             if not isinstance(items, list):
                 items = [items] if items else []
-            
+
             anforanden = []
             for item in items:
                 anforande = _parse_anforande(item)
                 if anforande:
                     anforanden.append(anforande)
-            
+
             return anforanden[:antal]
-        
+
         except httpx.HTTPError:
             return []
-    
+
     async def get_dokumentstatus(
         self,
         *,
@@ -510,52 +584,101 @@ class RiksdagenService:
     ) -> dict[str, Any]:
         """
         Get document status/history.
-        
+
         Args:
             dok_id: Document ID
-        
+
         Returns:
             Dictionary with document status information
         """
         params = {
             "utformat": "json",
         }
-        
+
         url = f"{self.base_url}/dokumentstatus/{dok_id}"
-        
+
         try:
             data = await self._get_json(url, params)
             return data if isinstance(data, dict) else {}
         except httpx.HTTPError:
             return {}
-    
+
+    async def search_kalender(
+        self,
+        *,
+        from_datum: str | None = None,
+        tom_datum: str | None = None,
+        org: str | None = None,
+        akt: str | None = None,
+        sok: str | None = None,
+        antal: int = 30,
+    ) -> list[RiksdagenKalenderPost]:
+        """
+        Search calendar events in Riksdagen.
+
+        Args:
+            from_datum: From date (YYYY-MM-DD)
+            tom_datum: To date (YYYY-MM-DD)
+            org: Organisation/committee (e.g. "kamm", "FiU", "FöU")
+            akt: Activity type (e.g. "vo" for beslut, "fs" for frågestund)
+            sok: Search term
+            antal: Maximum number of results
+
+        Returns:
+            List of RiksdagenKalenderPost objects
+        """
+        params: dict[str, Any] = {}
+
+        if sok:
+            params["sok"] = sok
+        if from_datum:
+            params["from"] = from_datum
+        if tom_datum:
+            params["tom"] = tom_datum
+        if org:
+            params["org"] = org
+        if akt:
+            params["akt"] = akt
+
+        # Calendar API only supports XML output
+        params["utformat"] = "xml"
+
+        url = f"{self.base_url}/kalender/"
+
+        try:
+            xml_text = await self._get_text(url, params)
+            entries = _parse_kalender_xml(xml_text)
+            return entries[:antal]
+        except httpx.HTTPError:
+            return []
+
     async def list_organ(self) -> list[dict[str, Any]]:
         """
         List all committees (utskott).
-        
+
         Returns:
             List of committee information
         """
         params = {
             "utformat": "json",
         }
-        
+
         url = f"{self.base_url}/organ/"
-        
+
         try:
             data = await self._get_json(url, params)
-            
+
             if isinstance(data, dict):
                 items = data.get("organlista", {}).get("organ", [])
             elif isinstance(data, list):
                 items = data
             else:
                 return []
-            
+
             if not isinstance(items, list):
                 items = [items] if items else []
-            
+
             return items
-        
+
         except httpx.HTTPError:
             return []

@@ -277,9 +277,17 @@ class ShadowObserver:
                 [("tools", "statistics")],
                 [("tools", "knowledge")],
             ),
-            "riksdagen": (
-                [("tools", "politik")],
-                [("tools", "knowledge")],
+            "riksdagen-dokument": (
+                [("tools", "politik", "dokument"), ("tools", "politik", "status")],
+                [("tools", "politik"), ("tools", "knowledge")],
+            ),
+            "riksdagen-debatt": (
+                [("tools", "politik", "anforanden"), ("tools", "politik", "voteringar")],
+                [("tools", "politik"), ("tools", "knowledge")],
+            ),
+            "riksdagen-ledamoter": (
+                [("tools", "politik", "ledamoter"), ("tools", "politik", "kalender")],
+                [("tools", "politik"), ("tools", "knowledge")],
             ),
             "bolag": (
                 [("tools", "bolag")],

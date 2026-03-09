@@ -442,13 +442,14 @@ def _build_tool_api_categories_response(
         logger.exception("Failed to load SCB API categories")
 
     try:
-        from app.agents.new_chat.riksdagen_agent import (
-            RIKSDAGEN_TOOL_DEFINITIONS,
-            RIKSDAGEN_TOP_LEVEL_TOOLS,
-        )
+        from app.agents.new_chat.riksdagen_agent import RIKSDAGEN_TOOL_DEFINITIONS
 
         _ensure_provider("riksdagen", "Riksdagen")
-        top_level_ids = {definition.tool_id for definition in RIKSDAGEN_TOP_LEVEL_TOOLS}
+        _riksdagen_top_level_ids = {
+            "riksdag_dokument", "riksdag_ledamoter", "riksdag_voteringar",
+            "riksdag_anforanden", "riksdag_dokumentstatus", "riksdag_kalender",
+        }
+        top_level_ids = _riksdagen_top_level_ids
         for definition in RIKSDAGEN_TOOL_DEFINITIONS:
             level = "top_level" if definition.tool_id in top_level_ids else "subcategory"
             category_id = str(definition.category or "riksdagen").strip()
