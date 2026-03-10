@@ -67,22 +67,58 @@ FROM(val):   {"valueCodes": ["FROM(2020)"]} → från 2020 och framåt
 RANGE(a,b):  {"valueCodes": ["RANGE(2015,2020)"]} → intervall
 ```
 
-**API-endpoints:**
+**Alla v2 API-endpoints (fullständig lista):**
 ```
-GET  /tables?query=X&lang=sv         → Fulltextsökning
+GET  /config                         → API-version, rate limits, format-stöd
+GET  /tables?query=X&lang=sv         → Fulltextsökning med paginering (pageSize, pageNumber)
+GET  /tables?pastDays=30             → Nyligen uppdaterade tabeller
 GET  /tables/{id}                    → Tabell-info (period, ämne, sökväg)
 GET  /tables/{id}/metadata           → JSON-stat2 dimensioner + codelist-refs
-POST /tables/{id}/data?outputFormat= → Datahämtning (json-stat2, csv, xlsx, parquet)
-GET  /navigation/{id}               → Trädnavigering (ämnesområden)
-GET  /codelists/{id}                 → Delade kodlistor (regionkoder, etc.)
+GET  /tables/{id}/defaultselection   → Default-urval (!)
+GET  /tables/{id}/data               → GET-baserad datahämtning (URL-parametrar)
+POST /tables/{id}/data?outputFormat= → POST-baserad datahämtning (json-stat2, csv, xlsx, parquet, html, px, json-px)
+GET  /codelists/{id}                 → Delade kodlistor (regionkoder, value sets, aggregeringar)
+POST /savedqueries                   → Spara en fråga
+GET  /savedqueries/{id}              → Hämta sparad fråga
+GET  /savedqueries/{id}/data         → Kör sparad fråga
 ```
+
+**Komplett v2 selektionsuttryck (verifierade live):**
+```
+*                     → Alla värden (wildcard)
+00*                   → Prefix-wildcard (alla koder som börjar med "00")
+*01                   → Suffix-wildcard
+?????                 → Teckenmask (exakt 5 tecken)
+TOP(n)                → Senaste n perioder (verifierat ✓)
+TOP(n, offset)        → Senaste n med offset
+BOTTOM(n)             → Äldsta n perioder (verifierat ✓)
+BOTTOM(n, offset)     → Äldsta n med offset
+FROM(value)           → Från värde och framåt (verifierat ✓)
+TO(value)             → Till ett värde
+RANGE(from, to)       → Inklusivt intervall (verifierat ✓)
+```
+
+**v2 extra POST-fält vi inte använder:**
+- `codelist` per variabel: `{"variableCode": "Region", "codelist": "vs_RegionKommun07", "valueCodes": ["0180"]}` — Välj bland grupperade kodlistor (län, kommun, storstäder etc.)
+- `placement` — styr pivot: `{"heading": ["Tid"], "stub": ["Region", "Kon"]}` — Kontrollerar tabellayout i CSV/HTML
+- `defaultselection` endpoint — SCB:s rekommenderade standardurval
+
+**v2 CSV/XLSX extra parametrar:**
+- `UseCodes`, `UseTexts`, `UseCodesAndTexts` — kontrollera labelformat
+- `ExcludeZerosAndMissingValues` — filtrera bort tomma celler
+- `SeparatorTab`, `SeparatorSemicolon` — separatorval
 
 **Viktiga metadata-fält vi inte använder:**
 - `extension.elimination` / `eliminationValueCode` — säger vilka variabler som kan utelämnas och default-värde
 - `role.time` / `role.metric` — exakt vilka dimensioner som är tid respektive mått
+- `category.unit` — enhet och decimaler per ContentsCode: `{"BE0101N1": {"base": "number of persons", "decimals": 0}}`
+- `extension.refperiod` — referensperiod: `{"BE0101N1": "31 December each year"}`
+- `extension.measuringType` — mättyp: `Stock`, `Flow`, etc.
 - `firstPeriod` / `lastPeriod` — ger periodomfång utan att hämta metadata
 - `subjectCode` — ämnesklassificering
 - `note[]` — fotnoter med kvalitetsinformation
+- `status` — markerar speciella värden i data: `".."` = saknas/sekretessbelagt
+- `extension.px.official-statistics` — om tabellen är officiell statistik
 
 ---
 
@@ -456,7 +492,24 @@ Användare: "Folkmängd i Stockholm senaste 5 åren"
 
 ### Top 5 förbättringar (prioritetsordning)
 1. **JSON-stat2 → Markdown-tabell** — LLM kan läsa data korrekt (eliminerar huvudproblemet)
-2. **v2 filteruttryck (TOP, FROM, RANGE, *)** — drastiskt enklare urval
-3. **Auto-complete med elimination-defaults** — färre fel, färre tool-calls
-4. **Navigeringsverktyg** — LLM kan utforska SCB:s trädstruktur
+2. **v2 filteruttryck (TOP, FROM, RANGE, *, prefix-wildcard)** — drastiskt enklare urval
+3. **Auto-complete med elimination-defaults + defaultselection** — färre fel, färre tool-calls
+4. **Codelists (vs_RegionLän, vs_RegionKommun)** — välj aggregeringsnivå
 5. **Rate limiting (30 req/10s)** — robusthet i produktion
+
+---
+
+## 4. APPENDIX: v1 vs v2 API-skillnader
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| Navigation | Sökvägsbaserad trädnavigering (GET `/ssd/BE/BE0101`) | `/tables` sökning + stabila tabell-ID:n |
+| Tabell-ID | Sökvägsbaserade namn (`BefolkningNy`) | Stabila ID:n (`TAB638`) |
+| Query-metod | Enbart POST | GET och POST |
+| Selection-syntax | Filter-typer (`item`, `top`, `all`, `vs:`, `agg:`) | Uttryck i valueCodes (`top(n)`, `range()`, `from()`, `*`, `?`) |
+| Responsformat | 4 (json-stat2, json, csv, px) | 7 (+ xlsx, html, json-px, parquet) |
+| Kodlistor | Via filterprefix (`vs:`, `agg:`) | Dedikerad `/codelists/{id}` + `codelist`-fält |
+| Sparade frågor | Ej tillgängligt | Full CRUD via `/savedqueries` |
+| Rate limit | 30 req/10s (per IP) | 30 req/10s (per IP) |
+| Max celler | 150 000 | 150 000 |
+| Felkoder | 400, 403, 404 | 400, 403, 404, 429 (rate limited) |
