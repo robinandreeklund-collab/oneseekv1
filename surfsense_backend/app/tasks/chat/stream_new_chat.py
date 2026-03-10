@@ -872,6 +872,65 @@ _PIPELINE_JSON_KEYS = (
     "confidence",
 )
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
+
+# ── Trace output sanitization ────────────────────────────────────────
+# LangGraph chain events include the full graph state as output.
+# Strip internal-only keys so they don't leak into the live trace.
+_TRACE_INTERNAL_STATE_KEYS = frozenset({
+    "live_routing_trace",
+    "worker_system_prompt",
+    "micro_plans",
+    "retrieval_feedback",
+    "targeted_missing_info",
+    "cross_session_memory_context",
+    "critic_history",
+    "no_progress_runs",
+    "replan_count",
+    "guard_finalized",
+    "guard_parallel_preview",
+    "pending_hitl_payload",
+    "pending_hitl_stage",
+    "user_feedback",
+})
+# Keys to strip from selected_agents dicts (internal retrieval metadata)
+_AGENT_INTERNAL_KEYS = frozenset({
+    "keywords", "excludes", "priority", "fallback_route",
+})
+
+
+def _sanitize_chain_output_for_trace(output: Any) -> Any:
+    """Remove internal state keys from LangGraph chain output for trace."""
+    if not isinstance(output, dict):
+        return output
+    cleaned = {
+        k: v for k, v in output.items()
+        if k not in _TRACE_INTERNAL_STATE_KEYS
+    }
+    # Strip internal metadata from selected_agents list
+    agents = cleaned.get("selected_agents")
+    if isinstance(agents, list):
+        cleaned["selected_agents"] = [
+            {k: v for k, v in a.items() if k not in _AGENT_INTERNAL_KEYS}
+            if isinstance(a, dict) else a
+            for a in agents
+        ]
+    # Strip confidence from result_contract (it's an internal quality score)
+    for key in ("step_results", "recent_agent_calls"):
+        items = cleaned.get(key)
+        if isinstance(items, list):
+            sanitized = []
+            for item in items:
+                if isinstance(item, dict):
+                    rc = item.get("result_contract")
+                    if isinstance(rc, dict) and "confidence" in rc:
+                        item = {**item, "result_contract": {
+                            k: v for k, v in rc.items() if k != "confidence"
+                        }}
+                sanitized.append(item)
+            cleaned[key] = sanitized
+    return cleaned
+
+
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
     "memory_context",
@@ -2249,9 +2308,7 @@ async def stream_new_chat(
             route_meta = {
                 "route": route.value,
                 "route_source": str(route_decision.get("source") or ""),
-                "route_confidence": route_decision.get("confidence"),
                 "route_reason": str(route_decision.get("reason") or ""),
-                "route_candidates": route_decision.get("candidates") or [],
                 "citations_enabled": citations_enabled,
                 "citation_instructions_enabled": citations_enabled,
                 "runtime_hitl": runtime_hitl or {},
@@ -2746,13 +2803,10 @@ async def stream_new_chat(
                         payload.get("graph_complexity") or ""
                     ).strip()
                     reason = str(payload.get("reason") or "").strip()
-                    confidence = payload.get("confidence")
                     if intent_id:
                         items.append(f"Avsikt: {intent_id}")
                     if graph_complexity:
                         items.append(f"Komplexitet: {graph_complexity}")
-                    if isinstance(confidence, (int, float)):
-                        items.append(f"Konfidens: {float(confidence):.2f}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "agent_resolver":
@@ -3453,7 +3507,7 @@ async def stream_new_chat(
                         yield synthesis_event
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
-                        output_data=chain_output,
+                        output_data=_sanitize_chain_output_for_trace(chain_output),
                         status="completed",
                     )
                     if trace_event:
