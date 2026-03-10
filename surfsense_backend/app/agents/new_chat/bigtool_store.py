@@ -167,9 +167,27 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "marketplace_compare_prices": ("tools", "marketplace", "compare"),
     "marketplace_categories": ("tools", "marketplace", "reference"),
     "marketplace_regions": ("tools", "marketplace", "reference"),
+    # SCB LLM-driven hybrid tools
+    "scb_search_and_inspect": ("tools", "statistics", "scb"),
+    "scb_validate_selection": ("tools", "statistics", "scb"),
+    "scb_fetch_validated": ("tools", "statistics", "scb"),
 }
 
 TOOL_KEYWORDS: dict[str, list[str]] = {
+    # SCB LLM-driven hybrid tools
+    "scb_search_and_inspect": [
+        "scb", "statistik", "tabell", "variabel", "statistiska",
+        "centralbyran", "befolkning", "arbetsmarknad", "ekonomi",
+        "utbildning", "miljo", "halsa", "boende", "priser",
+        "handel", "transport", "energi", "jordbruk",
+    ],
+    "scb_validate_selection": [
+        "scb", "validera", "kontrollera", "selection", "variabel",
+        "kod", "varde", "statistik",
+    ],
+    "scb_fetch_validated": [
+        "scb", "hamta", "data", "fetch", "statistik", "tabell",
+    ],
     "search_knowledge_base": ["sok", "search", "note", "calendar", "knowledge"],
     "search_surfsense_docs": ["surfsense", "docs", "manual", "guide"],
     "search_tavily": ["nyheter", "webb", "news", "tavily", "extern"],
