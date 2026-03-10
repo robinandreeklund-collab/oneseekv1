@@ -2749,6 +2749,16 @@ async def stream_new_chat(
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
 
+        def _update_route_label(new_domain: str) -> None:
+            """Update route_label/route_prefix after resolve_intent resolves the real domain."""
+            nonlocal route_label, route_prefix
+            clean = str(new_domain or "").strip()
+            if not clean:
+                return
+            # Capitalise first letter, keep rest (e.g. "väder-och-klimat" → "Väder-och-klimat")
+            route_label = f"Supervisor/{clean[0].upper()}{clean[1:]}"
+            route_prefix = f"[{route_label}] "
+
         def format_step_title(title: str) -> str:
             if not title:
                 return title
@@ -2797,8 +2807,11 @@ async def stream_new_chat(
                 title = format_step_title("Uppdaterar intern planerare")
                 items: list[str] = []
                 if kind == "intent":
-                    title = format_step_title("Tolkar avsikt")
                     intent_id = str(payload.get("intent_id") or "").strip()
+                    # Dynamically update the route label to show the resolved domain
+                    if intent_id:
+                        _update_route_label(intent_id)
+                    title = format_step_title("Tolkar avsikt")
                     graph_complexity = str(
                         payload.get("graph_complexity") or ""
                     ).strip()
