@@ -39,7 +39,11 @@ DEFAULT_SUPERVISOR_SCOPED_TOOL_PROMPT_TEMPLATE = (
     "Fokusera pa dessa mest relevanta verktyg/kategorier for uppgiften:\n"
     "{tool_lines}\n"
     "Anvand i forsta hand ett av ovanstaende verktyg och hall argumenten strikt till valt verktygs schema.\n"
-    "Om inget av dessa verktyg passar uppgiften: kor retrieve_tools igen med forfinad intent innan fortsattning."
+    "Om inget av dessa verktyg passar uppgiften: kor retrieve_tools igen med forfinad intent innan fortsattning.\n\n"
+    "KRITISKT: Om ett verktyg returnerar tom data (data: {{}}) eller inga resultat: "
+    "rapportera att data saknas. Hitta ALDRIG PA siffror, procent eller varden. "
+    "Svara exakt: 'Verktyget returnerade ingen data for denna forfragan.' "
+    "Anvand BARA verktyg som listas ovan — anropa ALDRIG andra verktyg."
 )
 
 
@@ -51,7 +55,8 @@ DEFAULT_SUPERVISOR_TOOL_DEFAULT_PROMPT_TEMPLATE = (
     "Anvand endast detta verktyg om uppgiften matchar dess doman.\n"
     "Matcha argument strikt mot verktygets schema och undvik overflodiga falt.\n"
     "Vid saknade kravfalt: stall en kort, exakt forfragan om komplettering.\n"
-    "Om uppgiften byter amne eller inte matchar domanen: gor ny retrieve_tools innan nasta verktygsval."
+    "Om verktyget returnerar tom data (data: {{}}): rapportera att data saknas. "
+    "Hitta ALDRIG PA egna siffror eller varden."
 )
 
 

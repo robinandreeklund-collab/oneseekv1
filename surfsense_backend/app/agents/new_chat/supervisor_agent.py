@@ -281,6 +281,7 @@ from app.agents.new_chat.supervisor_helpers import (  # noqa: E402
     _should_finalize_from_contract,
     _summarize_tool_payload,
     _tool_names_from_messages,
+    _all_tool_data_empty,
 )
 
 
@@ -2303,6 +2304,26 @@ async def create_supervisor_agent(
             used_tools=used_tool_names,
             final_requested=False,
         )
+        # Guard: downgrade if all data tools returned empty data
+        if (
+            _all_tool_data_empty(messages_out)
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            result_contract.update(
+                {
+                    "status": "partial",
+                    "actionable": False,
+                    "retry_recommended": True,
+                    "confidence": min(
+                        float(result_contract.get("confidence") or 0.35),
+                        0.35,
+                    ),
+                    "reason": (
+                        "Alla verktyg returnerade tom data. "
+                        "Svaret kan inte verifieras."
+                    ),
+                }
+            )
         status = str(result_contract.get("status") or "").strip().lower()
         speculative_status = status if status in {"success", "partial"} else "failed"
         if speculative_status in {"success", "partial"} and response_text:
@@ -4064,6 +4085,35 @@ async def create_supervisor_agent(
                         "innan svaret kan godkannas."
                     ),
                 }
+            )
+        # Guard: if every data-bearing tool returned empty data ({}/[]),
+        # the worker LLM has nothing to ground its answer on — downgrade
+        # the contract to prevent hallucinated numbers from being finalized.
+        if (
+            not filesystem_sandbox_task
+            and _all_tool_data_empty(messages_out)
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            result_contract.update(
+                {
+                    "status": "partial",
+                    "actionable": False,
+                    "retry_recommended": True,
+                    "confidence": min(
+                        float(result_contract.get("confidence") or 0.35),
+                        0.35,
+                    ),
+                    "reason": (
+                        "Alla verktyg returnerade tom data. "
+                        "Svaret kan inte verifieras och bor inte finaliseras."
+                    ),
+                }
+            )
+            logger.warning(
+                "LLM gate guard: all tool data empty for agent=%s tools=%s — "
+                "downgrading contract to partial",
+                name,
+                ",".join(used_tool_names[:4]),
             )
         if _live_phase_enabled(live_routing_config, "shadow"):
             logger.info(

@@ -75,6 +75,8 @@ _NO_DATA_RE = re.compile(
     r"(?:ingen tillgång|saknar verktyg|kan inte besvara|"
     r"har inte tillgång|saknar tillgång till|"
     r"kan tyvärr inte|desvärre|"
+    r"returnerade ingen data|returnerade tom data|"
+    r"data saknas|ingen data|"
     r"no tools available|cannot answer|unable to)",
     re.IGNORECASE,
 )
