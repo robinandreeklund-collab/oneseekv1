@@ -77,6 +77,10 @@ _NO_DATA_RE = re.compile(
     r"kan tyvärr inte|desvärre|"
     r"returnerade ingen data|returnerade tom data|"
     r"data saknas|ingen data|"
+    r"kunde inte hamta|kunde inte hämta|"
+    r"fetch failed|data fetch failed|400 bad request|"
+    r"scb_fetch misslyckades|"
+    r"<tool_call>|"
     r"no tools available|cannot answer|unable to)",
     re.IGNORECASE,
 )

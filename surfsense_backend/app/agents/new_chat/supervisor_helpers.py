@@ -274,13 +274,14 @@ def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
 
 
 def _all_tool_data_empty(messages: list[Any] | None) -> bool:
-    """Return True when every ToolMessage with JSON content had empty ``data``.
+    """Return True when every data-bearing ToolMessage had empty or error results.
 
     This catches the scenario where external APIs (SCB, Riksbank, etc.)
-    return ``{"status": "success", "data": {}}`` — the call itself succeeded
-    but no actual data was found.  When *all* tool outputs are data-empty
-    the worker LLM has nothing to ground its answer on, so the contract
-    should NOT be marked as ``success``/``actionable``.
+    return ``{"status": "success", "data": {}}`` or
+    ``{"error": "Data fetch failed: ..."}`` — the call itself may have
+    succeeded technically but no actual data was found.  When *all* tool
+    outputs are data-empty the worker LLM has nothing to ground its answer
+    on, so the contract should NOT be marked as ``success``/``actionable``.
 
     Returns False (safe default) when there are no tool messages or when at
     least one tool returned non-empty data.
@@ -305,21 +306,39 @@ def _all_tool_data_empty(messages: list[Any] | None) -> bool:
             "call_agents_parallel",
         }:
             continue
+        # Skip domain search tools (they return metadata, not final data)
+        if tool_name.startswith("scb_") and tool_name not in {
+            "scb_fetch",
+            "scb_preview",
+        }:
+            continue
         try:
             parsed = _json.loads(raw)
         except (ValueError, TypeError):
             continue
         if not isinstance(parsed, dict):
             continue
-        # Only check data-bearing tool results (must have "data" key)
-        if "data" not in parsed:
+        # Count tools that should return data (scb_fetch, scb_preview, etc.)
+        # Check for explicit error responses
+        if "error" in parsed:
+            data_tool_count += 1
+            empty_count += 1
             continue
-        data_tool_count += 1
-        data_field = parsed["data"]
-        if isinstance(data_field, dict) and not data_field:
-            empty_count += 1
-        elif isinstance(data_field, list) and not data_field:
-            empty_count += 1
+        # Check for data-bearing results
+        if "data" in parsed:
+            data_tool_count += 1
+            data_field = parsed["data"]
+            if isinstance(data_field, dict) and not data_field:
+                empty_count += 1
+            elif isinstance(data_field, list) and not data_field:
+                empty_count += 1
+            continue
+        # scb_fetch returns "data_table" instead of "data"
+        if "data_table" in parsed:
+            data_tool_count += 1
+            data_field = parsed["data_table"]
+            if not data_field or not str(data_field).strip():
+                empty_count += 1
     return data_tool_count > 0 and empty_count == data_tool_count
 
 
@@ -969,6 +988,18 @@ def _looks_actionable_agent_answer(text: str) -> bool:
         "specificera",
         "ange mer",
     )
+    # Detect responses that contain raw XML tool calls (LLM format failure)
+    # or explicit fetch error messages — these are NOT actionable.
+    _broken_markers = (
+        "<tool_call>",
+        "data fetch failed",
+        "400 bad request",
+        "scb_fetch misslyckades",
+        "kunde inte hamta den efterfragade datan",
+        "kunde inte hämta den efterfrågade datan",
+    )
+    if any(marker in lowered for marker in _broken_markers):
+        return False
     if "inga " in lowered and (
         "hittades" in lowered or "fanns" in lowered or "rapporterades" in lowered
     ):

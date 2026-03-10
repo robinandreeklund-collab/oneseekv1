@@ -162,6 +162,8 @@ def _score_table_metadata(
         return score
 
     has_time = False
+    contents_measure_match = False
+
     for var in variables:
         code = str(var.get("code") or "")
         label = str(var.get("text") or code)
@@ -191,7 +193,25 @@ def _score_table_metadata(
         if wants_age and _is_age_variable(code, label):
             score += 2
 
-        if value_texts and len(value_texts) <= 200:
+        # --- ContentsCode (measure) matching: heavily weighted ---------------
+        # The measure variable defines *what* a table actually contains.
+        # A table about "Antal företag" vs "Medellön" is distinguished here.
+        is_contents = code.lower() in ("contentscode", "contents")
+        if is_contents and value_texts:
+            measure_hits = 0
+            for text in value_texts:
+                s = _score_text(query_tokens, text)
+                if s > 0:
+                    measure_hits += s
+            if measure_hits > 0:
+                # Strong boost: the table's measures match the query topic
+                score += 8 + min(measure_hits * 3, 12)
+                contents_measure_match = True
+            else:
+                # Penalty: no measure matches the query at all — likely
+                # wrong table even if domain/title matches superficially
+                score -= 6
+        elif not is_contents and value_texts and len(value_texts) <= 200:
             for text in value_texts:
                 if _score_text(query_tokens, text) > 0:
                     score += 2
@@ -199,6 +219,11 @@ def _score_table_metadata(
 
     if requested_years and not has_time:
         score -= 4
+
+    # Extra penalty if no ContentsCode matched — the table's data measures
+    # don't align with what the user asked for.
+    if not contents_measure_match:
+        score -= 3
 
     return score
 

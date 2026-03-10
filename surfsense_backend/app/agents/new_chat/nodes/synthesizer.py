@@ -35,6 +35,17 @@ _GUARD_STYLE_MARKERS = (
     "skicka gärna frågan igen",
     "strikt enkel exekvering",
 )
+# Markers that indicate an SCB fetch failure — the subagent may still
+# produce plausible-sounding text, but no real data was retrieved.
+_SCB_FETCH_FAILURE_MARKERS = (
+    "kunde inte hamta",
+    "kunde inte hämta",
+    "fetch failed",
+    "data fetch failed",
+    "400 bad request",
+    "scb_fetch misslyckades",
+    "<tool_call>",  # LLM emitted XML tool call as text = format failure
+)
 _SYNTH_PLACEHOLDER_RESPONSES = {
     "guardrail",
     "no-data",
@@ -61,6 +72,8 @@ def _should_passthrough_synthesizer(
     if any(marker in lowered for marker in _NO_DATA_MARKERS):
         return True
     if any(marker in lowered for marker in _GUARD_STYLE_MARKERS):
+        return True
+    if any(marker in lowered for marker in _SCB_FETCH_FAILURE_MARKERS):
         return True
     return False
 

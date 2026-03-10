@@ -85,6 +85,47 @@ _GENDER_ALIASES: dict[str, str] = {
 
 _MAX_VALUES_TO_SHOW = 25
 
+
+def _coerce_selection(
+    selection: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Coerce selection values to ``list[str]``.
+
+    LLMs frequently pass scalar strings instead of single-element lists.
+    This helper silently converts ``"0180"`` → ``["0180"]`` and
+    ``"2015-2020"`` year-range strings → ``["2015", "2016", ..., "2020"]``
+    so that downstream validation never fails on type alone.
+    """
+    coerced: dict[str, list[str]] = {}
+    for key, val in selection.items():
+        if isinstance(val, str):
+            val = val.strip()
+            # Detect year-range patterns like "2015-2020"
+            m = re.match(r"^(\d{4})\s*[-\u2013]\s*(\d{4})$", val)
+            if m:
+                start, end = int(m.group(1)), int(m.group(2))
+                if 1900 <= start <= end <= 2200 and (end - start) <= 100:
+                    coerced[key] = [str(y) for y in range(start, end + 1)]
+                    continue
+            coerced[key] = [val]
+        elif isinstance(val, list | tuple):
+            # Also expand year-range strings inside lists
+            expanded: list[str] = []
+            for item in val:
+                s = str(item).strip()
+                m = re.match(r"^(\d{4})\s*[-\u2013]\s*(\d{4})$", s)
+                if m:
+                    start, end = int(m.group(1)), int(m.group(2))
+                    if 1900 <= start <= end <= 2200 and (end - start) <= 100:
+                        expanded.extend(str(y) for y in range(start, end + 1))
+                        continue
+                expanded.append(s)
+            coerced[key] = expanded
+        else:
+            coerced[key] = [str(val)]
+    return coerced
+
+
 # v2 expression pattern — TOP(n), BOTTOM(n), FROM(x), TO(x), RANGE(x,y), *
 _V2_EXPR_RE = re.compile(
     r"^(?:TOP|BOTTOM)\(\d+(?:\s*,\s*\d+)?\)$"
@@ -607,7 +648,7 @@ def create_scb_preview_tool(scb_service: ScbService | None = None):
     @tool("scb_preview")
     async def scb_preview(
         table_id: str,
-        selection: dict[str, list[str]] | None = None,
+        selection: dict[str, Any] | None = None,
     ) -> str:
         """Preview a SCB table with auto-limited data (~20 rows max).
 
@@ -617,6 +658,7 @@ def create_scb_preview_tool(scb_service: ScbService | None = None):
         Args:
             table_id: The SCB table ID.
             selection: Optional partial selection. Unspecified variables are auto-limited.
+                Values can be lists or strings (strings are auto-wrapped).
 
         Returns:
             JSON with a small markdown table preview and metadata.
@@ -624,6 +666,10 @@ def create_scb_preview_tool(scb_service: ScbService | None = None):
         table_id = (table_id or "").strip()
         if not table_id:
             return json.dumps({"error": "table_id is required."})
+
+        # Auto-coerce string values to lists and expand year ranges
+        if selection and isinstance(selection, dict):
+            selection = _coerce_selection(selection)
 
         try:
             metadata = await service.get_table_metadata(table_id)
@@ -713,7 +759,7 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
     @tool("scb_validate")
     async def scb_validate(
         table_id: str,
-        selection: dict[str, list[str]],
+        selection: dict[str, Any],
     ) -> str:
         """Validate a selection WITHOUT fetching data. Auto-completes missing variables.
 
@@ -724,6 +770,7 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
         Args:
             table_id: The SCB table ID.
             selection: Dict mapping variable code to value codes.
+                Values can be lists or strings (strings are auto-wrapped).
                 Example: {"Region": ["0180"], "Tid": ["TOP(3)"], "ContentsCode": ["BE0101N1"]}
 
         Returns:
@@ -736,6 +783,9 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
             return json.dumps({
                 "error": "selection must be a dict. Example: {\"Region\": [\"00\"], \"Tid\": [\"TOP(3)\"]}",
             })
+
+        # Auto-coerce string values to lists and expand year ranges
+        selection = _coerce_selection(selection)
 
         try:
             # Fetch metadata + default selection in parallel
@@ -914,7 +964,7 @@ def create_scb_fetch_tool(
     @tool("scb_fetch")
     async def scb_fetch(
         table_id: str,
-        selection: dict[str, list[str]],
+        selection: dict[str, Any],
         codelist: dict[str, str] | None = None,
         max_rows: int = 100,
     ) -> str:
@@ -927,6 +977,7 @@ def create_scb_fetch_tool(
         Args:
             table_id: The SCB table ID (e.g. "TAB638").
             selection: Dict mapping variable codes to value codes.
+                Values can be lists or strings (strings are auto-wrapped).
                 Example: {"Region": ["0180","1480"], "Tid": ["TOP(3)"], "ContentsCode": ["BE0101N1"]}
                 Missing eliminable variables are auto-filled.
             codelist: Optional dict mapping variable code to codelist ID.
@@ -943,6 +994,9 @@ def create_scb_fetch_tool(
             return json.dumps({
                 "error": "selection is required. Example: {\"ContentsCode\": [\"BE0101N1\"], \"Tid\": [\"TOP(3)\"]}",
             })
+
+        # Auto-coerce string values to lists and expand year ranges
+        selection = _coerce_selection(selection)
 
         try:
             # Step 1: Fetch metadata + default selection

@@ -249,7 +249,7 @@ _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
 # If the same direct tool (e.g. scb_befolkning, smhi_vaderprognoser_metfcst)
 # is called this many times consecutively, force finalization.
 _MAX_CONSECUTIVE_SAME_TOOL = 2
-_MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "2"))
+_MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "3"))
 
 
 _HITL_APPROVE_RE = re.compile(

@@ -118,7 +118,8 @@ def _build_scb_tool(
                 query,
                 scoring_hint=scoring_hint,
                 max_tables=max_tables,
-                metadata_limit=5,
+                metadata_limit=15,
+                candidate_limit=8,
             )
 
             # Also try v2 full-text search for broader coverage

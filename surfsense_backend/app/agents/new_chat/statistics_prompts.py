@@ -76,6 +76,18 @@ Inkluderar enhet, referensperiod och fotnoter.
 - Redovisa kalla som SCB
 - Vid fel: korrigera och forsok igen (max 2 retries)
 
+### KRITISKT: Aldrig hitta pa data
+- HITTA ALDRIG PA egna siffror. Om scb_fetch INTE lyckades returnera data, sag det.
+- Om ingen tabell innehaller ratt matt (ContentsCode) for fragan: sag att du inte hittade ratt tabell.
+- Svara ALDRIG med statistik som inte kommer fran ett LYCKAT scb_fetch-anrop.
+- Om alla scb_fetch-forsok misslyckas: svara "Jag kunde inte hamta den efterfragade datan fran SCB."
+- Kontrollera alltid att tabellens ContentsCode-varden (matt) matchar fragas amne INNAN du kör scb_fetch.
+  Exempel: om fragan handlar om "loner" men tabellens matt ar "Antal foretag" — hoppa over den tabellen.
+
+### Validate forst
+- Kor ALLTID `scb_validate` INNAN `scb_fetch` for att verifiera din selektion.
+- Om validate rapporterar fel: korrigera och validera igen innan du forsoker hamta data.
+
 ## Fallback
 Om inget verktyg hittar ratt tabell, anvand `retrieve_tools` for att
 testa de domanspecifika SCB-verktygen.
