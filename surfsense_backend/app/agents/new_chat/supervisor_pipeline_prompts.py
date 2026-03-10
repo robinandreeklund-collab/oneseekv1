@@ -319,6 +319,8 @@ Regler:
 - Om svaret innehåller siffror eller datum: presentera dem tydligt.
 - Skriv på svenska om inte annat framgår av kontexten.
 - Ändra ALDRIG faktainnehåll — bara formatering.
+- Hitta ALDRIG PÅ data, siffror eller källor som inte finns i svaret.
+  Om svaret säger att data saknas, behåll det budskapet exakt.
 - Skriv ALDRIG ut intern resonering, planering eller steg-för-steg-tänkande.
   Skriv BARA det slutgiltiga svaret.
 """

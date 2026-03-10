@@ -107,7 +107,7 @@ async def llm_gate_select_intent(
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 200}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateIntentResult, "llm_gate_intent_result"
@@ -217,7 +217,7 @@ async def llm_gate_select_agent(
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 300}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 200}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateAgentResult, "llm_gate_agent_result"
@@ -328,7 +328,7 @@ async def llm_gate_select_tools(
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 250}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateToolResult, "llm_gate_tool_result"

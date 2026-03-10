@@ -803,53 +803,32 @@ class DebateConvergenceResult(BaseModel):
 class LlmGateIntentResult(BaseModel):
     """Output schema for LLM gate intent selection."""
 
-    thinking: str = Field(
-        ...,
-        description=(
-            "Din interna resonering PÅ SVENSKA om vilken domän som bäst matchar "
-            "användarens fråga och varför. Skriv alltid på svenska."
-        ),
-    )
     chosen: str = Field(
         ...,
         description="Exakt domän-ID från kandidatlistan, t.ex. 'väder-och-klimat'.",
     )
     reasoning: str = Field(
         ...,
-        description="Kort motivering på svenska som förklarar ditt val.",
+        description="Kort motivering på svenska (1-2 meningar) som förklarar ditt val.",
     )
 
 
 class LlmGateAgentResult(BaseModel):
     """Output schema for LLM gate agent selection."""
 
-    thinking: str = Field(
-        ...,
-        description=(
-            "Din interna resonering PÅ SVENSKA om vilken agent som bäst matchar "
-            "frågan inom den valda domänen. Skriv alltid på svenska."
-        ),
-    )
     chosen: str = Field(
         ...,
         description="Exakt agent-ID från kandidatlistan, t.ex. 'väder'.",
     )
     reasoning: str = Field(
         ...,
-        description="Kort motivering på svenska som förklarar ditt val.",
+        description="Kort motivering på svenska (1-2 meningar) som förklarar ditt val.",
     )
 
 
 class LlmGateToolResult(BaseModel):
     """Output schema for LLM gate tool selection."""
 
-    thinking: str = Field(
-        ...,
-        description=(
-            "Din interna resonering PÅ SVENSKA om vilka verktyg som behövs "
-            "för att besvara frågan. Skriv alltid på svenska."
-        ),
-    )
     chosen: list[str] = Field(
         ...,
         description=(

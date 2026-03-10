@@ -67,6 +67,18 @@ _VALID_MODES = {"kunskap", "analys", "syntes", "visualisering"}
 
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}", re.DOTALL)
 
+# Patterns indicating the upstream agent/critic already determined that
+# the answer cannot be provided.  When these match we MUST skip the
+# LLM formatting step because a small model may hallucinate data to
+# "fill in" the missing information instead of preserving the disclaimer.
+_NO_DATA_RE = re.compile(
+    r"(?:ingen tillgång|saknar verktyg|kan inte besvara|"
+    r"har inte tillgång|saknar tillgång till|"
+    r"kan tyvärr inte|desvärre|"
+    r"no tools available|cannot answer|unable to)",
+    re.IGNORECASE,
+)
+
 
 def _select_response_mode(
     *,
@@ -356,8 +368,12 @@ def build_response_layer_node(
             )
 
         # ── LLM-driven formatting if a per-mode prompt is available ──
+        # Guard: skip LLM formatting when the response is a disclaimer
+        # (e.g. "ingen tillgång till verktyg") — a small model may
+        # hallucinate data to replace the disclaimer.
         mode_prompt = _mode_prompts.get(mode, "").strip()
-        if mode_prompt and llm is not None:
+        skip_llm = bool(_NO_DATA_RE.search(final_response))
+        if mode_prompt and llm is not None and not skip_llm:
             formatted = await _llm_format(
                 mode_prompt, final_response, latest_user_query,
                 run_config=config,
