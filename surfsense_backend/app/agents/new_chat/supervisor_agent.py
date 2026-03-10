@@ -3536,6 +3536,12 @@ async def create_supervisor_agent(
             ]
             if not selected_tool_ids:
                 selected_tool_ids = list(trafik_tool_ids)
+        # Statistik agents always need scb_validate + scb_fetch for the
+        # catalog → validate → fetch pipeline (bigtool agent internal tools).
+        if name.startswith("statistik"):
+            for pid in ("scb_validate", "scb_fetch"):
+                if pid not in selected_tool_ids:
+                    selected_tool_ids.append(pid)
         selected_tool_ids = _prioritize_sandbox_code_tools(
             selected_tool_ids,
             agent_name=name,

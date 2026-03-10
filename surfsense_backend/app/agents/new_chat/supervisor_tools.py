@@ -115,6 +115,16 @@ def _build_scoped_prompt_for_agent(
             + (f": {snippet}" if snippet else "")
             + (f" [nyckelord: {keywords}]" if keywords else "")
         )
+    # For statistik agents: always include the pipeline tools (validate + fetch)
+    # so the worker LLM can complete the catalog → validate → fetch flow.
+    normalized_name = str(agent_name or "").strip().lower()
+    if normalized_name.startswith("statistik"):
+        tool_lines.append(
+            "- scb_validate (pipeline): Torrkoring — validera urval utan datahamtning. KOR ALLTID FORE scb_fetch."
+        )
+        tool_lines.append(
+            "- scb_fetch (pipeline): Hamta data som lasbar markdown-tabell. Anvands efter validate."
+        )
     rendered = _format_prompt_template(
         prompt_template,
         {
