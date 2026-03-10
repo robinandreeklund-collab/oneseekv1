@@ -85,18 +85,15 @@ async def llm_gate_select_intent(
     for c in candidates:
         cid = str(c.get("intent_id") or c.get("domain_id") or "").strip()
         desc = str(c.get("description") or "").strip()
-        keywords = c.get("keywords") or []
-        kw_str = ", ".join(str(k) for k in keywords[:6]) if keywords else ""
-        label = f"{desc} (nyckelord: {kw_str})" if kw_str else desc
         if cid:
-            items.append((cid, label))
+            items.append((cid, desc))
 
     system_prompt = (
         "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
         "från listan som bäst matchar frågan.\n\n"
+        "Resonera semantiskt — förstå vad användaren faktiskt menar, "
+        "inte bara vilka ord som förekommer i frågan.\n\n"
         "Tänk ALLTID på svenska i din interna resonering.\n\n"
-        "Du fattar beslutet — det finns inga poäng, rerankers eller confidence-scorer. "
-        "DU är den som avgör vilken domän som passar bäst baserat på frågan.\n\n"
         "Domäner:\n" + _format_candidate_list(items) + "\n\n"
         "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
         "INTE ett nummer."
@@ -192,20 +189,17 @@ async def llm_gate_select_agent(
     for c in candidates:
         name = str(c.get("name") or c.get("agent_id") or "").strip()
         desc = str(c.get("description") or c.get("label") or "").strip()
-        keywords = c.get("keywords") or []
-        kw_str = ", ".join(str(k) for k in keywords[:8]) if keywords else ""
-        label = f"{desc} (nyckelord: {kw_str})" if kw_str else desc
         if name:
             sorted_ids.append(name)
-            items.append((name, label))
+            items.append((name, desc))
     sorted_ids.sort()
 
     system_prompt = (
         "Du är en agent-router. Givet användarens fråga och den valda domänen, "
         "välj EXAKT EN agent från listan som bäst kan hantera frågan.\n\n"
+        "Resonera semantiskt — förstå vad användaren faktiskt menar, "
+        "inte bara vilka ord som förekommer i frågan.\n\n"
         "Tänk ALLTID på svenska i din interna resonering.\n\n"
-        "Du fattar beslutet — det finns inga poäng, rerankers eller confidence-scorer. "
-        "DU är den som avgör vilken agent som passar bäst baserat på frågan.\n\n"
         f"Vald domän: {chosen_domain}\n\n"
         "Agenter:\n" + _format_candidate_list(items) + "\n\n"
         "VIKTIGT: Svara med det exakta agent-ID:t (t.ex. 'väder'), "
@@ -300,12 +294,9 @@ async def llm_gate_select_tools(
     for c in candidates:
         tid = str(c.get("tool_id") or "").strip()
         desc = str(c.get("description") or "").strip()
-        keywords = c.get("keywords") or []
-        kw_str = ", ".join(str(k) for k in keywords[:6]) if keywords else ""
-        label = f"{desc} (nyckelord: {kw_str})" if kw_str else desc
         if tid:
             sorted_ids.append(tid)
-            items.append((tid, label))
+            items.append((tid, desc))
     sorted_ids.sort()
 
     if not items:
@@ -314,9 +305,9 @@ async def llm_gate_select_tools(
     system_prompt = (
         "Du är en verktygsväljare. Givet användarens fråga och den valda agenten, "
         "välj de verktyg (1-3 st) från listan som behövs för att besvara frågan.\n\n"
+        "Resonera semantiskt — förstå vad användaren faktiskt menar, "
+        "inte bara vilka ord som förekommer i frågan.\n\n"
         "Tänk ALLTID på svenska i din interna resonering.\n\n"
-        "Du fattar beslutet — det finns inga poäng, rerankers eller confidence-scorer. "
-        "DU är den som avgör vilka verktyg som behövs baserat på frågan.\n\n"
         f"Vald agent: {chosen_agent}\n\n"
         "Verktyg:\n" + _format_candidate_list(items) + "\n\n"
         "VIKTIGT: Svara med de exakta verktygs-ID:na. "

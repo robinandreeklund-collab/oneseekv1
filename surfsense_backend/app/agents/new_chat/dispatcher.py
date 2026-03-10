@@ -4,7 +4,7 @@ from typing import Any, Iterable
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.new_chat.intent_router import resolve_route_from_intents
-from app.agents.new_chat.routing import Route, domain_to_route
+from app.agents.new_chat.routing import Route
 from app.agents.new_chat.system_prompt import append_datetime_context
 from app.services.intent_definition_service import (
     domains_to_intent_definitions,
@@ -245,21 +245,13 @@ async def dispatch_route_with_trace(
     # only needs to provide a lightweight base-route hint from the intent
     # definitions — NO embedding scoring, NO reranker, NO confidence bands.
     if llm_gate_mode:
-        # Try to derive a hint from domain_to_route() on the first definition
-        for defn in normalized_intents:
-            intent_id = str(defn.get("intent_id") or "").strip()
-            if intent_id:
-                try:
-                    base_route = domain_to_route(intent_id)
-                    return base_route, {
-                        "source": "llm_gate_hint",
-                        "reason": f"llm_gate_dispatcher_hint:{intent_id}",
-                    }
-                except Exception:
-                    continue
+        # In LLM gate mode the intent node makes the authoritative domain
+        # decision via a pure LLM call.  The dispatcher just returns a
+        # neutral base route — no domain-specific hint, since we haven't
+        # actually analysed the query yet at this stage.
         return Route.KUNSKAP, {
-            "source": "llm_gate_hint",
-            "reason": "llm_gate_default_kunskap",
+            "source": "llm_gate",
+            "reason": "llm_gate_deferred",
         }
 
     retrieval_decision = resolve_route_from_intents(
