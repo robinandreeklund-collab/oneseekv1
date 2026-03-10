@@ -60,6 +60,7 @@ class ScbTable:
     title: str
     updated: str | None = None
     breadcrumb: tuple[str, ...] = ()
+    subject_code: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -422,12 +423,21 @@ class ScbService:
             table_id = str(item.get("id") or "").strip()
             if not table_id:
                 continue
+            # Build a v1-style path from the v2 paths hierarchy so that
+            # domain filtering via path.startswith(base_path) works.
+            v2_paths = item.get("paths") or []
+            domain_path = table_id  # fallback
+            if v2_paths and isinstance(v2_paths[0], list):
+                parts = [str(node.get("id") or "") for node in v2_paths[0]]
+                if parts:
+                    domain_path = "/".join(parts) + "/"
             tables.append(
                 ScbTable(
                     id=table_id,
-                    path=table_id,
+                    path=domain_path,
                     title=str(item.get("label") or item.get("text") or table_id),
                     updated=item.get("updated"),
+                    subject_code=str(item.get("subjectCode") or ""),
                 )
             )
         return tables
@@ -1141,7 +1151,9 @@ class ScbService:
 
         async def _fetch_metadata_safe(table: ScbTable) -> dict[str, Any]:
             try:
-                return await self.get_table_metadata(table.path)
+                # v2 metadata needs table.id ("TAB4552"); v1 needs table.path
+                key = table.id if self._is_v2 else table.path
+                return await self.get_table_metadata(key)
             except httpx.HTTPError:
                 return {}
 

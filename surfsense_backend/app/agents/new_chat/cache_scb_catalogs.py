@@ -44,6 +44,48 @@ logger = logging.getLogger(__name__)
 
 SCB_CATALOG_TTL = int(os.getenv("SCB_CATALOG_TTL", "86400"))  # 24h default
 
+# ASCII→Swedish diacritics mapping for keywords that were stored without åäö.
+# SCB v2 search requires proper Swedish characters to match.
+_DIACRITICS_MAP: dict[str, str] = {
+    "arbetsloshet": "arbetslöshet",
+    "sysselsattning": "sysselsättning",
+    "lon": "lön",
+    "loner": "löner",
+    "lonestruktur": "lönestruktur",
+    "folkmangd": "folkmängd",
+    "fodd": "född",
+    "fodda": "födda",
+    "dod": "död",
+    "alder": "ålder",
+    "kon": "kön",
+    "foraldrar": "föräldrar",
+    "naring": "näring",
+    "utbildningsniva": "utbildningsnivå",
+    "forandringar": "förändringar",
+    "forandring": "förändring",
+    "miljo": "miljö",
+    "utslapp": "utsläpp",
+    "energiforsorjning": "energiförsörjning",
+    "utrikeshandel": "utrikeshandel",
+    "lan": "län",
+    "invanare": "invånare",
+    "netto": "netto",
+    "halsa": "hälsa",
+    "sjukvard": "sjukvård",
+    "aldreomsorgen": "äldreomsorgen",
+    "bostader": "bostäder",
+    "nybyggnation": "nybyggnation",
+    "fritidshus": "fritidshus",
+    "detaljhandel": "detaljhandel",
+    "konsumentpris": "konsumentpris",
+    "inflation": "inflation",
+}
+
+
+def _restore_diacritics(keyword: str) -> str:
+    """Restore Swedish diacritics for an ASCII keyword."""
+    return _DIACRITICS_MAP.get(keyword.lower(), keyword)
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -211,19 +253,31 @@ async def _discover_tables_for_domain(
         logger.warning("v1 tree traversal failed for %s: %s", definition.base_path, exc)
 
     # v2 search with domain keywords
+    # search_tables now builds v1-style paths from the v2 paths hierarchy,
+    # so path.startswith(base_path) works for both broad ("BE/") and
+    # sub-domain ("BE/BE0101/BE0101A/") definitions.
     if hasattr(service, "search_tables"):
-        for kw in definition.keywords[:3]:
+        # Deduplicate keywords after diacritics restoration
+        search_keywords: list[str] = []
+        seen_kw: set[str] = set()
+        for kw in definition.keywords[:5]:
+            restored = _restore_diacritics(kw)
+            if restored.lower() not in seen_kw:
+                seen_kw.add(restored.lower())
+                search_keywords.append(restored)
+            # Also try the original if different
+            if kw.lower() not in seen_kw:
+                seen_kw.add(kw.lower())
+                search_keywords.append(kw)
+        for kw in search_keywords:
             try:
                 v2_tables = await service.search_tables(kw, limit=50)
                 for t in v2_tables:
                     if t.id not in seen_ids:
-                        # Only include tables that belong to this domain
-                        # (v2 search is global, so filter by path prefix)
                         if t.path and t.path.startswith(definition.base_path):
                             all_tables.append(t)
                             seen_ids.add(t.id)
                         elif not t.path:
-                            # If no path info, include anyway (will be filtered later)
                             all_tables.append(t)
                             seen_ids.add(t.id)
             except Exception:
@@ -243,8 +297,10 @@ async def _discover_tables_for_domain(
     async def _fetch_meta(table: ScbTable) -> CachedTable | None:
         async with semaphore:
             try:
-                path = getattr(table, "path", None) or table.id
-                metadata = await service.get_table_metadata(path)
+                # For v2, use table.id (e.g. "TAB4552") not table.path
+                # (which is now a domain hierarchy like "BE/BE0101/...")
+                meta_key = table.id if service._is_v2 else (table.path or table.id)
+                metadata = await service.get_table_metadata(meta_key)
                 if not metadata or not metadata.get("variables"):
                     return None
 
