@@ -687,17 +687,25 @@ class ScbService:
         v2_tables: list[ScbTable] = []
         v1_tables: list[ScbTable] = []
 
+        # Enrich BFS query with domain keywords for better tree navigation.
+        # The raw user query often contains Swedish compound words (e.g.
+        # "arbetsmarknadslaget") that don't match short branch names in the
+        # v1 tree (e.g. "Arbetsmarknad").  The scoring_hint contains domain
+        # keywords and table codes that DO match, so the BFS can follow the
+        # right branches.
+        bfs_query = f"{query} {scoring_hint}".strip() if scoring_hint else query
+
         if self._is_v2:
             # v2: send only the raw user question — avoid enrichment noise
             v2_coro = self.search_tables(query, limit=max_tables)
             # Also run v1 tree traversal scoped to the domain for diversity
             v1_coro = self.collect_tables(
-                base_path, query, max_tables=max(20, max_tables // 2),
+                base_path, bfs_query, max_tables=max(20, max_tables // 2),
             )
             v2_tables, v1_tables = await asyncio.gather(v2_coro, v1_coro)
         else:
             v1_tables = await self.collect_tables(
-                base_path, query, max_tables=max_tables,
+                base_path, bfs_query, max_tables=max_tables,
             )
 
         # Merge and deduplicate (prefer v1 entries — they have breadcrumbs).
