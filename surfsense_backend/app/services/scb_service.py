@@ -468,7 +468,7 @@ class ScbService:
             batch_paths: list[tuple[int, int, str, tuple[str, ...]]] = []
             while queue and len(batch_paths) < max_concurrent:
                 entry = queue.pop(0)
-                neg_score, depth, path, breadcrumb = entry
+                _neg_score, depth, path, breadcrumb = entry
                 if path in seen:
                     continue
                 seen.add(path)
@@ -668,23 +668,56 @@ class ScbService:
         base_path: str,
         query: str,
         *,
+        scoring_hint: str = "",
         max_tables: int = 80,
         metadata_limit: int = 10,
         candidate_limit: int = 5,
     ) -> tuple[ScbTable | None, list[ScbTable]]:
-        # Try v2 search first, fall back to v1 tree traversal
-        if self._is_v2:
-            tables = await self.search_tables(query, limit=max_tables)
-        else:
-            tables = []
+        """Find the best matching SCB table for a query.
 
-        if not tables:
-            tables = await self.collect_tables(base_path, query, max_tables=max_tables)
+        Uses a two-pronged approach:
+        1. v2 API text search (broad, all subject areas) with the *raw* query
+        2. v1 tree traversal scoped to ``base_path`` (domain-specific)
+
+        Results are merged, deduplicated, and scored using both the raw query
+        tokens and optional ``scoring_hint`` tokens (domain keywords / table
+        codes) that boost relevance without polluting the API search.
+        """
+        # --- Collect tables from both sources in parallel -------------------
+        v2_tables: list[ScbTable] = []
+        v1_tables: list[ScbTable] = []
+
+        if self._is_v2:
+            # v2: send only the raw user question — avoid enrichment noise
+            v2_coro = self.search_tables(query, limit=max_tables)
+            # Also run v1 tree traversal scoped to the domain for diversity
+            v1_coro = self.collect_tables(
+                base_path, query, max_tables=max(20, max_tables // 2),
+            )
+            v2_tables, v1_tables = await asyncio.gather(v2_coro, v1_coro)
+        else:
+            v1_tables = await self.collect_tables(
+                base_path, query, max_tables=max_tables,
+            )
+
+        # Merge and deduplicate (prefer v1 entries — they have breadcrumbs)
+        seen_ids: set[str] = set()
+        tables: list[ScbTable] = []
+        for table in [*v1_tables, *v2_tables]:
+            if table.id not in seen_ids:
+                seen_ids.add(table.id)
+                tables.append(table)
 
         if not tables:
             return None, []
 
+        # --- Build scoring tokens ------------------------------------------
+        # Raw query tokens are the primary signal; scoring_hint tokens give
+        # a secondary boost so that domain-specific tables rank higher.
         query_tokens = set(_tokenize(query))
+        hint_tokens = set(_tokenize(scoring_hint)) - query_tokens if scoring_hint else set()
+        combined_tokens = query_tokens | hint_tokens
+
         query_norm = _normalize_text(query)
         requested_years = _extract_years(query)
         wants_region = _has_region_request(query_tokens, query_norm)
@@ -693,9 +726,11 @@ class ScbService:
 
         def rank(table: ScbTable) -> tuple[int, float]:
             breadcrumb_text = " ".join(table.breadcrumb)
-            score = _score_text(
-                query_tokens, f"{table.title} {breadcrumb_text} {table.id}"
-            )
+            full_text = f"{table.title} {breadcrumb_text} {table.id}"
+            # Primary: raw query match; secondary: hint match (weighted lower)
+            raw_score = _score_text(query_tokens, full_text)
+            hint_score = _score_text(hint_tokens, full_text) if hint_tokens else 0
+            score = raw_score * 2 + hint_score
             updated = _parse_iso(table.updated)
             return (score, updated.timestamp() if updated else 0.0)
 
@@ -717,7 +752,7 @@ class ScbService:
             base_score = rank(table)[0]
             meta_score = _score_table_metadata(
                 metadata=metadata,
-                query_tokens=query_tokens,
+                query_tokens=combined_tokens,
                 query_norm=query_norm,
                 requested_years=requested_years,
                 wants_region=wants_region,

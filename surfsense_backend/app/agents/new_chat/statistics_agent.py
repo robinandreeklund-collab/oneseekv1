@@ -83,18 +83,20 @@ def _build_scb_tool(
             )
 
         try:
-            query_hint = " ".join(
+            # Build scoring hint from domain keywords and table codes.
+            # Exclude typical_filters (tid, region, kon, alder) — they're too
+            # generic and match almost every SCB table, drowning out relevance.
+            scoring_hint = " ".join(
                 [
                     definition.name,
                     *definition.keywords,
                     *definition.table_codes,
-                    *definition.typical_filters,
                 ]
             ).strip()
-            enriched_query = f"{query} {query_hint}".strip()
             table, candidates = await service.find_best_table_candidates(
                 definition.base_path,
-                enriched_query,
+                query,
+                scoring_hint=scoring_hint,
                 max_tables=max_tables,
             )
             if not table:
