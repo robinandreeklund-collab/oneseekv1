@@ -27,6 +27,15 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+from app.agents.new_chat.tools.scb_schemas import (
+    ScbBrowseInput,
+    ScbCodelistInput,
+    ScbFetchInput,
+    ScbInspectInput,
+    ScbPreviewInput,
+    ScbSearchInput,
+    ScbValidateInput,
+)
 from app.services.scb_regions import (
     normalize_diacritik,
     resolve_region_codes,
@@ -165,7 +174,7 @@ def create_scb_search_tool(scb_service: ScbService | None = None):
     """Create the search tool."""
     service = scb_service or ScbService()
 
-    @tool("scb_search")
+    @tool("scb_search", args_schema=ScbSearchInput)
     async def scb_search(
         query: str,
         max_results: int = 15,
@@ -239,7 +248,7 @@ def create_scb_browse_tool(scb_service: ScbService | None = None):
     """Create the tree navigation tool."""
     service = scb_service or ScbService()
 
-    @tool("scb_browse")
+    @tool("scb_browse", args_schema=ScbBrowseInput)
     async def scb_browse(
         path: str = "",
     ) -> str:
@@ -317,7 +326,7 @@ def create_scb_inspect_tool(scb_service: ScbService | None = None):
     """Create the metadata inspection tool."""
     service = scb_service or ScbService()
 
-    @tool("scb_inspect")
+    @tool("scb_inspect", args_schema=ScbInspectInput)
     async def scb_inspect(
         table_id: str,
     ) -> str:
@@ -584,7 +593,7 @@ def create_scb_codelist_tool(scb_service: ScbService | None = None):
     """Create the codelist lookup tool."""
     service = scb_service or ScbService()
 
-    @tool("scb_codelist")
+    @tool("scb_codelist", args_schema=ScbCodelistInput)
     async def scb_codelist(
         codelist_id: str,
     ) -> str:
@@ -645,7 +654,7 @@ def create_scb_preview_tool(scb_service: ScbService | None = None):
     """Create the auto-limited preview tool."""
     service = scb_service or ScbService()
 
-    @tool("scb_preview")
+    @tool("scb_preview", args_schema=ScbPreviewInput)
     async def scb_preview(
         table_id: str,
         selection: dict[str, Any] | None = None,
@@ -756,7 +765,7 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
     """Create the dry-run validation tool with auto-complete."""
     service = scb_service or ScbService()
 
-    @tool("scb_validate")
+    @tool("scb_validate", args_schema=ScbValidateInput)
     async def scb_validate(
         table_id: str,
         selection: dict[str, Any],
@@ -961,7 +970,7 @@ def create_scb_fetch_tool(
     """Create the data fetch tool with auto-complete and markdown decoding."""
     service = scb_service or ScbService()
 
-    @tool("scb_fetch")
+    @tool("scb_fetch", args_schema=ScbFetchInput)
     async def scb_fetch(
         table_id: str,
         selection: dict[str, Any],
