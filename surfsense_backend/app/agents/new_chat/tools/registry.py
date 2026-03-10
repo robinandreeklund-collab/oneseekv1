@@ -85,6 +85,10 @@ from ..kolada_tools import (
     KOLADA_TOOL_DEFINITIONS,
     build_kolada_tool_registry,
 )
+from ..statistics_agent import (
+    SCB_TOOL_DEFINITIONS,
+    build_scb_tool,
+)
 from .external_models import EXTERNAL_MODEL_SPECS, create_external_model_tool
 from .jobad_links_search import create_jobad_links_search_tool
 from .knowledge_base import create_search_knowledge_base_tool
@@ -463,6 +467,25 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
             requires=[],
         )
         for definition in TRAFIKANALYS_TOOL_DEFINITIONS
+    ],
+    # =========================================================================
+    # SCB (Statistics Sweden) API TOOLS
+    # =========================================================================
+    *[
+        ToolDefinition(
+            name=definition.tool_id,
+            description=definition.description,
+            factory=lambda deps, definition=definition: build_scb_tool(
+                definition,
+                scb_service=deps.get("scb_service"),
+                connector_service=deps.get("connector_service"),
+                search_space_id=deps.get("search_space_id", 0),
+                user_id=deps.get("user_id"),
+                thread_id=deps.get("thread_id"),
+            ),
+            requires=[],
+        )
+        for definition in SCB_TOOL_DEFINITIONS
     ],
     # =========================================================================
     # ADD YOUR CUSTOM TOOLS BELOW

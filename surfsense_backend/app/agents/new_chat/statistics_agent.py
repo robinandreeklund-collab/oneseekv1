@@ -28,6 +28,7 @@ __all__ = [
     "SCB_TOOL_DEFINITIONS",
     "ScbToolDefinition",
     "aretrieve_scb_tools",
+    "build_scb_tool",
     "build_scb_tool_registry",
     "build_scb_tool_store",
     "create_statistics_agent",
@@ -60,12 +61,13 @@ def _build_tool_description(definition: ScbToolDefinition) -> str:
 def _build_scb_tool(
     definition: ScbToolDefinition,
     *,
-    scb_service: ScbService,
-    connector_service: ConnectorService,
-    search_space_id: int,
-    user_id: str | None,
-    thread_id: int | None,
+    scb_service: ScbService | None = None,
+    connector_service: ConnectorService | None = None,
+    search_space_id: int = 0,
+    user_id: str | None = None,
+    thread_id: int | None = None,
 ):
+    service = scb_service or ScbService()
     description = _build_tool_description(definition)
 
     async def _scb_tool(
@@ -90,7 +92,7 @@ def _build_scb_tool(
                 ]
             ).strip()
             enriched_query = f"{query} {query_hint}".strip()
-            table, candidates = await scb_service.find_best_table_candidates(
+            table, candidates = await service.find_best_table_candidates(
                 definition.base_path,
                 enriched_query,
                 max_tables=max_tables,
@@ -99,9 +101,9 @@ def _build_scb_tool(
                 return json.dumps(
                     {"error": "No matching SCB table found."}, ensure_ascii=True
                 )
-            metadata = await scb_service.get_table_metadata(table.path)
+            metadata = await service.get_table_metadata(table.path)
             payloads, selection_summary, warnings, batch_summaries = (
-                scb_service.build_query_payloads(
+                service.build_query_payloads(
                     metadata,
                     query,
                     max_cells=max_cells,
@@ -115,7 +117,7 @@ def _build_scb_tool(
                 )
 
             raw_results = await asyncio.gather(
-                *(scb_service.query_table(table.path, p) for p in payloads)
+                *(service.query_table(table.path, p) for p in payloads)
             )
             data_batches: list[dict[str, Any]] = []
             for index, (data, _payload) in enumerate(
@@ -130,7 +132,7 @@ def _build_scb_tool(
                 {"error": f"SCB request failed: {exc!s}"}, ensure_ascii=True
             )
 
-        source_url = f"{scb_service.base_url}{table.path.lstrip('/')}"
+        source_url = f"{service.base_url}{table.path.lstrip('/')}"
         tool_output = {
             "source": "SCB PxWeb",
             "table": {
@@ -156,29 +158,31 @@ def _build_scb_tool(
                 for candidate in candidates
             ]
 
-        document = await connector_service.ingest_tool_output(
-            tool_name=definition.tool_id,
-            tool_output=tool_output,
-            title=f"{definition.name}: {table.title}",
-            metadata={
-                "source": "SCB",
-                "scb_base_path": definition.base_path,
-                "scb_table_path": table.path,
-                "scb_table_id": table.id,
-                "scb_table_title": table.title,
-                "scb_source_url": source_url,
-            },
-            user_id=user_id,
-            origin_search_space_id=search_space_id,
-            thread_id=thread_id,
-        )
-
+        # Document storage is optional — Pipeline Explorer runs without
+        # connector_service, so we skip ingestion when it's unavailable.
         formatted_docs = ""
-        if document:
-            serialized = connector_service.serialize_external_document(
-                document, score=1.0
+        if connector_service is not None:
+            document = await connector_service.ingest_tool_output(
+                tool_name=definition.tool_id,
+                tool_output=tool_output,
+                title=f"{definition.name}: {table.title}",
+                metadata={
+                    "source": "SCB",
+                    "scb_base_path": definition.base_path,
+                    "scb_table_path": table.path,
+                    "scb_table_id": table.id,
+                    "scb_table_title": table.title,
+                    "scb_source_url": source_url,
+                },
+                user_id=user_id,
+                origin_search_space_id=search_space_id,
+                thread_id=thread_id,
             )
-            formatted_docs = format_documents_for_context([serialized])
+            if document:
+                serialized = connector_service.serialize_external_document(
+                    document, score=1.0
+                )
+                formatted_docs = format_documents_for_context([serialized])
 
         response_payload = {
             "query": query,
@@ -199,6 +203,10 @@ def _build_scb_tool(
         description=description,
         parse_docstring=False,
     )(_scb_tool)
+
+
+# Public alias for the tool factory (used by tools/registry.py)
+build_scb_tool = _build_scb_tool
 
 
 # ---------------------------------------------------------------------------
