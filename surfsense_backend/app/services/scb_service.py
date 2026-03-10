@@ -700,7 +700,9 @@ class ScbService:
                 base_path, query, max_tables=max_tables,
             )
 
-        # Merge and deduplicate (prefer v1 entries — they have breadcrumbs)
+        # Merge and deduplicate (prefer v1 entries — they have breadcrumbs).
+        # Track v1 IDs so we can boost domain-scoped tables in scoring.
+        v1_ids: set[str] = {t.id for t in v1_tables}
         seen_ids: set[str] = set()
         tables: list[ScbTable] = []
         for table in [*v1_tables, *v2_tables]:
@@ -731,6 +733,10 @@ class ScbService:
             raw_score = _score_text(query_tokens, full_text)
             hint_score = _score_text(hint_tokens, full_text) if hint_tokens else 0
             score = raw_score * 2 + hint_score
+            # Boost tables from v1 (domain-scoped via base_path) — these are
+            # guaranteed to be in the right subject area.
+            if table.id in v1_ids:
+                score += 5
             updated = _parse_iso(table.updated)
             return (score, updated.timestamp() if updated else 0.0)
 
