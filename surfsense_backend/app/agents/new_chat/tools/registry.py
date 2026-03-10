@@ -63,11 +63,6 @@ from ..statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool,
 )
-from .scb_llm_tools import (
-    create_scb_fetch_validated_tool,
-    create_scb_search_and_inspect_tool,
-    create_scb_validate_selection_tool,
-)
 from .bolagsverket import (
     BOLAGSVERKET_TOOL_DEFINITIONS,
     create_bolagsverket_tool,
@@ -100,6 +95,15 @@ from .sandbox_filesystem import (
     create_sandbox_write_file_tool,
 )
 from .sandbox_release import create_sandbox_release_tool
+from .scb_llm_tools import (
+    create_scb_browse_tool,
+    create_scb_codelist_tool,
+    create_scb_fetch_tool,
+    create_scb_inspect_tool,
+    create_scb_preview_tool,
+    create_scb_search_tool,
+    create_scb_validate_tool,
+)
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .smhi import (
@@ -474,39 +478,81 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         for definition in TRAFIKANALYS_TOOL_DEFINITIONS
     ],
     # =========================================================================
-    # SCB (Statistics Sweden) — LLM-driven tools (hybrid approach)
+    # SCB (Statistics Sweden) — 7-tool pipeline for precision data extraction
     # =========================================================================
     ToolDefinition(
-        name="scb_search_and_inspect",
+        name="scb_search",
         description=(
-            "Search SCB tables and inspect their variable structure. "
-            "Returns table candidates with variables, codes, and labels "
-            "so the LLM can build precise selections."
+            "Search SCB tables by keywords. Returns a compact list of matches "
+            "with table IDs and titles. Use scb_inspect for full metadata."
         ),
-        factory=lambda deps: create_scb_search_and_inspect_tool(
+        factory=lambda deps: create_scb_search_tool(
             scb_service=deps.get("scb_service"),
         ),
         requires=[],
     ),
     ToolDefinition(
-        name="scb_validate_selection",
+        name="scb_browse",
         description=(
-            "Validate a selection against SCB table metadata without fetching data. "
-            "Checks all variables are covered, all codes are valid, with fuzzy "
-            "matching and suggestions for corrections."
+            "Navigate SCB's topic tree step by step. Use empty path for top-level "
+            "subjects, then drill down into interesting areas."
         ),
-        factory=lambda deps: create_scb_validate_selection_tool(
+        factory=lambda deps: create_scb_browse_tool(
             scb_service=deps.get("scb_service"),
         ),
         requires=[],
     ),
     ToolDefinition(
-        name="scb_fetch_validated",
+        name="scb_inspect",
         description=(
-            "Fetch data from SCB using a pre-validated selection. "
-            "Use scb_validate_selection first to ensure correctness."
+            "Inspect a SCB table's full metadata: variables, codes, elimination "
+            "defaults, codelists, units, and usage hints. Key step before fetching."
         ),
-        factory=lambda deps: create_scb_fetch_validated_tool(
+        factory=lambda deps: create_scb_inspect_tool(
+            scb_service=deps.get("scb_service"),
+        ),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="scb_codelist",
+        description=(
+            "Fetch a SCB codelist (e.g. vs_RegionLän for counties only, "
+            "vs_RegionKommun07 for municipalities). Shows all values."
+        ),
+        factory=lambda deps: create_scb_codelist_tool(
+            scb_service=deps.get("scb_service"),
+        ),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="scb_preview",
+        description=(
+            "Preview a SCB table with auto-limited data (~20 rows). "
+            "Use to see what data looks like before a full fetch."
+        ),
+        factory=lambda deps: create_scb_preview_tool(
+            scb_service=deps.get("scb_service"),
+        ),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="scb_validate",
+        description=(
+            "Validate a selection without fetching data. Auto-completes missing "
+            "variables with elimination defaults. Supports TOP(n), FROM(x), RANGE(x,y)."
+        ),
+        factory=lambda deps: create_scb_validate_tool(
+            scb_service=deps.get("scb_service"),
+        ),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="scb_fetch",
+        description=(
+            "Fetch data from SCB as a readable markdown table. Auto-completes "
+            "missing variables. Supports v2 expressions and codelists."
+        ),
+        factory=lambda deps: create_scb_fetch_tool(
             scb_service=deps.get("scb_service"),
             connector_service=deps.get("connector_service"),
             search_space_id=deps.get("search_space_id", 0),

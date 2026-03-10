@@ -4,14 +4,13 @@ Provides O(1) lookup by code and by name, with diacritik normalization
 so that "Goteborg" matches "Göteborg", "Jonkoping" matches "Jönköping", etc.
 
 Used by:
-- scb_validate_selection (fuzzy region matching)
+- scb_validate / scb_fetch (fuzzy region matching)
 - QUL entity → SCB code mapping
 - scb_inspect_table (human-readable labels)
 """
 
 from __future__ import annotations
 
-import re
 import unicodedata
 from dataclasses import dataclass
 

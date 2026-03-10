@@ -20,7 +20,9 @@ from app.agents.new_chat.scb_tool_definitions import (
     retrieve_scb_tools,
 )
 from app.agents.new_chat.tools.scb_llm_tools import _format_table_inspection
-from app.services.connector_service import ConnectorService  # noqa: F401 — used by callers
+from app.services.connector_service import (
+    ConnectorService,
+)
 from app.services.scb_service import SCB_BASE_URL, ScbService
 
 logger = logging.getLogger(__name__)
@@ -54,8 +56,8 @@ def _build_tool_description(definition: ScbToolDefinition) -> str:
         (
             "HYBRID FLOW: This tool searches tables and returns their variable "
             "structure so you can build a precise selection. After calling this, "
-            "use scb_validate_selection to validate your selection, then "
-            "scb_fetch_validated to fetch the data."
+            "use scb_validate to validate your selection, then "
+            "scb_fetch to fetch the data as a readable markdown table."
         ),
     ]
     if definition.table_codes:
@@ -81,11 +83,11 @@ def _build_scb_tool(
 
     Instead of blindly fetching data via heuristic payloads, each domain tool
     now returns the table variable structure (inspection) so the LLM can
-    reason about what to select. The LLM then uses scb_validate_selection
-    and scb_fetch_validated to complete the query.
+    reason about what to select. The LLM then uses scb_validate
+    and scb_fetch to complete the query with auto-complete and markdown output.
 
     This is the hybrid approach: domain tools provide scoped search + inspect,
-    the 3 LLM tools handle validation and fetching.
+    the 7 LLM tools handle validation, preview, and fetching.
     """
     service = scb_service or ScbService()
     description = _build_tool_description(definition)
@@ -146,7 +148,7 @@ def _build_scb_tool(
                              f"in domain {definition.base_path}.",
                     "suggestions": [
                         "Try broader Swedish search terms",
-                        "Try scb_search_and_inspect for unrestricted search",
+                        "Try scb_search for unrestricted search",
                     ],
                 }, ensure_ascii=False)
 
@@ -182,7 +184,7 @@ def _build_scb_tool(
                     "table_ids": [t.id for t in all_tables[:10]],
                     "suggestions": [
                         "Try inspecting a specific table: "
-                        "scb_search_and_inspect(table_id='...')",
+                        "scb_inspect(table_id='...')",
                     ],
                 }, ensure_ascii=False)
 
@@ -196,10 +198,10 @@ def _build_scb_tool(
                 "next_step": (
                     "Choose the best table above. Build a selection dict "
                     "mapping each variable code to the value codes you want. "
-                    "Then call scb_validate_selection(table_id='...', "
-                    "selection={...}) to validate, and finally "
-                    "scb_fetch_validated(table_id='...', selection={...}) "
-                    "to fetch the data."
+                    "Then call scb_fetch(table_id='...', "
+                    "selection={...}) to fetch data as a markdown table. "
+                    "Missing variables are auto-completed. "
+                    "Use TOP(n), FROM(x), RANGE(x,y) for time selections."
                 ),
             }, ensure_ascii=False)
 
@@ -211,7 +213,7 @@ def _build_scb_tool(
             return json.dumps({
                 "error": f"SCB search failed: {exc!s}",
                 "suggestions": [
-                    "Try scb_search_and_inspect for unrestricted search",
+                    "Try scb_search for unrestricted search",
                 ],
             }, ensure_ascii=False)
 

@@ -530,6 +530,131 @@ class ScbService:
 
         return tables
 
+    # -- Default Selection & Codelists (v2) ---------------------------------
+
+    async def get_default_selection(self, table_id: str) -> dict[str, list[str]]:
+        """Fetch SCB's recommended default selection for a table.
+
+        Uses v2 ``GET /tables/{id}/defaultselection``.  Returns a dict
+        mapping variable codes to lists of value codes.  Falls back to an
+        empty dict on errors.
+        """
+        if not self._is_v2:
+            return {}
+        clean_id = table_id.strip("/")
+        url = f"{self.base_url}tables/{url_quote(clean_id, safe='')}/defaultselection"
+        try:
+            data = await self._get_json(url, params={"lang": "sv"})
+        except Exception:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        # v2 defaultselection returns {"selection": [{variableCode, valueCodes}, ...]}
+        result: dict[str, list[str]] = {}
+        for item in data.get("selection") or []:
+            if isinstance(item, dict):
+                var_code = item.get("variableCode", "")
+                val_codes = item.get("valueCodes") or []
+                if var_code:
+                    result[var_code] = [str(v) for v in val_codes]
+        return result
+
+    async def get_codelist(self, codelist_id: str) -> dict[str, Any]:
+        """Fetch a codelist by ID.
+
+        Uses v2 ``GET /codelists/{id}``.  Returns a dict with ``id``,
+        ``label``, ``type``, and ``values`` (list of {code, label}).
+        """
+        if not self._is_v2:
+            return {"error": "Codelists only available with v2 API."}
+        url = f"{self.base_url}codelists/{url_quote(codelist_id, safe='')}"
+        try:
+            data = await self._get_json(url, params={"lang": "sv"})
+        except Exception as exc:
+            return {"error": f"Failed to fetch codelist: {exc!s}"}
+        if not isinstance(data, dict):
+            return {"error": "Unexpected codelist response format."}
+        return data
+
+    def auto_complete_selection(
+        self,
+        metadata: dict[str, Any],
+        selection: dict[str, list[str]],
+        default_selection: dict[str, list[str]] | None = None,
+    ) -> tuple[dict[str, list[str]], list[str]]:
+        """Fill in missing variables with elimination defaults.
+
+        For each variable in metadata that is absent from *selection*:
+        1. If ``elimination=true`` and ``eliminationValueCode`` exists →
+           use ``[eliminationValueCode]``.
+        2. If ``elimination=true`` without eliminationValueCode → try
+           *default_selection*, then search for "tot"/"total", last resort
+           ``["*"]``.
+        3. If ``elimination=false`` → try *default_selection*, then use
+           first value + warning.
+
+        Returns ``(completed_selection, log_lines)``.
+        """
+        variables = metadata.get("variables") or []
+        if not isinstance(variables, list):
+            return dict(selection), []
+
+        completed: dict[str, list[str]] = dict(selection)
+        log: list[str] = []
+
+        for var in variables:
+            code = str(var.get("code") or "")
+            if not code or code in completed:
+                continue
+
+            elimination = var.get("elimination", False)
+            elim_code = var.get("eliminationValueCode")
+            values = var.get("values") or []
+            value_texts = var.get("valueTexts") or []
+
+            if elimination and elim_code:
+                completed[code] = [str(elim_code)]
+                label = str(var.get("text") or code)
+                log.append(f"{label} ({code}): '{elim_code}' (elimination default)")
+            elif elimination:
+                if default_selection and code in default_selection:
+                    completed[code] = default_selection[code]
+                    log.append(f"{code}: {default_selection[code]} (defaultselection)")
+                else:
+                    tot = self._find_total_value(values, value_texts)
+                    if tot:
+                        completed[code] = [tot]
+                        log.append(f"{code}: '{tot}' (total)")
+                    else:
+                        completed[code] = ["*"]
+                        log.append(f"{code}: '*' (alla, eliminable)")
+            else:
+                # Non-eliminable — mandatory
+                if default_selection and code in default_selection:
+                    completed[code] = default_selection[code]
+                    log.append(f"{code}: {default_selection[code]} (defaultselection)")
+                elif values:
+                    completed[code] = values[:1]
+                    log.append(f"{code}: '{values[0]}' (första värdet, kontrollera!)")
+
+        return completed, log
+
+    @staticmethod
+    def _find_total_value(
+        values: list[str], value_texts: list[str]
+    ) -> str | None:
+        """Find a 'total' value among a variable's values."""
+        total_markers = {"tot", "total", "totalt", "alla", "samtliga"}
+        # Check value codes first
+        for val in values:
+            if val.lower() in total_markers:
+                return val
+        # Check labels
+        for val, text in zip(values, value_texts, strict=False):
+            if text.lower() in total_markers:
+                return val
+        return None
+
     # -- Metadata -----------------------------------------------------------
 
     async def get_table_metadata(self, table_path: str) -> dict[str, Any]:
@@ -582,6 +707,8 @@ class ScbService:
         - ``id``: list of dimension names (e.g. ["Region", "Tid", ...])
         - ``dimension``: dict mapping each name to an object with ``label``
           and ``category`` (which has ``index`` and ``label`` sub-dicts).
+        - ``dimension.X.extension``: elimination info, codelists
+        - ``dimension.ContentsCode.category.unit``: units per measure
 
         This method also handles older PxWeb-style responses that use a
         ``variables`` list with ``code``/``label``/``values`` entries.
@@ -599,6 +726,7 @@ class ScbService:
                 category = dim.get("category") or {}
                 index_map = category.get("index") or {}
                 label_map = category.get("label") or {}
+                ext = dim.get("extension") or {}
 
                 # Sort value codes by their positional index
                 if isinstance(index_map, dict):
@@ -613,13 +741,68 @@ class ScbService:
                     str(label_map.get(c, c)) for c in sorted_codes
                 ]
 
-                normalized_vars.append({
+                var_entry: dict[str, Any] = {
                     "code": str(dim_id),
                     "text": label,
                     "values": values,
                     "valueTexts": value_texts,
-                })
-            return {"variables": normalized_vars}
+                    "elimination": ext.get("elimination", False),
+                    "eliminationValueCode": ext.get("eliminationValueCode"),
+                }
+
+                # Codelists (v2 extension)
+                codelists = ext.get("codeLists")
+                if isinstance(codelists, list) and codelists:
+                    var_entry["codelists"] = [
+                        {
+                            "id": cl.get("id", ""),
+                            "label": cl.get("label", ""),
+                            "type": cl.get("type", ""),
+                        }
+                        for cl in codelists
+                        if isinstance(cl, dict)
+                    ]
+
+                # ContentsCode enrichment: unit, refperiod, measuringType
+                unit_map = category.get("unit") or {}
+                refperiod_map = (dim.get("extension") or {}).get("refperiod") or {}
+                measuring_map = (dim.get("extension") or {}).get("measuringType") or {}
+
+                if unit_map or refperiod_map or measuring_map:
+                    per_value_meta: dict[str, dict[str, Any]] = {}
+                    for code in sorted_codes:
+                        meta: dict[str, Any] = {}
+                        if code in unit_map:
+                            meta["unit"] = unit_map[code]
+                        if code in refperiod_map:
+                            meta["refperiod"] = refperiod_map[code]
+                        if code in measuring_map:
+                            meta["measuringType"] = measuring_map[code]
+                        if meta:
+                            per_value_meta[code] = meta
+                    if per_value_meta:
+                        var_entry["valueMeta"] = per_value_meta
+
+                normalized_vars.append(var_entry)
+
+            result: dict[str, Any] = {"variables": normalized_vars}
+            # Preserve top-level metadata
+            if data.get("note"):
+                result["note"] = data["note"]
+            if data.get("source"):
+                result["source"] = data["source"]
+            if data.get("updated"):
+                result["updated"] = data["updated"]
+            top_ext = data.get("extension") or {}
+            px_ext = top_ext.get("px") or {}
+            if px_ext.get("tableid"):
+                result["tableid"] = px_ext["tableid"]
+            if px_ext.get("official-statistics") is not None:
+                result["officialStatistics"] = px_ext["official-statistics"]
+            contact = top_ext.get("contact")
+            if isinstance(contact, list) and contact:
+                result["contact"] = contact
+            return result
 
         # --- PxWeb-style format (variables list) ---
         variables = data.get("variables") or []
@@ -660,6 +843,186 @@ class ScbService:
             })
 
         return {"variables": normalized_vars}
+
+    # -- JSON-stat2 Decoder -------------------------------------------------
+
+    @staticmethod
+    def decode_jsonstat2_to_markdown(
+        response: dict[str, Any],
+        *,
+        max_rows: int = 100,
+    ) -> dict[str, Any]:
+        """Decode a JSON-stat2 response into a markdown table with metadata.
+
+        The flat ``value`` array is decoded using row-major indexing derived
+        from the ``id`` (dimension names) and ``size`` (dimension sizes).
+        Each combination of dimension codes is mapped to a table row with
+        human-readable labels and formatted numeric values.
+
+        Returns a dict with ``data_table`` (markdown string), ``row_count``,
+        ``truncated``, ``unit``, ``ref_period``, ``footnotes``, and ``source``.
+        """
+        dim_ids = response.get("id") or []
+        sizes = response.get("size") or []
+        values = response.get("value") or []
+        status = response.get("status") or {}
+        dimensions = response.get("dimension") or {}
+
+        if not dim_ids or not values:
+            return {
+                "data_table": "*Ingen data returnerades.*",
+                "row_count": 0,
+                "truncated": False,
+                "unit": None,
+                "ref_period": None,
+                "footnotes": [],
+                "source": response.get("source", "SCB"),
+            }
+
+        # 1. Build label mappings per dimension
+        dim_labels: dict[str, str] = {}
+        code_labels: dict[str, dict[str, str]] = {}
+        dim_codes: dict[str, list[str]] = {}
+        for dim_id in dim_ids:
+            dim = dimensions.get(dim_id) or {}
+            dim_labels[dim_id] = dim.get("label") or dim_id
+            cat = dim.get("category") or {}
+            index_map = cat.get("index") or {}
+            code_labels[dim_id] = cat.get("label") or {}
+            if isinstance(index_map, dict):
+                dim_codes[dim_id] = sorted(
+                    index_map.keys(), key=lambda k, im=index_map: im[k]
+                )
+            else:
+                dim_codes[dim_id] = list(index_map)
+
+        # 2. Extract unit/metadata from ContentsCode (if present)
+        unit_info: dict[str, Any] = {}
+        ref_period_info: dict[str, str] = {}
+        for dim_id in dim_ids:
+            dim = dimensions.get(dim_id) or {}
+            cat = dim.get("category") or {}
+            if cat.get("unit"):
+                unit_info = cat["unit"]
+            ext = dim.get("extension") or {}
+            if ext.get("refperiod"):
+                ref_period_info = ext["refperiod"]
+
+        # Determine decimal places from unit info
+        default_decimals = 0
+        if unit_info:
+            first_unit = next(iter(unit_info.values()), {})
+            if isinstance(first_unit, dict):
+                default_decimals = int(first_unit.get("decimals", 0))
+
+        # 3. Generate rows via cartesian product
+        from itertools import product as cart_product
+
+        all_code_lists = [dim_codes.get(d, []) for d in dim_ids]
+        total_combos = prod(len(cl) for cl in all_code_lists) if all_code_lists else 0
+
+        rows: list[list[str]] = []
+        for combo in cart_product(*all_code_lists):
+            # Calculate flat index (row-major order)
+            flat_idx = 0
+            for i, code in enumerate(combo):
+                dim = dimensions.get(dim_ids[i]) or {}
+                cat = dim.get("category") or {}
+                idx_map = cat.get("index") or {}
+                pos = idx_map.get(code, 0)
+                stride = 1
+                for j in range(i + 1, len(dim_ids)):
+                    stride *= sizes[j]
+                flat_idx += pos * stride
+
+            # Get value, respecting status markers
+            str_idx = str(flat_idx)
+            if str_idx in status:
+                val_str = str(status[str_idx])
+            elif flat_idx < len(values) and values[flat_idx] is not None:
+                val = values[flat_idx]
+                if isinstance(val, float):
+                    if default_decimals > 0:
+                        val_str = f"{val:,.{default_decimals}f}".replace(",", " ")
+                    else:
+                        val_str = f"{int(val):,}".replace(",", " ")
+                elif isinstance(val, int):
+                    val_str = f"{val:,}".replace(",", " ")
+                else:
+                    val_str = str(val)
+            else:
+                val_str = ".."
+
+            # Map codes to labels
+            row = [
+                code_labels.get(dim_ids[i], {}).get(c, c)
+                for i, c in enumerate(combo)
+            ]
+            row.append(val_str)
+            rows.append(row)
+
+            if len(rows) > max_rows:
+                break
+
+        # 4. Truncation
+        truncated = total_combos > max_rows
+        display_rows = rows[:max_rows]
+
+        # 5. Build markdown table
+        headers = [dim_labels.get(d, d) for d in dim_ids]
+        # Use first ContentsCode label as value header, or "Värde"
+        value_header = "Värde"
+        for dim_id in dim_ids:
+            dim = dimensions.get(dim_id) or {}
+            cat = dim.get("category") or {}
+            if cat.get("unit"):
+                lbls = cat.get("label") or {}
+                if len(lbls) == 1:
+                    value_header = next(iter(lbls.values()), "Värde")
+                break
+        headers.append(value_header)
+
+        if not display_rows:
+            md = "*Inga rader matchade urvalet.*"
+        else:
+            # Header row
+            md_lines = ["| " + " | ".join(headers) + " |"]
+            # Separator: left-align dims, right-align value column
+            seps = ["---"] * len(dim_ids) + ["---:"]
+            md_lines.append("| " + " | ".join(seps) + " |")
+            # Data rows
+            for row in display_rows:
+                md_lines.append("| " + " | ".join(row) + " |")
+            md = "\n".join(md_lines)
+            if truncated:
+                md += f"\n\n*[...{total_combos - max_rows} fler rader utelämnade]*"
+
+        # 6. Extract unit/period summary
+        unit_summary = None
+        if unit_info:
+            units = []
+            for _code, u in unit_info.items():
+                if isinstance(u, dict):
+                    units.append(u.get("base", ""))
+                else:
+                    units.append(str(u))
+            unit_summary = ", ".join(u for u in units if u)
+
+        period_summary = None
+        if ref_period_info:
+            period_summary = ", ".join(
+                str(v) for v in ref_period_info.values() if v
+            )
+
+        return {
+            "data_table": md,
+            "row_count": total_combos,
+            "truncated": truncated,
+            "unit": unit_summary,
+            "ref_period": period_summary,
+            "footnotes": response.get("note") or [],
+            "source": response.get("source") or "SCB",
+        }
 
     # -- Table Discovery ----------------------------------------------------
 
@@ -798,37 +1161,6 @@ class ScbService:
             metadata_limit=metadata_limit,
         )
         return best_table
-
-    # -- Codelist Integration (#16) -----------------------------------------
-
-    async def get_codelist(self, codelist_id: str, *, lang: str = "sv") -> dict[str, Any]:
-        """Fetch a codelist via v2 GET /codelists/{id}.
-
-        Codelists provide centralised value mappings (e.g. region codes →
-        names) that can be reused across multiple tables.  Only available
-        on v2.
-        """
-        if not self._is_v2:
-            return {}
-
-        cache_key = f"cl:{codelist_id}:{lang}"
-        async with self._cache_lock:
-            if cache_key in self._codelist_cache:
-                return dict(self._codelist_cache[cache_key])
-
-        url = f"{self.base_url}codelists/{url_quote(codelist_id, safe='')}"
-        try:
-            data = await self._get_json(url, params={"lang": lang})
-        except httpx.HTTPError as exc:
-            logger.warning("codelist fetch failed for %s: %s", codelist_id, exc)
-            return {}
-
-        if not isinstance(data, dict):
-            return {}
-
-        async with self._cache_lock:
-            self._codelist_cache[cache_key] = data
-        return data
 
     # -- Data Retrieval -----------------------------------------------------
 

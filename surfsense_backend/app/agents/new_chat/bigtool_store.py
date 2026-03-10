@@ -167,25 +167,42 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "marketplace_compare_prices": ("tools", "marketplace", "compare"),
     "marketplace_categories": ("tools", "marketplace", "reference"),
     "marketplace_regions": ("tools", "marketplace", "reference"),
-    # SCB LLM-driven hybrid tools
-    "scb_search_and_inspect": ("tools", "statistics", "scb"),
-    "scb_validate_selection": ("tools", "statistics", "scb"),
-    "scb_fetch_validated": ("tools", "statistics", "scb"),
+    # SCB 7-tool pipeline
+    "scb_search": ("tools", "statistics", "scb"),
+    "scb_browse": ("tools", "statistics", "scb"),
+    "scb_inspect": ("tools", "statistics", "scb"),
+    "scb_codelist": ("tools", "statistics", "scb"),
+    "scb_preview": ("tools", "statistics", "scb"),
+    "scb_validate": ("tools", "statistics", "scb"),
+    "scb_fetch": ("tools", "statistics", "scb"),
 }
 
 TOOL_KEYWORDS: dict[str, list[str]] = {
-    # SCB LLM-driven hybrid tools
-    "scb_search_and_inspect": [
+    # SCB 7-tool pipeline
+    "scb_search": [
         "scb", "statistik", "tabell", "variabel", "statistiska",
         "centralbyran", "befolkning", "arbetsmarknad", "ekonomi",
         "utbildning", "miljo", "halsa", "boende", "priser",
         "handel", "transport", "energi", "jordbruk",
     ],
-    "scb_validate_selection": [
+    "scb_browse": [
+        "scb", "statistik", "amne", "kategori", "utforska", "navigera",
+    ],
+    "scb_inspect": [
+        "scb", "metadata", "variabel", "kodlista", "tabell",
+        "inspektion", "statistik",
+    ],
+    "scb_codelist": [
+        "scb", "kodlista", "lan", "kommun", "region", "aggregering",
+    ],
+    "scb_preview": [
+        "scb", "forhandsvisning", "preview", "testa", "statistik",
+    ],
+    "scb_validate": [
         "scb", "validera", "kontrollera", "selection", "variabel",
         "kod", "varde", "statistik",
     ],
-    "scb_fetch_validated": [
+    "scb_fetch": [
         "scb", "hamta", "data", "fetch", "statistik", "tabell",
     ],
     "search_knowledge_base": ["sok", "search", "note", "calendar", "knowledge"],
