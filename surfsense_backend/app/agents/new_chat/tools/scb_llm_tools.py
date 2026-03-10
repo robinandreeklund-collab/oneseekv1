@@ -20,6 +20,7 @@ Data:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -101,24 +102,35 @@ def _coerce_selection(
     """Coerce selection values to ``list[str]``.
 
     LLMs frequently pass scalar strings instead of single-element lists.
-    This helper silently converts ``"0180"`` → ``["0180"]`` and
-    ``"2015-2020"`` year-range strings → ``["2015", "2016", ..., "2020"]``
-    so that downstream validation never fails on type alone.
+    This helper silently converts ``"0180"`` → ``["0180"]`` so that
+    downstream validation never fails on type alone.
+
+    Year-range strings like ``"2015-2020"`` are converted to
+    ``RANGE(2015,2020)`` v2 expressions instead of being expanded to
+    individual years, because some SCB tables use literal period codes
+    like ``"2022-2024"`` that must not be expanded.
     """
     coerced: dict[str, list[str]] = {}
     for key, val in selection.items():
         if isinstance(val, str):
             val = val.strip()
-            # Detect year-range patterns like "2015-2020"
+            # Convert year-range patterns like "2015-2020" to RANGE() expressions
+            # instead of expanding, because SCB tables may use literal period
+            # codes like "2022-2024" that must not be split into individual years.
             m = re.match(r"^(\d{4})\s*[-\u2013]\s*(\d{4})$", val)
             if m:
                 start, end = int(m.group(1)), int(m.group(2))
                 if 1900 <= start <= end <= 2200 and (end - start) <= 100:
-                    coerced[key] = [str(y) for y in range(start, end + 1)]
+                    coerced[key] = [f"RANGE({start},{end})"]
+                    continue
+            # Split "+" separated values (e.g. "1+2" → ["1","2"])
+            if "+" in val and not _is_v2_expression(val):
+                parts = [p.strip() for p in val.split("+") if p.strip()]
+                if len(parts) > 1:
+                    coerced[key] = parts
                     continue
             coerced[key] = [val]
         elif isinstance(val, list | tuple):
-            # Also expand year-range strings inside lists
             expanded: list[str] = []
             for item in val:
                 s = str(item).strip()
@@ -126,7 +138,13 @@ def _coerce_selection(
                 if m:
                     start, end = int(m.group(1)), int(m.group(2))
                     if 1900 <= start <= end <= 2200 and (end - start) <= 100:
-                        expanded.extend(str(y) for y in range(start, end + 1))
+                        expanded.append(f"RANGE({start},{end})")
+                        continue
+                # Split "+" separated values
+                if "+" in s and not _is_v2_expression(s):
+                    parts = [p.strip() for p in s.split("+") if p.strip()]
+                    if len(parts) > 1:
+                        expanded.extend(parts)
                         continue
                 expanded.append(s)
             coerced[key] = expanded
@@ -165,6 +183,60 @@ def _estimate_v2_expression_size(expr: str, total_values: int) -> int:
     return min(total_values, 20)
 
 
+def _resolve_and_clean_selection(
+    selection: dict[str, list[str]],
+    variables: list[dict[str, Any]],
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Resolve variable aliases and strip unknown variable keys.
+
+    Returns ``(clean_selection, warnings)`` where clean_selection only contains
+    keys that map to actual variable codes in *variables*, and warnings list
+    any keys that were removed or aliased.
+    """
+    var_by_code: dict[str, str] = {}
+    var_by_normalized: dict[str, str] = {}
+    for var in variables:
+        code = str(var.get("code") or "")
+        var_by_code[code] = code
+        var_by_normalized[normalize_diacritik(code)] = code
+        text = str(var.get("text") or "")
+        if text:
+            var_by_normalized[normalize_diacritik(text)] = code
+
+    # Add well-known aliases
+    for alias, real_code in _VARIABLE_ALIASES.items():
+        if real_code in var_by_code:
+            norm_alias = normalize_diacritik(alias)
+            if norm_alias not in var_by_normalized:
+                var_by_normalized[norm_alias] = real_code
+
+    clean: dict[str, list[str]] = {}
+    warnings: list[str] = []
+
+    for sel_key, sel_values in selection.items():
+        # Direct match
+        if sel_key in var_by_code:
+            clean[sel_key] = sel_values
+            continue
+
+        # Alias / normalized match
+        norm_key = normalize_diacritik(sel_key)
+        if norm_key in var_by_normalized:
+            real_code = var_by_normalized[norm_key]
+            clean[real_code] = sel_values
+            warnings.append(f"Variable alias: '{sel_key}' → '{real_code}'")
+            continue
+
+        # Unknown key — strip it
+        valid_codes = [str(v.get("code", "")) for v in variables]
+        warnings.append(
+            f"Stripped unknown variable '{sel_key}'. "
+            f"Valid variables: {', '.join(valid_codes)}"
+        )
+
+    return clean, warnings
+
+
 # ---------------------------------------------------------------------------
 # Tool 1: scb_search
 # ---------------------------------------------------------------------------
@@ -199,19 +271,23 @@ def create_scb_search_tool(scb_service: ScbService | None = None):
 
         try:
             tables = await service.search_tables(
-                query, limit=max_results, past_days=past_days,
+                query,
+                limit=max_results,
+                past_days=past_days,
             )
             if not tables:
-                return json.dumps({
-                    "query": query,
-                    "results": [],
-                    "total_hits": 0,
-                    "suggestions": [
-                        "Try Swedish terms (e.g. 'befolkning' not 'population')",
-                        "Try broader terms",
-                        "Try scb_browse() to explore topics",
-                    ],
-                })
+                return json.dumps(
+                    {
+                        "query": query,
+                        "results": [],
+                        "total_hits": 0,
+                        "suggestions": [
+                            "Try Swedish terms (e.g. 'befolkning' not 'population')",
+                            "Try broader terms",
+                            "Try scb_browse() to explore topics",
+                        ],
+                    }
+                )
 
             results = []
             for t in tables[:max_results]:
@@ -225,12 +301,15 @@ def create_scb_search_tool(scb_service: ScbService | None = None):
                     entry["subject"] = " > ".join(t.breadcrumb)
                 results.append(entry)
 
-            return json.dumps({
-                "query": query,
-                "results": results,
-                "total_hits": len(tables),
-                "next_step": "Use scb_inspect(table_id='...') to see full metadata.",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "query": query,
+                    "results": results,
+                    "total_hits": len(tables),
+                    "next_step": "Use scb_inspect(table_id='...') to see full metadata.",
+                },
+                ensure_ascii=False,
+            )
 
         except Exception as exc:
             logger.exception("scb_search failed: %s", exc)
@@ -270,11 +349,13 @@ def create_scb_browse_tool(scb_service: ScbService | None = None):
         try:
             nodes = await service.list_nodes(browse_path)
             if not nodes:
-                return json.dumps({
-                    "path": path or "(top level)",
-                    "items": [],
-                    "note": "No items found at this path. Try a different path.",
-                })
+                return json.dumps(
+                    {
+                        "path": path or "(top level)",
+                        "items": [],
+                        "note": "No items found at this path. Try a different path.",
+                    }
+                )
 
             items = []
             for node in nodes:
@@ -300,15 +381,20 @@ def create_scb_browse_tool(scb_service: ScbService | None = None):
                 next_step += f"Browse deeper: scb_browse(path='{sub_path}'). "
             if has_tables:
                 table_example = next(i["id"] for i in items if i["type"] == "table")
-                next_step += f"Inspect a table: scb_inspect(table_id='{table_example}')."
+                next_step += (
+                    f"Inspect a table: scb_inspect(table_id='{table_example}')."
+                )
 
-            return json.dumps({
-                "path": path or "(top level)",
-                "items": items,
-                "folders": sum(1 for i in items if i["type"] == "folder"),
-                "tables": sum(1 for i in items if i["type"] == "table"),
-                "next_step": next_step,
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "path": path or "(top level)",
+                    "items": items,
+                    "folders": sum(1 for i in items if i["type"] == "folder"),
+                    "tables": sum(1 for i in items if i["type"] == "table"),
+                    "next_step": next_step,
+                },
+                ensure_ascii=False,
+            )
 
         except Exception as exc:
             logger.exception("scb_browse failed: %s", exc)
@@ -356,10 +442,12 @@ def create_scb_inspect_tool(scb_service: ScbService | None = None):
             )
 
             if not metadata or not metadata.get("variables"):
-                return json.dumps({
-                    "error": f"Table '{table_id}' not found or has no variables.",
-                    "suggestions": ["Try scb_search(query='...') to find tables."],
-                })
+                return json.dumps(
+                    {
+                        "error": f"Table '{table_id}' not found or has no variables.",
+                        "suggestions": ["Try scb_search(query='...') to find tables."],
+                    }
+                )
 
             variables = metadata.get("variables") or []
             formatted_vars = []
@@ -410,8 +498,7 @@ def create_scb_inspect_tool(scb_service: ScbService | None = None):
                 codelists = var.get("codelists")
                 if codelists:
                     var_info["codelists"] = [
-                        f"{cl['id']} ({cl.get('label', '')})"
-                        for cl in codelists
+                        f"{cl['id']} ({cl.get('label', '')})" for cl in codelists
                     ]
 
                 # ContentsCode enrichment (unit, ref_period)
@@ -437,7 +524,11 @@ def create_scb_inspect_tool(scb_service: ScbService | None = None):
 
                 # Hints and usage examples
                 hint, usage = _build_hints_and_usage(
-                    var_type, code, values, total_values, var_info.get("eliminable", False)
+                    var_type,
+                    code,
+                    values,
+                    total_values,
+                    var_info.get("eliminable", False),
                 )
                 if hint:
                     var_info["hint"] = hint
@@ -499,8 +590,7 @@ def _build_sample_values(
     """Build a strategic subset of values to show the LLM."""
     if total_values <= _MAX_VALUES_TO_SHOW:
         return [
-            {"code": v, "label": t}
-            for v, t in zip(values, value_texts, strict=False)
+            {"code": v, "label": t} for v, t in zip(values, value_texts, strict=False)
         ]
 
     # For large lists, show strategic samples
@@ -509,7 +599,9 @@ def _build_sample_values(
     if var_type == "time":
         # Show first 2 + last 5
         for i in range(min(2, total_values)):
-            samples.append((values[i], value_texts[i] if i < len(value_texts) else values[i]))
+            samples.append(
+                (values[i], value_texts[i] if i < len(value_texts) else values[i])
+            )
         for i in range(max(0, total_values - 5), total_values):
             pair = (values[i], value_texts[i] if i < len(value_texts) else values[i])
             if pair not in samples:
@@ -529,10 +621,12 @@ def _build_sample_values(
     else:
         # First _MAX_VALUES_TO_SHOW
         for i in range(min(_MAX_VALUES_TO_SHOW, total_values)):
-            samples.append((
-                values[i],
-                value_texts[i] if i < len(value_texts) else values[i],
-            ))
+            samples.append(
+                (
+                    values[i],
+                    value_texts[i] if i < len(value_texts) else values[i],
+                )
+            )
 
     return [{"code": v, "label": t} for v, t in samples]
 
@@ -554,7 +648,11 @@ def _build_hints_and_usage(
         usage = {
             "latest_5": {code: ["TOP(5)"]},
             "specific": {code: [values[-1]]},
-            "range": {code: [f"RANGE({values[-3] if len(values) >= 3 else values[0]},{values[-1]})"]},
+            "range": {
+                code: [
+                    f"RANGE({values[-3] if len(values) >= 3 else values[0]},{values[-1]})"
+                ]
+            },
         }
     elif var_type == "region":
         hint = f"{total_values} regions. 00=Riket. Use codelist for counties/municipalities."
@@ -623,20 +721,25 @@ def create_scb_codelist_tool(scb_service: ScbService | None = None):
             if isinstance(values_list, list):
                 for item in values_list:
                     if isinstance(item, dict):
-                        formatted_values.append({
-                            "code": item.get("code", ""),
-                            "label": item.get("label", item.get("valueText", "")),
-                        })
+                        formatted_values.append(
+                            {
+                                "code": item.get("code", ""),
+                                "label": item.get("label", item.get("valueText", "")),
+                            }
+                        )
                     elif isinstance(item, str):
                         formatted_values.append({"code": item, "label": item})
 
-            return json.dumps({
-                "id": data.get("id", codelist_id),
-                "label": data.get("label", data.get("text", "")),
-                "type": data.get("type", ""),
-                "values": formatted_values,
-                "total_values": len(formatted_values),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "id": data.get("id", codelist_id),
+                    "label": data.get("label", data.get("text", "")),
+                    "type": data.get("type", ""),
+                    "values": formatted_values,
+                    "total_values": len(formatted_values),
+                },
+                ensure_ascii=False,
+            )
 
         except Exception as exc:
             logger.exception("scb_codelist failed: %s", exc)
@@ -683,11 +786,20 @@ def create_scb_preview_tool(scb_service: ScbService | None = None):
         try:
             metadata = await service.get_table_metadata(table_id)
             if not metadata or not metadata.get("variables"):
-                return json.dumps({
-                    "error": f"Table '{table_id}' not found.",
-                })
+                return json.dumps(
+                    {
+                        "error": f"Table '{table_id}' not found.",
+                    }
+                )
 
             variables = metadata.get("variables") or []
+
+            # Resolve aliases and strip unknown keys from user selection
+            if selection:
+                selection, _preview_warnings = _resolve_and_clean_selection(
+                    selection, variables
+                )
+
             preview_sel: dict[str, list[str]] = {}
 
             for var in variables:
@@ -738,16 +850,19 @@ def create_scb_preview_tool(scb_service: ScbService | None = None):
             # Decode to markdown
             decoded = service.decode_jsonstat2_to_markdown(data, max_rows=30)
 
-            return json.dumps({
-                "table_id": table_id,
-                "preview": True,
-                "selection_used": preview_sel,
-                **decoded,
-                "note": (
-                    "This is a LIMITED preview. Use scb_fetch() for full data. "
-                    "Preview auto-limits: time=latest, large dims=first 2."
-                ),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "table_id": table_id,
+                    "preview": True,
+                    "selection_used": preview_sel,
+                    **decoded,
+                    "note": (
+                        "This is a LIMITED preview. Use scb_fetch() for full data. "
+                        "Preview auto-limits: time=latest, large dims=first 2."
+                    ),
+                },
+                ensure_ascii=False,
+            )
 
         except Exception as exc:
             logger.exception("scb_preview failed: %s", exc)
@@ -789,9 +904,11 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
         if not table_id:
             return json.dumps({"error": "table_id is required."})
         if not selection or not isinstance(selection, dict):
-            return json.dumps({
-                "error": "selection must be a dict. Example: {\"Region\": [\"00\"], \"Tid\": [\"TOP(3)\"]}",
-            })
+            return json.dumps(
+                {
+                    "error": 'selection must be a dict. Example: {"Region": ["00"], "Tid": ["TOP(3)"]}',
+                }
+            )
 
         # Auto-coerce string values to lists and expand year ranges
         selection = _coerce_selection(selection)
@@ -805,9 +922,11 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
             )
 
             if not metadata or not metadata.get("variables"):
-                return json.dumps({
-                    "error": f"Table '{table_id}' not found.",
-                })
+                return json.dumps(
+                    {
+                        "error": f"Table '{table_id}' not found.",
+                    }
+                )
 
             variables = metadata.get("variables") or []
             errors: list[dict[str, Any]] = []
@@ -827,7 +946,9 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
 
             for alias, real_code in _VARIABLE_ALIASES.items():
                 if real_code in var_by_code and alias not in var_by_normalized:
-                    var_by_normalized[normalize_diacritik(alias)] = var_by_code[real_code]
+                    var_by_normalized[normalize_diacritik(alias)] = var_by_code[
+                        real_code
+                    ]
 
             # Validate provided selection
             used_vars: set[str] = set()
@@ -842,11 +963,13 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     suggestions = _find_closest_variables(
                         sel_code, [str(v.get("code", "")) for v in variables]
                     )
-                    errors.append({
-                        "variable": sel_code,
-                        "error": f"Variable '{sel_code}' not found.",
-                        "suggestions": suggestions,
-                    })
+                    errors.append(
+                        {
+                            "variable": sel_code,
+                            "error": f"Variable '{sel_code}' not found.",
+                            "suggestions": suggestions,
+                        }
+                    )
                     continue
 
                 actual_code = str(var_info.get("code") or "")
@@ -858,7 +981,7 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
 
                 resolved_values: list[str] = []
 
-                for val in (sel_values or []):
+                for val in sel_values or []:
                     val_str = str(val).strip()
 
                     # v2 expressions pass through without validation
@@ -880,7 +1003,9 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     # Region resolution
                     if _is_region_variable(actual_code, str(var_info.get("text", ""))):
                         region_codes = resolve_region_codes(
-                            val_str, valid_values, value_texts,
+                            val_str,
+                            valid_values,
+                            value_texts,
                         )
                         if region_codes:
                             resolved_values.extend(region_codes)
@@ -891,31 +1016,42 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                             continue
 
                     # Fuzzy value matching
-                    fuzzy_matches = _fuzzy_match_values(val_str, valid_values, value_texts)
+                    fuzzy_matches = _fuzzy_match_values(
+                        val_str, valid_values, value_texts
+                    )
                     if fuzzy_matches:
                         resolved_values.extend(fuzzy_matches)
                         names = [value_text_map.get(c, c) for c in fuzzy_matches]
-                        warnings.append(f"'{val_str}' → {fuzzy_matches} ({', '.join(names)})")
+                        warnings.append(
+                            f"'{val_str}' → {fuzzy_matches} ({', '.join(names)})"
+                        )
                         continue
 
                     closest = _find_closest_values(val_str, valid_values, value_texts)
-                    errors.append({
-                        "variable": actual_code,
-                        "value": val_str,
-                        "error": f"Value '{val_str}' not found.",
-                        "suggestions": closest,
-                    })
+                    errors.append(
+                        {
+                            "variable": actual_code,
+                            "value": val_str,
+                            "error": f"Value '{val_str}' not found.",
+                            "suggestions": closest,
+                        }
+                    )
 
                 if resolved_values:
-                    resolved_selection[actual_code] = list(dict.fromkeys(resolved_values))
+                    resolved_selection[actual_code] = list(
+                        dict.fromkeys(resolved_values)
+                    )
 
             if errors:
-                return json.dumps({
-                    "status": "invalid",
-                    "errors": errors,
-                    "warnings": warnings,
-                    "resolved_so_far": resolved_selection,
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "status": "invalid",
+                        "errors": errors,
+                        "warnings": warnings,
+                        "resolved_so_far": resolved_selection,
+                    },
+                    ensure_ascii=False,
+                )
 
             # Auto-complete missing variables
             auto_completed, auto_log = service.auto_complete_selection(
@@ -935,18 +1071,21 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                         val_count += 1
                 estimated_cells *= max(val_count, 1)
 
-            return json.dumps({
-                "status": "valid",
-                "table_id": table_id,
-                "selection": auto_completed,
-                "auto_completed": auto_log,
-                "estimated_cells": estimated_cells,
-                "warnings": warnings,
-                "next_step": (
-                    f"Selection valid (~{estimated_cells} cells). "
-                    f"Use scb_fetch(table_id='{table_id}', selection=...) to get data."
-                ),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "valid",
+                    "table_id": table_id,
+                    "selection": auto_completed,
+                    "auto_completed": auto_log,
+                    "estimated_cells": estimated_cells,
+                    "warnings": warnings,
+                    "next_step": (
+                        f"Selection valid (~{estimated_cells} cells). "
+                        f"Use scb_fetch(table_id='{table_id}', selection=...) to get data."
+                    ),
+                },
+                ensure_ascii=False,
+            )
 
         except Exception as exc:
             logger.exception("scb_validate failed: %s", exc)
@@ -1000,9 +1139,11 @@ def create_scb_fetch_tool(
         if not table_id:
             return json.dumps({"error": "table_id is required."})
         if not selection or not isinstance(selection, dict):
-            return json.dumps({
-                "error": "selection is required. Example: {\"ContentsCode\": [\"BE0101N1\"], \"Tid\": [\"TOP(3)\"]}",
-            })
+            return json.dumps(
+                {
+                    "error": 'selection is required. Example: {"ContentsCode": ["BE0101N1"], "Tid": ["TOP(3)"]}',
+                }
+            )
 
         # Auto-coerce string values to lists and expand year ranges
         selection = _coerce_selection(selection)
@@ -1016,16 +1157,35 @@ def create_scb_fetch_tool(
             )
 
             if not metadata or not metadata.get("variables"):
-                return json.dumps({
-                    "error": f"Table '{table_id}' not found.",
-                })
+                return json.dumps(
+                    {
+                        "error": f"Table '{table_id}' not found.",
+                    }
+                )
 
-            # Step 2: Auto-complete missing variables
-            completed_selection, auto_log = service.auto_complete_selection(
-                metadata, selection, default_selection
+            # Step 2: Resolve aliases + strip unknown variable keys
+            variables = metadata.get("variables") or []
+            clean_selection, resolve_warnings = _resolve_and_clean_selection(
+                selection, variables
             )
+            if not clean_selection:
+                return json.dumps(
+                    {
+                        "error": (
+                            "No valid variable keys in selection. "
+                            f"Valid variables for {table_id}: "
+                            + ", ".join(str(v.get("code", "")) for v in variables)
+                        ),
+                    }
+                )
 
-            # Step 3: Build v2 payload
+            # Step 3: Auto-complete missing variables
+            completed_selection, auto_log = service.auto_complete_selection(
+                metadata, clean_selection, default_selection
+            )
+            auto_log.extend(resolve_warnings)
+
+            # Step 4: Build v2 payload
             v2_selection: list[dict[str, Any]] = []
             for code, vals in completed_selection.items():
                 entry: dict[str, Any] = {
@@ -1039,8 +1199,7 @@ def create_scb_fetch_tool(
 
             payload = {"selection": v2_selection}
 
-            # Step 4: Estimate cells and check limits
-            variables = metadata.get("variables") or []
+            # Step 5: Estimate cells and check limits
             var_by_code = {str(v.get("code", "")): v for v in variables}
             estimated_cells = 1
             for code, vals in completed_selection.items():
@@ -1055,32 +1214,36 @@ def create_scb_fetch_tool(
                 estimated_cells *= max(val_count, 1)
 
             if estimated_cells > 150_000:
-                return json.dumps({
-                    "error": f"Selection too large (~{estimated_cells:,} cells, max 150,000).",
-                    "selection": completed_selection,
-                    "suggestions": [
-                        "Reduce time range: use TOP(5) instead of all years",
-                        "Select specific regions instead of all",
-                        "Use a codelist to limit regions (e.g. vs_RegionLän for counties)",
-                        "Select fewer ContentsCode measures",
-                    ],
-                })
+                return json.dumps(
+                    {
+                        "error": f"Selection too large (~{estimated_cells:,} cells, max 150,000).",
+                        "selection": completed_selection,
+                        "suggestions": [
+                            "Reduce time range: use TOP(5) instead of all years",
+                            "Select specific regions instead of all",
+                            "Use a codelist to limit regions (e.g. vs_RegionLän for counties)",
+                            "Select fewer ContentsCode measures",
+                        ],
+                    }
+                )
 
-            # Step 5: Fetch data
+            # Step 6: Fetch data
             data = await service.query_table(table_id, payload)
 
-            # Step 6: Decode JSON-stat2 to markdown
+            # Step 7: Decode JSON-stat2 to markdown
             decoded = service.decode_jsonstat2_to_markdown(data, max_rows=max_rows)
 
             # Build selection summary with labels
             selection_summary: dict[str, list[str]] = {}
             for code, vals in completed_selection.items():
                 var_info = var_by_code.get(code, {})
-                vt_map = dict(zip(
-                    var_info.get("values") or [],
-                    var_info.get("valueTexts") or [],
-                    strict=False,
-                ))
+                vt_map = dict(
+                    zip(
+                        var_info.get("values") or [],
+                        var_info.get("valueTexts") or [],
+                        strict=False,
+                    )
+                )
                 labeled = []
                 for v in vals:
                     if _is_v2_expression(v):
@@ -1114,22 +1277,39 @@ def create_scb_fetch_tool(
             # Optional: ingest to knowledge base
             if connector_service is not None:
                 await _ingest_result(
-                    connector_service, service, table_id,
-                    result, search_space_id, user_id, thread_id,
+                    connector_service,
+                    service,
+                    table_id,
+                    result,
+                    search_space_id,
+                    user_id,
+                    thread_id,
                 )
 
             return json.dumps(result, ensure_ascii=False)
 
         except Exception as exc:
             logger.exception("scb_fetch failed: %s", exc)
-            return json.dumps({
-                "error": f"Data fetch failed: {exc!s}",
-                "suggestions": [
-                    "Try scb_validate first to check your selection",
-                    "Try scb_preview for a quick look",
-                    "Reduce the selection size",
-                ],
-            })
+            error_msg = str(exc)
+            suggestions = [
+                "Use scb_validate(table_id, selection) first to check your selection",
+                "Use scb_inspect(table_id) to see valid variable codes and values",
+                "Reduce the selection size",
+            ]
+            # Include the resolved selection in error for debugging
+            result_data: dict[str, Any] = {
+                "error": f"Data fetch failed: {error_msg}",
+                "suggestions": suggestions,
+            }
+            if "400" in error_msg:
+                result_data["note"] = (
+                    "400 Bad Request usually means invalid variable codes or values. "
+                    "Run scb_validate first to find the exact problem."
+                )
+                # Include the selection that was sent so LLM can see what went wrong
+                with contextlib.suppress(NameError):
+                    result_data["selection_sent"] = completed_selection
+            return json.dumps(result_data, ensure_ascii=False)
 
     return scb_fetch
 
@@ -1170,9 +1350,14 @@ def _find_closest_values(
         ):
             suggestions.append(f"{val}={text}")
 
-    return suggestions[:10] if suggestions else [
-        f"{v}={t}" for v, t in list(zip(values[:10], value_texts[:10], strict=False))
-    ]
+    return (
+        suggestions[:10]
+        if suggestions
+        else [
+            f"{v}={t}"
+            for v, t in list(zip(values[:10], value_texts[:10], strict=False))
+        ]
+    )
 
 
 def _fuzzy_match_values(
@@ -1186,7 +1371,11 @@ def _fuzzy_match_values(
 
     for val, text in zip(values, value_texts, strict=False):
         text_norm = normalize_diacritik(text)
-        if query_norm == text_norm or query_norm == normalize_diacritik(val) or f" {query_norm} " in f" {text_norm} ":
+        if (
+            query_norm == text_norm
+            or query_norm == normalize_diacritik(val)
+            or f" {query_norm} " in f" {text_norm} "
+        ):
             matches.append(val)
 
     return matches
@@ -1207,9 +1396,7 @@ def _format_table_inspection(
         code = str(var.get("code") or "")
         label = str(var.get("text") or code)
         values = [str(v) for v in (var.get("values") or []) if v is not None]
-        value_texts = [
-            str(v) for v in (var.get("valueTexts") or []) if v is not None
-        ]
+        value_texts = [str(v) for v in (var.get("valueTexts") or []) if v is not None]
 
         var_type = "other"
         if _is_time_variable(code, label):
@@ -1245,7 +1432,9 @@ def _format_table_inspection(
             var_info["note"] = f"Showing {show_count} of {total_values} values."
 
         if var_type == "time" and values:
-            var_info["hint"] = f"Latest: {values[-1]}, Earliest: {values[0]}. Use TOP(n) for latest n."
+            var_info["hint"] = (
+                f"Latest: {values[-1]}, Earliest: {values[0]}. Use TOP(n) for latest n."
+            )
         elif var_type == "region" and total_values > 20:
             var_info["hint"] = "Use scb_validate to resolve region names. 00=Riket."
         elif var_type == "gender":

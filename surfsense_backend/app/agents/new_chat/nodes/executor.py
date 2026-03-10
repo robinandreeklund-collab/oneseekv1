@@ -122,7 +122,9 @@ def _normalize_tool_call_dict(tool_call: Any, *, index: int) -> dict[str, Any] |
     if isinstance(normalized.get("function"), dict):
         function_payload = dict(normalized["function"])
         function_payload["name"] = name
-        function_payload["arguments"] = json.dumps(normalized["args"], ensure_ascii=False)
+        function_payload["arguments"] = json.dumps(
+            normalized["args"], ensure_ascii=False
+        )
         normalized["function"] = function_payload
     if normalized.get("type") is None:
         normalized["type"] = "tool_call"
@@ -292,7 +294,9 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
         if isinstance(message, HumanMessage):
             content = _normalize_message_content(getattr(message, "content", ""))
             try:
-                normalized_messages.append(message.model_copy(update={"content": content}))
+                normalized_messages.append(
+                    message.model_copy(update={"content": content})
+                )
             except Exception:
                 normalized_messages.append(HumanMessage(content=content))
             continue
@@ -300,7 +304,9 @@ def _normalize_messages_for_provider_compat(messages: list[Any]) -> list[Any]:
         if isinstance(message, SystemMessage):
             content = _normalize_message_content(getattr(message, "content", ""))
             try:
-                normalized_messages.append(message.model_copy(update={"content": content}))
+                normalized_messages.append(
+                    message.model_copy(update={"content": content})
+                )
             except Exception:
                 normalized_messages.append(SystemMessage(content=content))
             continue
@@ -315,9 +321,7 @@ def _is_jinja_nullvalue_error(error: Exception) -> bool:
     return (
         "error rendering prompt with jinja template" in lowered
         and "nullvalue" in lowered
-    ) or (
-        "cannot apply filter \"string\" to type: nullvalue" in lowered
-    )
+    ) or ('cannot apply filter "string" to type: nullvalue' in lowered)
 
 
 def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
@@ -360,9 +364,7 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
             # null values) when message.tool_calls is [] (falsy).
             retry_kwargs: dict[str, Any] = {
                 k: v
-                for k, v in (
-                    getattr(message, "additional_kwargs", {}) or {}
-                ).items()
+                for k, v in (getattr(message, "additional_kwargs", {}) or {}).items()
                 if k not in {"tool_calls", "function_call"}
             }
             try:
@@ -383,9 +385,7 @@ def _build_template_safe_retry_messages(messages: list[Any]) -> list[Any]:
                 retried.append(
                     AIMessage(
                         content=_strip_thinking_tags(
-                            _normalize_message_content(
-                                getattr(message, "content", "")
-                            )
+                            _normalize_message_content(getattr(message, "content", ""))
                         ),
                         additional_kwargs=retry_kwargs,
                         response_metadata=dict(
@@ -491,6 +491,7 @@ def build_executor_nodes(
         new_user_turn: bool,
     ) -> list[Any]:
         messages = sanitize_messages_fn(list(state.get("messages") or []))
+
         # Strip any SystemMessages that accumulated in the LangGraph state across
         # turns or retries.  The worker system prompt is now stored under a
         # dedicated state key ("worker_system_prompt") so it never ends up in the
@@ -564,12 +565,12 @@ def build_executor_nodes(
             if item
         ]
         # Build a single SystemMessage from the base prompt + any context bits.
-        all_system_parts = [
-            p for p in [base_system_prompt, *system_bits] if p
-        ]
+        all_system_parts = [p for p in [base_system_prompt, *system_bits] if p]
         if all_system_parts:
             messages = [SystemMessage(content="\n\n".join(all_system_parts))] + messages
-        model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
+        model_name = (
+            getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
+        )
         if model_name:
             budget = TokenBudget(model_name=str(model_name))
             messages = budget.fit_messages(messages)
@@ -627,15 +628,29 @@ def build_executor_nodes(
         store=None,
         **kwargs,
     ) -> dict[str, Any]:
-        final_response = state.get("final_agent_response") or state.get("final_response")
+        final_response = state.get("final_agent_response") or state.get(
+            "final_response"
+        )
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
         incoming_turn_id = str(state.get("turn_id") or "").strip()
         active_turn_id = str(state.get("active_turn_id") or "").strip()
         new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        if final_response and isinstance(last_message, ToolMessage) and not new_user_turn:
-            return {"messages": [AIMessage(content=strip_critic_json_fn(str(final_response)))]}
-        if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
+        if (
+            final_response
+            and isinstance(last_message, ToolMessage)
+            and not new_user_turn
+        ):
+            return {
+                "messages": [
+                    AIMessage(content=strip_critic_json_fn(str(final_response)))
+                ]
+            }
+        if (
+            not incoming_turn_id
+            and final_response
+            and isinstance(last_message, HumanMessage)
+        ):
             # Legacy fallback when turn_id is missing.
             new_user_turn = True
 
@@ -643,11 +658,9 @@ def build_executor_nodes(
             for message in reversed(messages or []):
                 if isinstance(message, HumanMessage):
                     return _normalize_message_content(getattr(message, "content", ""))
-                if (
-                    isinstance(message, dict)
-                    and str(message.get("type") or "").strip().lower()
-                    in {"human", "user"}
-                ):
+                if isinstance(message, dict) and str(
+                    message.get("type") or ""
+                ).strip().lower() in {"human", "user"}:
                     return _normalize_message_content(message.get("content"))
             return ""
 
@@ -666,9 +679,7 @@ def build_executor_nodes(
             raw_subs = resolved_intent.get("sub_intents")
             if isinstance(raw_subs, list):
                 sub_intents = [
-                    str(item).strip()
-                    for item in raw_subs
-                    if str(item).strip()
+                    str(item).strip() for item in raw_subs if str(item).strip()
                 ][:4]
         if not sub_intents and isinstance(state.get("sub_intents"), list):
             sub_intents = [
@@ -724,7 +735,10 @@ def build_executor_nodes(
                     "args": {"calls": calls},
                 }
                 auto_response = AIMessage(content="", tool_calls=[tool_call])
-                updates = {"messages": [auto_response], "execution_strategy": "parallel"}
+                updates = {
+                    "messages": [auto_response],
+                    "execution_strategy": "parallel",
+                }
                 if new_user_turn:
                     updates.update(
                         _build_executor_updates_for_new_user_turn(
@@ -750,7 +764,9 @@ def build_executor_nodes(
                 "Template NullValue in sync invoke; retrying with tool-result compaction"
             )
             try:
-                response = llm_with_tools.invoke(retry_messages, **_executor_invoke_kwargs)
+                response = llm_with_tools.invoke(
+                    retry_messages, **_executor_invoke_kwargs
+                )
             except Exception as retry_exc:
                 if not _is_jinja_nullvalue_error(retry_exc):
                     raise
@@ -788,15 +804,29 @@ def build_executor_nodes(
         store=None,
         **kwargs,
     ) -> dict[str, Any]:
-        final_response = state.get("final_agent_response") or state.get("final_response")
+        final_response = state.get("final_agent_response") or state.get(
+            "final_response"
+        )
         messages_state = state.get("messages") or []
         last_message = messages_state[-1] if messages_state else None
         incoming_turn_id = str(state.get("turn_id") or "").strip()
         active_turn_id = str(state.get("active_turn_id") or "").strip()
         new_user_turn = bool(incoming_turn_id and incoming_turn_id != active_turn_id)
-        if final_response and isinstance(last_message, ToolMessage) and not new_user_turn:
-            return {"messages": [AIMessage(content=strip_critic_json_fn(str(final_response)))]}
-        if not incoming_turn_id and final_response and isinstance(last_message, HumanMessage):
+        if (
+            final_response
+            and isinstance(last_message, ToolMessage)
+            and not new_user_turn
+        ):
+            return {
+                "messages": [
+                    AIMessage(content=strip_critic_json_fn(str(final_response)))
+                ]
+            }
+        if (
+            not incoming_turn_id
+            and final_response
+            and isinstance(last_message, HumanMessage)
+        ):
             new_user_turn = True
 
         messages = _build_context_messages(state=state, new_user_turn=new_user_turn)
@@ -811,7 +841,9 @@ def build_executor_nodes(
                 "Template NullValue in async invoke; retrying with tool-result compaction"
             )
             try:
-                response = await llm_with_tools.ainvoke(retry_messages, **_executor_invoke_kwargs)
+                response = await llm_with_tools.ainvoke(
+                    retry_messages, **_executor_invoke_kwargs
+                )
             except Exception as retry_exc:
                 if not _is_jinja_nullvalue_error(retry_exc):
                     raise
@@ -919,8 +951,11 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
             required = cleaned.get("required")
             if isinstance(required, list):
                 cleaned["required"] = [
-                    r for r in required
-                    if isinstance(r, str) and r.strip() != "state" and r.strip() in properties
+                    r
+                    for r in required
+                    if isinstance(r, str)
+                    and r.strip() != "state"
+                    and r.strip() in properties
                 ]
                 if not cleaned["required"]:
                     cleaned.pop("required", None)
@@ -938,7 +973,11 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
     func.setdefault("description", "")
     params = func.get("parameters")
     if not isinstance(params, dict):
-        func["parameters"] = {"type": "object", "properties": {}, "additionalProperties": False}
+        func["parameters"] = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
     else:
         params.setdefault("type", "object")
         params.setdefault("properties", {})
@@ -954,6 +993,7 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
 
 
 _BIGTOOL_MAX_SAME_TOOL_CALLS = 2
+_BIGTOOL_MAX_TOTAL_TOOL_CALLS = 6  # max total domain tool calls per turn
 
 _FORCE_SUMMARIZE_INSTRUCTION = (
     "Du har redan hämtat tillräckligt med data från verktygen ovan. "
@@ -963,10 +1003,17 @@ _FORCE_SUMMARIZE_INSTRUCTION = (
 
 
 def _detect_repeated_tool_in_history(messages: Any) -> bool:
-    """Return True if the same non-retrieval tool has been called >= threshold times consecutively."""
+    """Return True if domain tools have been called excessively.
+
+    Detects two patterns:
+    1. Same tool called >= ``_BIGTOOL_MAX_SAME_TOOL_CALLS`` times consecutively
+    2. Total domain tool calls >= ``_BIGTOOL_MAX_TOTAL_TOOL_CALLS`` (catches
+       alternating validate↔fetch loops with identical failing arguments)
+    """
     if not isinstance(messages, list):
         return False
     consecutive = 0
+    total_domain_calls = 0
     last_tool_name = ""
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
@@ -979,13 +1026,17 @@ def _detect_repeated_tool_in_history(messages: Any) -> bool:
         # Skip the retrieve-tools meta-tool; only guard domain tools
         if "retrieve" in name.lower() and "tool" in name.lower():
             continue
+        total_domain_calls += 1
         if not last_tool_name:
             last_tool_name = name
         if name == last_tool_name:
             consecutive += 1
         else:
-            break
-    return consecutive >= _BIGTOOL_MAX_SAME_TOOL_CALLS
+            # Reset consecutive but keep counting total
+            pass
+    if consecutive >= _BIGTOOL_MAX_SAME_TOOL_CALLS:
+        return True
+    return total_domain_calls >= _BIGTOOL_MAX_TOTAL_TOOL_CALLS
 
 
 class NormalizingChatWrapper:
@@ -1074,24 +1125,29 @@ class NormalizingChatWrapper:
         if isinstance(input_, list):
             return _normalize_messages_for_provider_compat(input_)
         if isinstance(input_, dict) and "messages" in input_:
-            return {**input_, "messages": _normalize_messages_for_provider_compat(input_["messages"])}
+            return {
+                **input_,
+                "messages": _normalize_messages_for_provider_compat(input_["messages"]),
+            }
         return input_
 
     def _should_force_summary(self, input_: Any) -> bool:
         """Check if the same tool has been called too many times."""
-        messages = input_ if isinstance(input_, list) else (
-            input_.get("messages") if isinstance(input_, dict) else None
+        messages = (
+            input_
+            if isinstance(input_, list)
+            else (input_.get("messages") if isinstance(input_, dict) else None)
         )
         return bool(messages and _detect_repeated_tool_in_history(messages))
 
     def _build_summary_messages(self, input_: Any) -> list:
         """Build a message list that asks the LLM to summarize tool results (no tools)."""
-        messages = input_ if isinstance(input_, list) else (
-            input_.get("messages", []) if isinstance(input_, dict) else []
+        messages = (
+            input_
+            if isinstance(input_, list)
+            else (input_.get("messages", []) if isinstance(input_, dict) else [])
         )
-        return list(messages) + [
-            SystemMessage(content=_FORCE_SUMMARIZE_INSTRUCTION)
-        ]
+        return list(messages) + [SystemMessage(content=_FORCE_SUMMARIZE_INSTRUCTION)]
 
     def invoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
         normalized = self._normalize(input_)
