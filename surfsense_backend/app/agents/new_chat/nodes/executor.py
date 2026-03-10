@@ -856,6 +856,25 @@ def _deep_replace_none_in_tool(value: Any) -> Any:
     return value
 
 
+def _set_additional_properties_false(schema: Any) -> None:
+    """Recursively set ``additionalProperties: false`` on all object sub-schemas.
+
+    Required by OpenAI / LM Studio strict mode so the model knows it must
+    follow the JSON Schema exactly — no extra keys allowed.
+    """
+    if not isinstance(schema, dict):
+        return
+    if schema.get("type") == "object" or "properties" in schema:
+        schema["additionalProperties"] = False
+    for value in schema.values():
+        if isinstance(value, dict):
+            _set_additional_properties_false(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _set_additional_properties_false(item)
+
+
 def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
     """Sanitize an OpenAI-format tool dict for strict Jinja templates.
 
@@ -919,10 +938,18 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
     func.setdefault("description", "")
     params = func.get("parameters")
     if not isinstance(params, dict):
-        func["parameters"] = {"type": "object", "properties": {}}
+        func["parameters"] = {"type": "object", "properties": {}, "additionalProperties": False}
     else:
         params.setdefault("type", "object")
         params.setdefault("properties", {})
+        params["additionalProperties"] = False
+        # Also mark nested object schemas as strict
+        _set_additional_properties_false(params)
+
+    # Enable strict structured output (LM Studio / OpenAI compatible).
+    # This tells the model to follow the JSON schema exactly.
+    func["strict"] = True
+
     return tool_def
 
 
