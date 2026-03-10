@@ -216,10 +216,10 @@ build_scb_tool = _build_scb_tool
 
 def build_scb_tool_registry(
     *,
-    connector_service: ConnectorService,
-    search_space_id: int,
-    user_id: str | None,
-    thread_id: int | None,
+    connector_service: ConnectorService | None = None,
+    search_space_id: int = 0,
+    user_id: str | None = None,
+    thread_id: int | None = None,
     scb_service: ScbService | None = None,
 ) -> dict[str, Any]:
     service = scb_service or ScbService()
