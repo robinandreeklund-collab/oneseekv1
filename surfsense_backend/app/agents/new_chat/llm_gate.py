@@ -28,10 +28,8 @@ from .structured_schemas import (
 logger = logging.getLogger(__name__)
 
 # Regex for extracting "chosen" from truncated/malformed JSON.
-# Handles both `"chosen": "value"` and `"chosen" : "value"` with
-# optional whitespace.  Works even when the JSON is cut off after
-# the chosen field (common with low max_tokens).
-_CHOSEN_RE = re.compile(r'"chosen"\s*:\s*"([^"]+)"')
+# Handles both string and integer values.
+_CHOSEN_RE = re.compile(r'"chosen"\s*:\s*(?:"([^"]+)"|(\d+))')
 _CHOSEN_LIST_RE = re.compile(r'"chosen"\s*:\s*\[([^\]]*)\]')
 _REASONING_RE = re.compile(r'"reasoning"\s*:\s*"([^"]*)"')
 
@@ -39,15 +37,21 @@ _REASONING_RE = re.compile(r'"reasoning"\s*:\s*"([^"]*)"')
 def _extract_field_from_partial_json(
     raw: str,
     field: str = "chosen",
-) -> str:
+) -> str | int:
     """Extract a field value from potentially truncated JSON output.
 
     This handles the common case where the LLM's JSON output is cut off
     due to max_tokens but the target field was already fully written.
+    Returns int for numeric chosen values, str otherwise.
     """
     if field == "chosen":
         m = _CHOSEN_RE.search(raw)
-        return m.group(1).strip() if m else ""
+        if not m:
+            return ""
+        # Group 1 = string value, Group 2 = integer value
+        if m.group(2) is not None:
+            return int(m.group(2))
+        return m.group(1).strip()
     if field == "reasoning":
         m = _REASONING_RE.search(raw)
         return m.group(1).strip() if m else ""
@@ -63,8 +67,22 @@ def _extract_chosen_list_from_partial_json(raw: str) -> list[str]:
     return [s.strip().strip('"').strip("'") for s in inner.split(",") if s.strip().strip('"').strip("'")]
 
 
-def _format_candidate_list(items: list[tuple[str, str]]) -> str:
-    """Format candidates as '- id — description' without numbering."""
+def _format_candidate_list(
+    items: list[tuple[str, str]],
+    *,
+    numbered: bool = False,
+) -> str:
+    """Format candidates as '- id — description'.
+
+    When *numbered* is True, prefix each line with its 1-based index
+    so the LLM can refer to candidates by number instead of spelling
+    out the (potentially complex Swedish) ID.
+    """
+    if numbered:
+        return "\n".join(
+            f"- idx={i} {item_id} — {desc}"
+            for i, (item_id, desc) in enumerate(items, start=1)
+        )
     return "\n".join(f"- {item_id} — {desc}" for item_id, desc in items)
 
 
@@ -125,6 +143,11 @@ async def llm_gate_select_intent(
         if cid:
             items.append((cid, desc))
 
+    # Build idx→domain_id mapping for resolving the numeric response
+    _idx_to_id: dict[int, str] = {
+        i: item_id for i, (item_id, _) in enumerate(items, start=1)
+    }
+
     system_prompt = (
         "Du är en intent-router. Givet användarens fråga, välj EXAKT EN domän "
         "från listan som bäst matchar frågan.\n\n"
@@ -134,9 +157,9 @@ async def llm_gate_select_intent(
         "I din motivering: beskriv VARFÖR domänen passar, "
         "men nämn ALDRIG 'domänlistan', 'nyckelord', 'agentlistan' "
         "eller andra interna systembegrepp.\n\n"
-        "Domäner:\n" + _format_candidate_list(items) + "\n\n"
-        "VIKTIGT: Svara med det exakta domän-ID:t (t.ex. 'väder-och-klimat'), "
-        "INTE ett nummer."
+        "Domäner:\n" + _format_candidate_list(items, numbered=True) + "\n\n"
+        "VIKTIGT: Svara med domänens numeriska idx-värde (heltal), "
+        "INTE textnamnet."
     )
     user_prompt = f"Fråga: {query}"
 
@@ -157,28 +180,41 @@ async def llm_gate_select_intent(
                 **_invoke_kwargs,
             )
             _raw = str(getattr(message, "content", "") or "")
+            _chosen_raw: int | str = ""
             try:
                 _structured = LlmGateIntentResult.model_validate_json(_raw)
-                chosen = _structured.chosen
+                _chosen_raw = _structured.chosen
                 reasoning = _structured.reasoning
             except Exception:
                 m = re.search(r"\{[\s\S]*\}", _raw)
                 if m:
                     try:
                         parsed = json.loads(m.group())
-                        chosen = str(parsed.get("chosen") or "").strip()
+                        _chosen_raw = parsed.get("chosen", "")
                         reasoning = str(parsed.get("reasoning") or "").strip()
                     except json.JSONDecodeError:
                         # Truncated JSON — extract fields via regex
-                        chosen = _extract_field_from_partial_json(_raw, "chosen")
+                        _chosen_raw = _extract_field_from_partial_json(_raw, "chosen")
                         reasoning = _extract_field_from_partial_json(_raw, "reasoning")
-                if not chosen:
+                if not _chosen_raw and _chosen_raw != 0:
                     for line in _raw.strip().splitlines():
                         ls = line.strip()
                         if ls.upper().startswith("DOMÄN:") or ls.upper().startswith("DOMAIN:"):
-                            chosen = ls.split(":", 1)[1].strip()
+                            _chosen_raw = ls.split(":", 1)[1].strip()
                         elif ls.upper().startswith("MOTIVERING:"):
                             reasoning = ls.split(":", 1)[1].strip()
+            # Resolve numeric idx → domain_id string
+            if isinstance(_chosen_raw, int) and _chosen_raw in _idx_to_id:
+                chosen = _idx_to_id[_chosen_raw]
+            elif isinstance(_chosen_raw, str):
+                # Try parsing as int (e.g. "5")
+                try:
+                    _int_val = int(_chosen_raw)
+                    chosen = _idx_to_id.get(_int_val, _chosen_raw)
+                except ValueError:
+                    chosen = _chosen_raw
+            else:
+                chosen = str(_chosen_raw)
         else:
             # Backward compat: no llm provided → use nexus_llm_call
             from app.nexus.llm import nexus_llm_call
@@ -186,17 +222,26 @@ async def llm_gate_select_intent(
             prompt = system_prompt + "\n\n" + user_prompt + (
                 "\n\nSvara EXAKT i detta format (inget annat):\n"
                 "MOTIVERING: <en mening som förklarar varför just denna domän matchar>\n"
-                "DOMÄN: <domain_id>\n"
+                "IDX: <numeriskt index>\n"
             )
             response = await nexus_llm_call(prompt)
             for line in response.strip().splitlines():
                 ls = line.strip()
-                if ls.upper().startswith("DOMÄN:") or ls.upper().startswith("DOMAIN:"):
-                    chosen = ls.split(":", 1)[1].strip()
+                if ls.upper().startswith("IDX:"):
+                    _idx_str = ls.split(":", 1)[1].strip()
+                    try:
+                        _idx_val = int(_idx_str)
+                        if _idx_val in _idx_to_id:
+                            chosen = _idx_to_id[_idx_val]
+                    except ValueError:
+                        chosen = _idx_str
                 elif ls.upper().startswith("MOTIVERING:"):
                     reasoning = ls.split(":", 1)[1].strip()
 
-        chosen = _resolve_llm_choice(chosen, sorted_ids)
+        # Final fallback: if chosen is still empty or not in sorted_ids,
+        # attempt fuzzy resolution
+        if chosen not in sorted_ids:
+            chosen = _resolve_llm_choice(chosen, sorted_ids)
     except Exception as exc:
         logger.warning("LLM gate intent step failed: %s", exc)
         chosen = sorted_ids[0] if sorted_ids else "kunskap"

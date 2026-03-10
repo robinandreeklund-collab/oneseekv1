@@ -268,6 +268,14 @@ def build_intent_resolver_node(
         else:
             for route_name, intent_id in route_to_intent_id.items():
                 candidates.append({"intent_id": intent_id, "route": route_name})
+
+        # ── Add numeric idx to each candidate for LLM output ──
+        for _i, _c in enumerate(candidates, start=1):
+            _c["idx"] = _i
+        _idx_to_intent_id: dict[int, str] = {
+            _c["idx"]: str(_c.get("intent_id") or "").strip()
+            for _c in candidates
+        }
         if route_hint:
             candidates.sort(
                 key=lambda item: 0 if item.get("route") == route_hint else 1
@@ -288,7 +296,12 @@ def build_intent_resolver_node(
                 candidates=candidates,
                 llm=llm,
             )
-            chosen_id = str(gate_result.get("chosen") or "").strip()
+            _gate_chosen_raw = gate_result.get("chosen")
+            # Resolve numeric idx → domain_id string
+            if isinstance(_gate_chosen_raw, int) and _gate_chosen_raw in _idx_to_intent_id:
+                chosen_id = _idx_to_intent_id[_gate_chosen_raw]
+            else:
+                chosen_id = str(_gate_chosen_raw or "").strip()
             resolved = intent_from_route_fn(route_hint)
             if chosen_id:
                 matched_candidate = next(
@@ -386,7 +399,19 @@ def build_intent_resolver_node(
                     _thinking = _structured.thinking
                 except Exception:
                     parsed = extract_first_json_object_fn(_raw_content)
-                selected_intent = str(parsed.get("intent_id") or "").strip()
+                # Resolve numeric idx → domain_id string
+                _raw_intent_id = parsed.get("intent_id")
+                if isinstance(_raw_intent_id, int) and _raw_intent_id in _idx_to_intent_id:
+                    selected_intent = _idx_to_intent_id[_raw_intent_id]
+                else:
+                    selected_intent = str(_raw_intent_id or "").strip()
+                # Resolve sub_intents numeric idx list
+                _raw_subs = parsed.get("sub_intents") or []
+                parsed["sub_intents"] = [
+                    _idx_to_intent_id[s] if isinstance(s, int) and s in _idx_to_intent_id
+                    else str(s).strip()
+                    for s in _raw_subs
+                ]
                 selected_route = normalize_route_hint_fn(parsed.get("route"))
                 if selected_intent and selected_intent in candidate_ids:
                     resolved = {

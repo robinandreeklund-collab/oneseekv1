@@ -64,9 +64,9 @@ class IntentResult(BaseModel):
             "kandidatanalys och beslutsunderlag."
         ),
     )
-    intent_id: str = Field(
+    intent_id: int = Field(
         ...,
-        description="ID för vald intent, måste matcha en av kandidaterna.",
+        description="Numeriskt index (idx) för vald intent från kandidatlistan.",
     )
     route: str = Field(
         ...,
@@ -76,9 +76,9 @@ class IntentResult(BaseModel):
             "'skapande', 'konversation', 'jämförelse', eller 'mixed'."
         ),
     )
-    sub_intents: list[str] = Field(
+    sub_intents: list[int] = Field(
         default_factory=list,
-        description="Del-intents vid mixed route.",
+        description="Numeriska index (idx) för del-intents vid mixed route.",
     )
     reason: str = Field(
         ...,
@@ -803,9 +803,9 @@ class DebateConvergenceResult(BaseModel):
 class LlmGateIntentResult(BaseModel):
     """Output schema for LLM gate intent selection."""
 
-    chosen: str = Field(
+    chosen: int = Field(
         ...,
-        description="Exakt domän-ID från kandidatlistan, t.ex. 'väder-och-klimat'.",
+        description="Numeriskt index (idx) för vald domän från kandidatlistan.",
     )
     reasoning: str = Field(
         ...,

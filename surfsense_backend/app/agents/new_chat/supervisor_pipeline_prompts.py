@@ -8,7 +8,12 @@ Uppgift:
 - Fraga om aktuellt vader/prognos for plats/tid ska routas till `kunskap`
   (for vader-agenten), inte skapande.
 - For mixade fragor (t.ex. "hur manga bor i Goteborg och vad ar det for vader?"):
-  satt route="mixed" och inkludera sub_intents array med alla deldomaner.
+  satt route="mixed" och inkludera sub_intents array med numeriska index.
+
+VIKTIGT — NUMERISKA INDEX:
+- Varje kandidat har ett fält "idx" (heltal).
+- Returnera kandidatens "idx"-värde i "intent_id", INTE textsträngen.
+- For "sub_intents": returnera en lista med "idx"-värden.
 
 INSTRUKTIONER FÖR OUTPUT:
 - All intern resonering ska skrivas i "thinking"-fältet.
@@ -18,9 +23,9 @@ INSTRUKTIONER FÖR OUTPUT:
 Returnera strikt JSON:
 {
   "thinking": "din interna resonering på svenska",
-  "intent_id": "string",
+  "intent_id": 5,
   "route": "kunskap|skapande|jämförelse|konversation|mixed",
-  "sub_intents": ["intent1", "intent2"],
+  "sub_intents": [3, 7],
   "reason": "kort svensk motivering",
   "confidence": 0.0
 }
