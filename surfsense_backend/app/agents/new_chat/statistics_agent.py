@@ -23,6 +23,10 @@ from app.agents.new_chat.scb_tool_definitions import (
     aretrieve_scb_tools,
     retrieve_scb_tools,
 )
+from app.agents.new_chat.tools.scb_llm_tools import (
+    create_scb_fetch_tool,
+    create_scb_validate_tool,
+)
 from app.services.connector_service import (
     ConnectorService,
 )
@@ -382,6 +386,16 @@ def build_scb_tool_registry(
             user_id=user_id,
             thread_id=thread_id,
         )
+    # Always include scb_validate and scb_fetch so the bigtool LLM can
+    # complete the catalog → validate → fetch pipeline.
+    registry["scb_validate"] = create_scb_validate_tool(scb_service=service)
+    registry["scb_fetch"] = create_scb_fetch_tool(
+        scb_service=service,
+        connector_service=connector_service,
+        search_space_id=search_space_id,
+        user_id=user_id,
+        thread_id=thread_id,
+    )
     return registry
 
 
@@ -402,6 +416,33 @@ def build_scb_tool_store() -> InMemoryStore:
                 "typical_filters": definition.typical_filters,
             },
         )
+    # Add validate + fetch to store so bigtool can use them
+    store.put(
+        ("tools",),
+        "scb_validate",
+        {
+            "name": "SCB Validate",
+            "description": (
+                "Validate a selection without fetching data. Auto-completes "
+                "missing variables. Use BEFORE scb_fetch."
+            ),
+            "category": "scb_pipeline",
+            "keywords": ["validate", "selection", "check"],
+        },
+    )
+    store.put(
+        ("tools",),
+        "scb_fetch",
+        {
+            "name": "SCB Fetch",
+            "description": (
+                "Fetch data from SCB as a readable markdown table. "
+                "Auto-completes missing variables. Use AFTER scb_validate."
+            ),
+            "category": "scb_pipeline",
+            "keywords": ["fetch", "data", "table", "markdown"],
+        },
+    )
     return store
 
 
@@ -448,12 +489,25 @@ def create_statistics_agent(
         scb_service=scb_service,
     )
     store = build_scb_tool_store()
+
+    # Wrap retrieve functions to always include scb_validate + scb_fetch
+    # so the bigtool LLM can complete: catalog → validate → fetch
+    pipeline_tools = ["scb_validate", "scb_fetch"]
+
+    def _retrieve_with_pipeline(query: str, limit: int = 2) -> list[str]:
+        domain_tools = retrieve_scb_tools(query, limit=limit)
+        return domain_tools + pipeline_tools
+
+    async def _aretrieve_with_pipeline(query: str, limit: int = 2) -> list[str]:
+        domain_tools = await aretrieve_scb_tools(query, limit=limit)
+        return domain_tools + pipeline_tools
+
     graph = create_bigtool_agent(
         NormalizingChatWrapper(llm),
         tool_registry,
-        limit=2,
-        retrieve_tools_function=retrieve_scb_tools,
-        retrieve_tools_coroutine=aretrieve_scb_tools,
+        limit=4,  # 2 domain tools + validate + fetch
+        retrieve_tools_function=_retrieve_with_pipeline,
+        retrieve_tools_coroutine=_aretrieve_with_pipeline,
     )
     return graph.compile(
         checkpointer=checkpointer,
