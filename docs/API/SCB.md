@@ -1,8 +1,8 @@
 # SCB API Integration — Fullständig Dokumentation
 
-> **Version:** 3.0
-> **Datum:** 2026-03-02
-> **Status:** Produktion (PxWebApi v2 — med v1 fallback, alla P1-P3 åtgärder implementerade)
+> **Version:** 4.0
+> **Datum:** 2026-03-10
+> **Status:** Produktion — Hybrid LLM-driven variabelförståelse (v4.0)
 > **Författare:** OneSeek-teamet
 
 ---
@@ -1084,6 +1084,198 @@ Alla uppgifter från den ursprungliga analysen (P1, P2, P3) är nu implementerad
 | 24 | URL-encoding för svenska tecken (BUG-6) | KLAR | `scb_service.py` |
 | 25 | Ordgräns-matchning i `_match_values_by_text` (BUG-3) | KLAR | `scb_service.py` |
 | 26 | Fan-out handel-kategori med trigger-keywords | KLAR | `domain_fan_out.py` |
+
+---
+
+## 19. Hybrid LLM-driven Variabelförståelse (v4.0)
+
+> **Implementerad:** 2026-03-10
+> **Inspirerad av:** [isakskogstad/SCB-MCP](https://github.com/isakskogstad/SCB-MCP)
+
+### Bakgrund — Varför hybrid?
+
+Den tidigare implementationen (v3.0) hade ett fundamentalt problem: **LLM:en var blind**. All variabelhantering skedde via heuristik (`_build_selections()`) utan att LLM:en någonsin såg SCB:s variabelstruktur. Resultatet:
+
+- Fel tabeller valdes (heuristisk scoring räckte inte)
+- Fel variabelvärden (regex-matchning av t.ex. "Stockholm" mot regionkoder)
+- Ingen möjlighet till korrigering (inget feedback-loop)
+- Saknade kommuner (gazetteeren hade ~70 av 290)
+
+**SCB-MCP-projektet** visade att LLM:er som *ser* variabelstrukturen och *resonerar* om den ger dramatiskt bättre precision, även om det kostar fler LLM-anrop.
+
+### Hybrid-arkitekturen
+
+v4.0 kombinerar det bästa från båda systemen:
+
+| Från OneSeek (v3.0) | Från SCB-MCP | Nytt i v4.0 |
+|---|---|---|
+| 47 domänverktyg med scoring | LLM ser variabelstruktur | 3 nya LLM-drivna verktyg |
+| Dual v1+v2 sökning | Dry-run validering | Fullständigt regionregister (290+21) |
+| TTL-cache (1h) | Fuzzy matchning | Diakritiknormalisering |
+| Connection pooling | Strukturerade felförslag | QUL → SCB regionkodskoppling |
+| Batching (>150k celler) | Naturligt-språk → kodöversättning | Retry-loop vid valideringsfel |
+
+### Nytt dataflöde
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  STEG 1: scb_search_and_inspect                          │
+│                                                          │
+│  Bigtool routing → domänverktyg → dual v1+v2 sökning     │
+│  Returnerar: Top 5 tabeller MED variabelstruktur         │
+│                                                          │
+│  ★ LLM:en SER kandidaterna och VÄLJER tabell             │
+│    baserat på vilka variabler som matchar frågan          │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────────┐
+│  STEG 2: scb_validate_selection                          │
+│                                                          │
+│  LLM:en bygger selection baserat på variabelförståelse   │
+│  Validering utan datahämtning:                           │
+│  - Alla dimensioner täckta?                              │
+│  - Alla värdekoder giltiga?                              │
+│  - Fuzzy regionmatchning ("Goteborg" → "1480")           │
+│  - "Did you mean?"-förslag vid near-miss                 │
+│                                                          │
+│  ★ Vid fel → LLM:en KORRIGERAR (max 2 retries)          │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────────┐
+│  STEG 3: scb_fetch_validated                             │
+│                                                          │
+│  Validerad selection → query_table()                     │
+│  Automatisk batching om >150k celler                     │
+│  Returnerar strukturerad data + källa                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Nya filer
+
+| Fil | Syfte | Rader |
+|-----|-------|-------|
+| `app/services/scb_regions.py` | Fullständigt regionregister (290+21+Riket) med diakritiknormalisering | ~450 |
+| `app/agents/new_chat/tools/scb_llm_tools.py` | 3 LLM-drivna verktyg (search+inspect, validate, fetch) | ~500 |
+
+### Modifierade filer
+
+| Fil | Ändring |
+|-----|---------|
+| `statistics_prompts.py` | Ny systemprompt med 3-stegs arbetsflöde och SCB-variabelkonventioner |
+| `tools/registry.py` | 3 nya ToolDefinitions för LLM-verktyg |
+| `nexus/routing/qul.py` | Utökad entitetsextraktion med diakritiknormalisering via fullständigt regionregister |
+
+### Verktygs-API
+
+#### `scb_search_and_inspect(query, base_path?, table_id?)`
+
+Söker SCB-tabeller och returnerar variabelstruktur:
+
+```json
+{
+  "tables": [{
+    "table_id": "TAB1234",
+    "title": "Folkmängd efter region, ålder och kön",
+    "variables": [
+      {
+        "code": "Region",
+        "label": "Region",
+        "type": "region",
+        "total_values": 312,
+        "values": [{"code": "00", "label": "Riket"}, {"code": "01", "label": "Stockholms län"}, ...],
+        "hint": "Use scb_validate_selection to resolve region names to codes. 00=Riket."
+      },
+      {
+        "code": "Tid",
+        "label": "År",
+        "type": "time",
+        "total_values": 56,
+        "values": [{"code": "1968", "label": "1968"}, ...],
+        "hint": "Latest: 2024, Earliest: 1968"
+      }
+    ],
+    "selection_rules": {
+      "all_variables_required": true,
+      "note": "SCB requires ALL variables to have at least one value selected."
+    }
+  }]
+}
+```
+
+#### `scb_validate_selection(table_id, selection)`
+
+Validerar utan datahämtning:
+
+```json
+// Input
+{"table_id": "TAB1234", "selection": {"Region": ["Göteborg"], "Tid": ["2023"], "Kon": ["1"]}}
+
+// Output (vid framgång)
+{"status": "valid", "selection": {"Region": ["1480"], "Tid": ["2023"], "Kon": ["1"]}, "estimated_cells": 1, "warnings": ["Resolved region 'Göteborg' → ['1480'] (Göteborg)"]}
+
+// Output (vid fel)
+{"status": "invalid", "errors": [{"variable": "ContentsCode", "error": "Missing from selection — SCB requires ALL variables.", "suggestion": "Suggested: ['BE0101N1']"}]}
+```
+
+#### `scb_fetch_validated(table_id, selection)`
+
+Hämtar data med validerad selection. Hanterar batching automatiskt.
+
+### Regionregistret (`scb_regions.py`)
+
+Komplett register med alla svenska administrativa regioner:
+
+| Typ | Antal | Kodformat | Exempel |
+|-----|-------|-----------|---------|
+| Land | 1 | 2-siffrig | `00` = Riket |
+| Län | 21 | 2-siffrig | `01` = Stockholms län |
+| Kommun | 290 | 4-siffrig | `0180` = Stockholm |
+
+**Diakritiknormalisering:**
+
+```python
+normalize_diacritik("Göteborg")   # → "goteborg"
+normalize_diacritik("Jönköping")  # → "jonkoping"
+normalize_diacritik("Malmö")      # → "malmo"
+```
+
+**Fuzzy-matchning:**
+
+```python
+find_region_fuzzy("Goteborg")     # → [ScbRegion("1480", "Göteborg", "municipality")]
+find_region_fuzzy("sthlm")        # → [ScbRegion("0180", "Stockholm", "municipality")]
+find_region_fuzzy("skane")        # → [ScbRegion("12", "Skåne län", "county")]
+```
+
+### QUL-koppling
+
+QUL:s entitetsextraktion (`nexus/routing/qul.py`) utökad med:
+1. **Fullständigt regionregister** — alla 290+21 regioner (var ~70)
+2. **Diakritiknormalisering** — "goteborg", "jonkoping" fungerar nu
+3. **Bakåtkompatibel** — befintlig gazetteer+alias bibehållen som snabb sökväg
+
+### Jämförelse: Före och efter
+
+| Aspekt | v3.0 (heuristik) | v4.0 (hybrid LLM) |
+|--------|---|---|
+| Tabellval | `_score_table_metadata()` | LLM ser variabler, resonerar |
+| Variabelval | `_build_selections()` regex | LLM bygger selection manuellt |
+| Regionmatchning | ~70 hårdkodade + substring | 290+21 + fuzzy + diacritik |
+| Validering | Ingen (direkt datahämtning) | Dry-run med felförslag |
+| Felkorrigering | Ingen | LLM retry-loop (max 2) |
+| LLM-anrop/fråga | 1-2 | 3-5 |
+| Precision | Låg | Hög |
+| Latens | 3-8s | 8-20s |
+| Fallback | — | Automatisk till 47 domänverktyg |
+
+### Trade-offs
+
+| | Fördel | Kostnad |
+|---|---|---|
+| **Precision** | LLM resonerar om rätt tabell och variabler | 3-5x fler LLM-tokens |
+| **Robusthet** | Validering fångar fel före datahämtning | Extra API-anrop (metadata) |
+| **Flexibilitet** | Fungerar för nya tabeller utan kodändring | Beroende av LLM-kvalitet |
+| **Fallback** | 47 domänverktyg kvar som backup | Två parallella system att underhålla |
 
 ---
 

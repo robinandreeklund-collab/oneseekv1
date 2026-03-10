@@ -16,6 +16,7 @@ from app.nexus.config import (
     MULTI_INTENT_MARGIN_THRESHOLD,
     SWEDISH_NORMALIZATION_BANK,
 )
+from app.services.scb_regions import ALL_REGIONS, normalize_diacritik
 
 logger = logging.getLogger(__name__)
 
@@ -241,17 +242,34 @@ class QueryUnderstandingLayer:
         return normalized
 
     def _extract_entities(self, query: str) -> QueryEntities:
-        """Rule-based entity extraction: locations, times, organizations."""
+        """Rule-based entity extraction: locations, times, organizations.
+
+        Uses the full SCB region registry (290 municipalities + 21 counties)
+        with diacritik normalization so "Goteborg" matches "Göteborg", etc.
+        """
         entities = QueryEntities()
         lower = query.lower()
 
-        # Location extraction via gazetteer
+        # Location extraction via gazetteer (exact match, fast path)
         for key, canonical in MUNICIPALITY_GAZETTEER.items():
             if (
                 re.search(rf"\b{re.escape(key)}\b", lower)
                 and canonical not in entities.locations
             ):
                 entities.locations.append(canonical)
+
+        # Extended location extraction via full SCB registry + diacritik normalization
+        # This catches "goteborg", "jonkoping", "vaxjo" etc. without diacritics
+        query_norm = normalize_diacritik(query)
+        for region in ALL_REGIONS:
+            if region.type == "country":
+                continue  # Skip "Riket" — too generic
+            region_norm = normalize_diacritik(region.name)
+            if (
+                re.search(rf"\b{re.escape(region_norm)}\b", query_norm)
+                and region.name not in entities.locations
+            ):
+                entities.locations.append(region.name)
 
         # Time extraction via patterns
         for pattern in _TIME_PATTERNS:

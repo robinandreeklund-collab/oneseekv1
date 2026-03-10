@@ -63,6 +63,11 @@ from ..statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool,
 )
+from .scb_llm_tools import (
+    create_scb_fetch_validated_tool,
+    create_scb_search_and_inspect_tool,
+    create_scb_validate_selection_tool,
+)
 from .bolagsverket import (
     BOLAGSVERKET_TOOL_DEFINITIONS,
     create_bolagsverket_tool,
@@ -469,7 +474,49 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         for definition in TRAFIKANALYS_TOOL_DEFINITIONS
     ],
     # =========================================================================
-    # SCB (Statistics Sweden) API TOOLS
+    # SCB (Statistics Sweden) — LLM-driven tools (hybrid approach)
+    # =========================================================================
+    ToolDefinition(
+        name="scb_search_and_inspect",
+        description=(
+            "Search SCB tables and inspect their variable structure. "
+            "Returns table candidates with variables, codes, and labels "
+            "so the LLM can build precise selections."
+        ),
+        factory=lambda deps: create_scb_search_and_inspect_tool(
+            scb_service=deps.get("scb_service"),
+        ),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="scb_validate_selection",
+        description=(
+            "Validate a selection against SCB table metadata without fetching data. "
+            "Checks all variables are covered, all codes are valid, with fuzzy "
+            "matching and suggestions for corrections."
+        ),
+        factory=lambda deps: create_scb_validate_selection_tool(
+            scb_service=deps.get("scb_service"),
+        ),
+        requires=[],
+    ),
+    ToolDefinition(
+        name="scb_fetch_validated",
+        description=(
+            "Fetch data from SCB using a pre-validated selection. "
+            "Use scb_validate_selection first to ensure correctness."
+        ),
+        factory=lambda deps: create_scb_fetch_validated_tool(
+            scb_service=deps.get("scb_service"),
+            connector_service=deps.get("connector_service"),
+            search_space_id=deps.get("search_space_id", 0),
+            user_id=deps.get("user_id"),
+            thread_id=deps.get("thread_id"),
+        ),
+        requires=[],
+    ),
+    # =========================================================================
+    # SCB (Statistics Sweden) — Domain-specific tools (fallback/auto mode)
     # =========================================================================
     *[
         ToolDefinition(
