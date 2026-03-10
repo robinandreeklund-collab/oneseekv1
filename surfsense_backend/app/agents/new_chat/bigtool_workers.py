@@ -53,6 +53,7 @@ async def create_bigtool_worker(
     dependencies: dict[str, Any],
     checkpointer: Checkpointer | None,
     config: WorkerConfig,
+    llm_gate_mode: bool = False,
 ):
     if not hasattr(BigtoolToolNode, "inject_tool_args") and hasattr(
         BigtoolToolNode, "_inject_tool_args"
@@ -87,15 +88,30 @@ async def create_bigtool_worker(
         metadata_overrides=metadata_overrides,
     )
     store = build_bigtool_store(tool_index)
-    trace_key = str(dependencies.get("thread_id") or "")
-    retrieve_tools, aretrieve_tools = make_smart_retriever(
-        tool_index=tool_index,
-        primary_namespaces=config.primary_namespaces,
-        fallback_namespaces=config.fallback_namespaces,
-        limit=config.tool_limit,
-        trace_key=trace_key,
-        retrieval_tuning=retrieval_tuning,
-    )
+
+    if llm_gate_mode:
+        # In LLM gate mode: retrieve_tools returns an empty list so the
+        # worker ONLY uses the pre-resolved tools passed via selected_tool_ids.
+        # This prevents the vector search from overriding correct LLM decisions.
+        def retrieve_tools_noop(query: str) -> list[str]:
+            return []
+
+        async def aretrieve_tools_noop(query: str) -> list[str]:
+            return []
+
+        retrieve_tools = retrieve_tools_noop
+        aretrieve_tools = aretrieve_tools_noop
+    else:
+        trace_key = str(dependencies.get("thread_id") or "")
+        retrieve_tools, aretrieve_tools = make_smart_retriever(
+            tool_index=tool_index,
+            primary_namespaces=config.primary_namespaces,
+            fallback_namespaces=config.fallback_namespaces,
+            limit=config.tool_limit,
+            trace_key=trace_key,
+            retrieval_tuning=retrieval_tuning,
+        )
+
     graph = create_bigtool_agent(
         NormalizingChatWrapper(llm),
         tool_registry,

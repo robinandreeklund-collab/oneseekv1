@@ -10,7 +10,9 @@ consistent quality and reliable parsing via Nemotron / LM Studio.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,6 +26,41 @@ from .structured_schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Regex for extracting "chosen" from truncated/malformed JSON.
+# Handles both `"chosen": "value"` and `"chosen" : "value"` with
+# optional whitespace.  Works even when the JSON is cut off after
+# the chosen field (common with low max_tokens).
+_CHOSEN_RE = re.compile(r'"chosen"\s*:\s*"([^"]+)"')
+_CHOSEN_LIST_RE = re.compile(r'"chosen"\s*:\s*\[([^\]]*)\]')
+_REASONING_RE = re.compile(r'"reasoning"\s*:\s*"([^"]*)"')
+
+
+def _extract_field_from_partial_json(
+    raw: str,
+    field: str = "chosen",
+) -> str:
+    """Extract a field value from potentially truncated JSON output.
+
+    This handles the common case where the LLM's JSON output is cut off
+    due to max_tokens but the target field was already fully written.
+    """
+    if field == "chosen":
+        m = _CHOSEN_RE.search(raw)
+        return m.group(1).strip() if m else ""
+    if field == "reasoning":
+        m = _REASONING_RE.search(raw)
+        return m.group(1).strip() if m else ""
+    return ""
+
+
+def _extract_chosen_list_from_partial_json(raw: str) -> list[str]:
+    """Extract a list-valued 'chosen' field from partial JSON."""
+    m = _CHOSEN_LIST_RE.search(raw)
+    if not m:
+        return []
+    inner = m.group(1)
+    return [s.strip().strip('"').strip("'") for s in inner.split(",") if s.strip().strip('"').strip("'")]
 
 
 def _format_candidate_list(items: list[tuple[str, str]]) -> str:
@@ -107,7 +144,7 @@ async def llm_gate_select_intent(
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 200}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateIntentResult, "llm_gate_intent_result"
@@ -125,10 +162,6 @@ async def llm_gate_select_intent(
                 chosen = _structured.chosen
                 reasoning = _structured.reasoning
             except Exception:
-                # Fallback: regex JSON extraction
-                import json
-                import re
-
                 m = re.search(r"\{[\s\S]*\}", _raw)
                 if m:
                     try:
@@ -136,9 +169,10 @@ async def llm_gate_select_intent(
                         chosen = str(parsed.get("chosen") or "").strip()
                         reasoning = str(parsed.get("reasoning") or "").strip()
                     except json.JSONDecodeError:
-                        pass
+                        # Truncated JSON — extract fields via regex
+                        chosen = _extract_field_from_partial_json(_raw, "chosen")
+                        reasoning = _extract_field_from_partial_json(_raw, "reasoning")
                 if not chosen:
-                    # Last resort: line-based parsing
                     for line in _raw.strip().splitlines():
                         ls = line.strip()
                         if ls.upper().startswith("DOMÄN:") or ls.upper().startswith("DOMAIN:"):
@@ -217,7 +251,7 @@ async def llm_gate_select_agent(
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 200}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 500}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateAgentResult, "llm_gate_agent_result"
@@ -235,9 +269,6 @@ async def llm_gate_select_agent(
                 chosen = _structured.chosen
                 reasoning = _structured.reasoning
             except Exception:
-                import json
-                import re
-
                 m = re.search(r"\{[\s\S]*\}", _raw)
                 if m:
                     try:
@@ -245,7 +276,9 @@ async def llm_gate_select_agent(
                         chosen = str(parsed.get("chosen") or "").strip()
                         reasoning = str(parsed.get("reasoning") or "").strip()
                     except json.JSONDecodeError:
-                        pass
+                        # Truncated JSON — extract fields via regex
+                        chosen = _extract_field_from_partial_json(_raw, "chosen")
+                        reasoning = _extract_field_from_partial_json(_raw, "reasoning")
                 if not chosen:
                     for line in _raw.strip().splitlines():
                         ls = line.strip()
@@ -328,7 +361,7 @@ async def llm_gate_select_tools(
     reasoning = ""
     try:
         if llm is not None:
-            _invoke_kwargs: dict[str, Any] = {"max_tokens": 250}
+            _invoke_kwargs: dict[str, Any] = {"max_tokens": 400}
             if structured_output_enabled():
                 _invoke_kwargs["response_format"] = pydantic_to_response_format(
                     LlmGateToolResult, "llm_gate_tool_result"
@@ -346,9 +379,6 @@ async def llm_gate_select_tools(
                 chosen_list = list(_structured.chosen)
                 reasoning = _structured.reasoning
             except Exception:
-                import json
-                import re
-
                 m = re.search(r"\{[\s\S]*\}", _raw)
                 if m:
                     try:
@@ -360,7 +390,9 @@ async def llm_gate_select_tools(
                             chosen_list = [raw_chosen.strip()]
                         reasoning = str(parsed.get("reasoning") or "").strip()
                     except json.JSONDecodeError:
-                        pass
+                        # Truncated JSON — extract list via regex
+                        chosen_list = _extract_chosen_list_from_partial_json(_raw)
+                        reasoning = _extract_field_from_partial_json(_raw, "reasoning")
                 if not chosen_list:
                     for line in _raw.strip().splitlines():
                         ls = line.strip()

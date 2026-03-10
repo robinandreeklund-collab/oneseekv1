@@ -1466,6 +1466,8 @@ async def create_supervisor_agent(
     # Create/get process-level shared worker pool AFTER dynamic configs are
     # built from GraphRegistry.  This ensures all DB-defined agents have a
     # WorkerConfig entry so LazyWorkerPool.get(agent_name) never returns None.
+    # llm_gate_mode is set later (after live_routing_config is built), but
+    # LazyWorkerPool initializes workers lazily, so we can patch it after.
     worker_pool = await get_or_create_shared_worker_pool(
         configs=worker_configs,
         llm=llm,
@@ -1581,6 +1583,10 @@ async def create_supervisor_agent(
         "adaptive_min_samples": int(persisted_tuning.get("adaptive_min_samples") or 8),
         "llm_gate_mode": bool(persisted_tuning.get("llm_gate_mode", False)),
     }
+
+    # Propagate llm_gate_mode to the worker pool so workers skip vector
+    # retrieval and only use pre-resolved tools from the LLM gate pipeline.
+    worker_pool._llm_gate_mode = bool(live_routing_config.get("llm_gate_mode", False))
 
     subagent_enabled = _coerce_bool(
         runtime_hitl_cfg.get("subagent_enabled"),
@@ -4917,27 +4923,53 @@ async def create_supervisor_agent(
     _ns_tuning = persisted_tuning
 
     def _llm_gate_tool_candidates_for_agent(agent_name: str) -> list[dict[str, Any]]:
-        """Return all tools in an agent's namespace as dicts for LLM gate selection."""
+        """Return all tools in an agent's namespace as dicts for LLM gate selection.
+
+        Resolution order:
+        1. graph_registry.tools_by_agent (DB-driven, authoritative)
+        2. AGENT_NAMESPACE_MAP + tool_index namespace matching (hardcoded fallback)
+        3. Empty list (never return ALL tools for unknown agents)
+        """
         from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP, _match_namespace
 
-        prefixes = AGENT_NAMESPACE_MAP.get(str(agent_name or "").strip().lower(), [])
+        _agent_key = str(agent_name or "").strip().lower()
+
+        # Path 1: DB-driven registry (authoritative)
+        if graph_registry is not None:
+            registry_tools = graph_registry.tools_by_agent.get(_agent_key) or []
+            if registry_tools:
+                return [
+                    {
+                        "tool_id": str(t.get("tool_id") or "").strip(),
+                        "name": str(t.get("name") or t.get("tool_id") or "").strip(),
+                        "description": str(t.get("description") or "").strip(),
+                        "keywords": list(t.get("keywords") or []),
+                    }
+                    for t in registry_tools
+                    if str(t.get("tool_id") or "").strip()
+                ]
+
+        # Path 2: Hardcoded namespace map
+        prefixes = AGENT_NAMESPACE_MAP.get(_agent_key, [])
+        if not prefixes:
+            # No namespace mapping AND no registry entry — return empty
+            # rather than exposing ALL tools (which causes wrong tool selection).
+            logger.warning(
+                "LLM gate: no tool candidates for agent %r (not in registry or namespace map)",
+                _agent_key,
+            )
+            return []
         results: list[dict[str, Any]] = []
         for entry in _ns_tool_index:
-            matched = False
-            if prefixes:
-                for prefix in prefixes:
-                    if _match_namespace(entry.namespace, prefix):
-                        matched = True
-                        break
-            else:
-                matched = True
-            if matched:
-                results.append({
-                    "tool_id": entry.tool_id,
-                    "name": entry.name,
-                    "description": entry.description,
-                    "keywords": list(entry.keywords or []),
-                })
+            for prefix in prefixes:
+                if _match_namespace(entry.namespace, prefix):
+                    results.append({
+                        "tool_id": entry.tool_id,
+                        "name": entry.name,
+                        "description": entry.description,
+                        "keywords": list(entry.keywords or []),
+                    })
+                    break
         return results
 
     tool_resolver_node = build_tool_resolver_node(
