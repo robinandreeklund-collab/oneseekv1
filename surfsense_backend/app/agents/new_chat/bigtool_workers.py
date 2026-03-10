@@ -94,9 +94,11 @@ async def create_bigtool_worker(
         # worker ONLY uses the pre-resolved tools passed via selected_tool_ids.
         # This prevents the vector search from overriding correct LLM decisions.
         def retrieve_tools_noop(query: str) -> list[str]:
+            """Return empty list — tool selection is handled by the LLM gate."""
             return []
 
         async def aretrieve_tools_noop(query: str) -> list[str]:
+            """Return empty list — tool selection is handled by the LLM gate."""
             return []
 
         retrieve_tools = retrieve_tools_noop
