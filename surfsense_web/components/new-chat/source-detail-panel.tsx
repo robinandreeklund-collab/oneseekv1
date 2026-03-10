@@ -151,7 +151,6 @@ export function SourceDetailPanel({
 				top: Math.max(0, scrollTarget),
 				behavior: smooth && !shouldReduceMotion ? "smooth" : "auto",
 			});
-
 		},
 		[shouldReduceMotion]
 	);

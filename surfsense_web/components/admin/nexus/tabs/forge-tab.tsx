@@ -1,19 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertCircle, Loader2, Sparkles, Play, CheckCircle2, XCircle, Trash2, Search } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import {
-	nexusApiService,
-	type ForgeGenerateRequest,
-	type SyntheticCaseResponse,
-	type PlatformToolResponse,
-} from "@/lib/apis/nexus-api.service";
+	AlertCircle,
+	CheckCircle2,
+	Loader2,
+	Play,
+	Search,
+	Sparkles,
+	Trash2,
+	XCircle,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 import { ConcurrencyControl } from "@/components/admin/nexus/shared/concurrency-control";
 import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+	type ForgeGenerateRequest,
+	nexusApiService,
+	type PlatformToolResponse,
+	type SyntheticCaseResponse,
+} from "@/lib/apis/nexus-api.service";
 
 type FilterMode = "all" | "category" | "namespace" | "tool";
 
@@ -40,8 +49,8 @@ export function ForgeTab() {
 					const parts = t.namespace.split("/");
 					return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : t.namespace;
 				})
-				.filter(Boolean),
-		),
+				.filter(Boolean)
+		)
 	).sort();
 
 	const loadCases = () => {
@@ -140,16 +149,13 @@ export function ForgeTab() {
 	const query = searchQuery.trim().toLowerCase();
 	const filteredCases = query
 		? modeFiltered.filter(
-				(c) =>
-					c.question.toLowerCase().includes(query) ||
-					c.tool_id.toLowerCase().includes(query),
+				(c) => c.question.toLowerCase().includes(query) || c.tool_id.toLowerCase().includes(query)
 			)
 		: modeFiltered;
 
-	const hasFilter = filterMode !== "all" && (selectedCategory || selectedNamespace || selectedToolId);
-	const toolCount = new Set(
-		(hasFilter ? filteredCases : cases).map((c) => c.tool_id),
-	).size;
+	const hasFilter =
+		filterMode !== "all" && (selectedCategory || selectedNamespace || selectedToolId);
+	const toolCount = new Set((hasFilter ? filteredCases : cases).map((c) => c.tool_id)).size;
 	const platformToolCount = (() => {
 		if (filterMode === "category" && selectedCategory) {
 			return platformTools.filter((t) => t.category === selectedCategory).length;
@@ -236,8 +242,7 @@ export function ForgeTab() {
 							<option value="">Välj namespace...</option>
 							{namespaces.map((ns) => (
 								<option key={ns} value={ns}>
-									{ns} (
-									{platformTools.filter((t) => t.namespace.startsWith(ns)).length})
+									{ns} ({platformTools.filter((t) => t.namespace.startsWith(ns)).length})
 								</option>
 							))}
 						</select>
@@ -393,7 +398,10 @@ function ToolGroupedCases({
 										</div>
 										<div className="divide-y">
 											{(byDiff.get(difficulty) || []).map((c) => (
-												<div key={c.id} className="flex items-start justify-between px-4 py-2.5 gap-4">
+												<div
+													key={c.id}
+													className="flex items-start justify-between px-4 py-2.5 gap-4"
+												>
 													<div className="flex-1 min-w-0">
 														<p className="text-sm">{c.question}</p>
 													</div>
@@ -443,7 +451,5 @@ function DifficultyBadge({ difficulty }: { difficulty: string }) {
 	};
 	const color = colors[difficulty] || "bg-gray-100 text-gray-700";
 
-	return (
-		<span className={`text-xs px-2 py-0.5 rounded ${color}`}>{difficulty}</span>
-	);
+	return <span className={`text-xs px-2 py-0.5 rounded ${color}`}>{difficulty}</span>;
 }

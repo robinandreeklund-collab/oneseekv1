@@ -294,7 +294,7 @@ export const ElasticsearchConfig: FC<ElasticsearchConfigProps> = ({
 					{authMethod === "basic" && (
 						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 							<div className="space-y-2">
-									<Label className="text-xs sm:text-sm">Användarnamn</Label>
+								<Label className="text-xs sm:text-sm">Användarnamn</Label>
 								<Input
 									value={username}
 									onChange={(e) => handleUsernameChange(e.target.value)}
@@ -303,12 +303,12 @@ export const ElasticsearchConfig: FC<ElasticsearchConfigProps> = ({
 								/>
 							</div>
 							<div className="space-y-2">
-									<Label className="text-xs sm:text-sm">Lösenord</Label>
+								<Label className="text-xs sm:text-sm">Lösenord</Label>
 								<Input
 									type="password"
 									value={password}
 									onChange={(e) => handlePasswordChange(e.target.value)}
-										placeholder="Lösenord"
+									placeholder="Lösenord"
 									className="border-slate-400/20 focus-visible:border-slate-400/40"
 								/>
 							</div>
@@ -384,7 +384,8 @@ export const ElasticsearchConfig: FC<ElasticsearchConfigProps> = ({
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-							Standardfråga i Elasticsearch att använda för sökningar. Använd "*" för att matcha alla dokument.
+							Standardfråga i Elasticsearch att använda för sökningar. Använd "*" för att matcha
+							alla dokument.
 						</p>
 					</div>
 

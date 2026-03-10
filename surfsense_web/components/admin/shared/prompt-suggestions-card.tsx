@@ -32,7 +32,7 @@ export function PromptSuggestionsCard({
 	extraActions,
 }: PromptSuggestionsCardProps) {
 	const selectedCount = Array.from(selectedKeys).filter((key) =>
-		suggestions.some((s) => s.prompt_key === key),
+		suggestions.some((s) => s.prompt_key === key)
 	).length;
 
 	return (

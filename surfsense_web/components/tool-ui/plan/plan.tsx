@@ -9,8 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
-import type { Action, ActionsConfig } from "../shared/schema";
 import type { TodoStatus } from "../plan/schema";
+import type { Action, ActionsConfig } from "../shared/schema";
 
 // ============================================================================
 // Status Icon Component

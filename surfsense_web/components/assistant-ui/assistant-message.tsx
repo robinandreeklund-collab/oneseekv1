@@ -7,7 +7,14 @@ import {
 	useComposerRuntime,
 } from "@assistant-ui/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Activity, CheckIcon, CopyIcon, DownloadIcon, MessageSquare, RefreshCwIcon } from "lucide-react";
+import {
+	Activity,
+	CheckIcon,
+	CopyIcon,
+	DownloadIcon,
+	MessageSquare,
+	RefreshCwIcon,
+} from "lucide-react";
 import type { FC } from "react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,21 +32,21 @@ import {
 	ThinkingStepsContext,
 	TimelineContext,
 } from "@/components/assistant-ui/thinking-steps";
-import { TracePanelContext } from "@/components/assistant-ui/trace-context";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
-import {
-	SpotlightArenaActiveContext,
-	SpotlightArenaLayout,
-} from "@/components/tool-ui/spotlight-arena";
+import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { TracePanelContext } from "@/components/assistant-ui/trace-context";
+import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
+import { CommentSheet } from "@/components/chat-comments/comment-sheet/comment-sheet";
+import { CommentTrigger } from "@/components/chat-comments/comment-trigger/comment-trigger";
 import {
 	DebateArenaActiveContext,
 	DebateArenaLayout,
 	LiveDebateStateContext,
 } from "@/components/debate/debate-arena";
-import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { CommentPanelContainer } from "@/components/chat-comments/comment-panel-container/comment-panel-container";
-import { CommentSheet } from "@/components/chat-comments/comment-sheet/comment-sheet";
-import { CommentTrigger } from "@/components/chat-comments/comment-trigger/comment-trigger";
+import {
+	SpotlightArenaActiveContext,
+	SpotlightArenaLayout,
+} from "@/components/tool-ui/spotlight-arena";
 import { Button } from "@/components/ui/button";
 import { useComments } from "@/hooks/use-comments";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -202,12 +209,7 @@ const FollowUpSuggestions: FC = () => {
 			<p className="text-xs text-muted-foreground">{suggestions.title}</p>
 			<div className="flex flex-wrap gap-2">
 				{suggestions.items.map((item) => (
-					<Button
-						key={item}
-						variant="secondary"
-						size="sm"
-						onClick={() => handleClick(item)}
-					>
+					<Button key={item} variant="secondary" size="sm" onClick={() => handleClick(item)}>
 						{item}
 					</Button>
 				))}
@@ -238,7 +240,7 @@ const AssistantMessageInner: FC = () => {
 		if (!Array.isArray(content)) return false;
 		return content.some(
 			(part: { type: string; toolName?: string }) =>
-				part.type === "tool-call" && COMPARE_TOOL_NAMES.has(part.toolName ?? ""),
+				part.type === "tool-call" && COMPARE_TOOL_NAMES.has(part.toolName ?? "")
 		);
 	});
 
@@ -248,32 +250,32 @@ const AssistantMessageInner: FC = () => {
 
 	return (
 		<SpotlightArenaActiveContext.Provider value={isCompare}>
-		<DebateArenaActiveContext.Provider value={isDebate}>
-			{/* Unified fade layer: reasoning stream + thinking steps */}
-			<FadeLayerPart />
+			<DebateArenaActiveContext.Provider value={isDebate}>
+				{/* Unified fade layer: reasoning stream + thinking steps */}
+				<FadeLayerPart />
 
-			{/* Spotlight Arena layout for compare mode (mutually exclusive with debate) */}
-			{isCompare && !isDebate && <SpotlightArenaLayout />}
+				{/* Spotlight Arena layout for compare mode (mutually exclusive with debate) */}
+				{isCompare && !isDebate && <SpotlightArenaLayout />}
 
-			{/* Debate Arena layout for debate mode */}
-			{isDebate && debateState && <DebateArenaLayout debateState={debateState} />}
+				{/* Debate Arena layout for debate mode */}
+				{isDebate && debateState && <DebateArenaLayout debateState={debateState} />}
 
-			<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
-				<MessagePrimitive.Parts
-					components={{
-						Text: MarkdownText,
-						tools: { Fallback: ToolFallback },
-					}}
-				/>
-				<MessageError />
-			</div>
-			<FollowUpSuggestions />
+				<div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
+					<MessagePrimitive.Parts
+						components={{
+							Text: MarkdownText,
+							tools: { Fallback: ToolFallback },
+						}}
+					/>
+					<MessageError />
+				</div>
+				<FollowUpSuggestions />
 
-			<div className="aui-assistant-message-footer mt-1 mb-5 ml-2 flex">
-				<BranchPicker />
-				<AssistantActionBar />
-			</div>
-		</DebateArenaActiveContext.Provider>
+				<div className="aui-assistant-message-footer mt-1 mb-5 ml-2 flex">
+					<BranchPicker />
+					<AssistantActionBar />
+				</div>
+			</DebateArenaActiveContext.Provider>
 		</SpotlightArenaActiveContext.Provider>
 	);
 };
@@ -452,9 +454,7 @@ export const AssistantMessage: FC = () => {
 const AssistantActionBar: FC = () => {
 	const traceContext = useContext(TracePanelContext);
 	const messageId = useAssistantState(({ message }) => message?.id);
-	const hasTraceSession = messageId
-		? traceContext?.messageTraceSessions.get(messageId)
-		: null;
+	const hasTraceSession = messageId ? traceContext?.messageTraceSessions.get(messageId) : null;
 	const isTraceActive = !!(
 		messageId &&
 		traceContext?.activeMessageId === messageId &&
@@ -475,10 +475,7 @@ const AssistantActionBar: FC = () => {
 				tooltip="Live-spårning"
 				onClick={handleTraceClick}
 				disabled={!messageId || !traceContext}
-				className={cn(
-					hasTraceSession ? "text-primary" : "",
-					isTraceActive ? "bg-primary/10" : ""
-				)}
+				className={cn(hasTraceSession ? "text-primary" : "", isTraceActive ? "bg-primary/10" : "")}
 			>
 				<Activity className={cn("size-4", isTraceActive && "animate-pulse")} />
 			</TooltipIconButton>

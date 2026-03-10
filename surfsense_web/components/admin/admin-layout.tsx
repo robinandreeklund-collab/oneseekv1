@@ -1,22 +1,22 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
 import {
-	Settings,
-	MessageSquare,
-	Database,
-	Wrench,
 	ChevronRight,
-	GitBranch,
-	Mic,
+	Database,
 	FileText,
 	FlaskConical,
+	GitBranch,
+	MessageSquare,
+	Mic,
 	Orbit,
+	Settings,
+	Wrench,
 } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 const ADMIN_NAV_ITEMS = [
 	{
@@ -94,7 +94,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 							{ADMIN_NAV_ITEMS.map((item) => {
 								const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
 								const Icon = item.icon;
-								
+
 								return (
 									<Link
 										key={item.href}
@@ -128,9 +128,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 
 			{/* Main content */}
 			<div className="flex-1 min-w-0">
-				<div className={isFlowPage ? "h-full" : "container mx-auto p-6 max-w-7xl"}>
-					{children}
-				</div>
+				<div className={isFlowPage ? "h-full" : "container mx-auto p-6 max-w-7xl"}>{children}</div>
 			</div>
 		</div>
 	);

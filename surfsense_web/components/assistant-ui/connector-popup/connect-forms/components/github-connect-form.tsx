@@ -110,8 +110,7 @@ export const GithubConnectForm: FC<ConnectFormProps> = ({ onSubmit, isSubmitting
 				<div className="-ml-1">
 					<AlertTitle className="text-xs sm:text-sm">Personlig åtkomsttoken (valfritt)</AlertTitle>
 					<AlertDescription className="text-[10px] sm:text-xs !pl-0">
-						En GitHub PAT krävs bara för privata repositories. Offentliga repos fungerar utan
-						token.{" "}
+						En GitHub PAT krävs bara för privata repositories. Offentliga repos fungerar utan token.{" "}
 						<a
 							href="https://github.com/settings/tokens/new?description=surfsense&scopes=repo"
 							target="_blank"

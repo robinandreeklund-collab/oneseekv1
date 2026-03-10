@@ -1,14 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { nexusApiService } from "@/lib/apis/nexus-api.service";
 
 const BANDS = [
@@ -68,7 +62,7 @@ export function BandDistribution() {
 					distribution: [0, 0, 0, 0, 0],
 					total: 0,
 					percentages: [0, 0, 0, 0, 0],
-				}),
+				})
 			)
 			.finally(() => setLoading(false));
 	}, []);
@@ -81,8 +75,7 @@ export function BandDistribution() {
 			<CardHeader>
 				<CardTitle>Confidence Band Fördelning</CardTitle>
 				<CardDescription>
-					Hur frågor fördelas över 5 confidence bands. Mål: Band-0 throughput
-					&gt; 80%
+					Hur frågor fördelas över 5 confidence bands. Mål: Band-0 throughput &gt; 80%
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -101,24 +94,16 @@ export function BandDistribution() {
 									<div key={band.band} className="space-y-1">
 										<div className="flex items-center justify-between text-sm">
 											<div className="flex items-center gap-2">
-												<div
-													className={`h-3 w-3 rounded-sm ${band.color}`}
-												/>
+												<div className={`h-3 w-3 rounded-sm ${band.color}`} />
 												<span className="font-medium">
 													Band {band.band}: {band.name}
 												</span>
-												<span className="text-muted-foreground text-xs">
-													{band.description}
-												</span>
+												<span className="text-muted-foreground text-xs">{band.description}</span>
 											</div>
 											<div className="flex items-center gap-3">
-												<span className="text-xs text-muted-foreground">
-													Mål: {band.target}
-												</span>
+												<span className="text-xs text-muted-foreground">Mål: {band.target}</span>
 												<span className="font-mono text-sm tabular-nums w-16 text-right">
-													{total > 0
-														? `${count} (${pct.toFixed(0)}%)`
-														: "—"}
+													{total > 0 ? `${count} (${pct.toFixed(0)}%)` : "—"}
 												</span>
 											</div>
 										</div>

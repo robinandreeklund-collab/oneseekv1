@@ -1,12 +1,12 @@
 import {
 	type MetadataCatalogAuditRunRequest,
 	type MetadataCatalogAuditSuggestionRequest,
+	type MetadataCatalogResetRequest,
 	type MetadataCatalogSafeRenameSuggestionRequest,
 	type MetadataCatalogSafeRenameSuggestionResponse,
 	type MetadataCatalogSeparationRequest,
 	type MetadataCatalogStabilityLockActionRequest,
 	type MetadataCatalogStabilityLockActionResponse,
-	type MetadataCatalogResetRequest,
 	type MetadataCatalogUpdateRequest,
 	metadataCatalogAuditRunRequest,
 	metadataCatalogAuditRunResponse,
@@ -431,10 +431,7 @@ class AdminToolSettingsApiService {
 	}
 
 	async getMetadataLimits() {
-		return baseApiService.get(
-			"/api/v1/admin/tool-settings/metadata-limits",
-			undefined
-		);
+		return baseApiService.get("/api/v1/admin/tool-settings/metadata-limits", undefined);
 	}
 }
 

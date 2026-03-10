@@ -1,45 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-	ReactFlow,
 	Background,
 	Controls,
-	MiniMap,
-	useNodesState,
-	useEdgesState,
-	type Node,
 	type Edge,
-	type NodeTypes,
-	Position,
 	MarkerType,
+	MiniMap,
+	type Node,
+	type NodeTypes,
 	Panel,
+	Position,
+	ReactFlow,
+	useEdgesState,
+	useNodesState,
 } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "@xyflow/react/dist/style.css";
 
-import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.service";
-import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
-import type {
-	FlowGraphResponse,
-	FlowIntentNode,
-	FlowAgentNode,
-	FlowToolNode,
-	PipelineNode as PipelineNodeData,
-	PipelineEdge as PipelineEdgeData,
-} from "@/contracts/types/admin-flow-graph.types";
-import type { MetadataCatalogResponse } from "@/contracts/types/admin-tool-settings.types";
-import { IntentGraphNode } from "./flow-nodes/intent-node";
-import { AgentGraphNode } from "./flow-nodes/agent-node";
-import { ToolGraphNode } from "./flow-nodes/tool-node";
-import { ToolGroupNode } from "./flow-nodes/tool-group-node";
-import { PipelineGraphNodeMemo } from "./flow-nodes/pipeline-node";
-import { FlowDetailPanel } from "./flow-detail-panel";
-import { Loader2, RefreshCw, Plus } from "lucide-react";
+import { Loader2, Plus, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
 	Dialog,
 	DialogContent,
@@ -49,7 +29,27 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
-import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import type {
+	FlowAgentNode,
+	FlowGraphResponse,
+	FlowIntentNode,
+	FlowToolNode,
+	PipelineEdge as PipelineEdgeData,
+	PipelineNode as PipelineNodeData,
+} from "@/contracts/types/admin-flow-graph.types";
+import type { MetadataCatalogResponse } from "@/contracts/types/admin-tool-settings.types";
+import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.service";
+import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
+import { FlowDetailPanel } from "./flow-detail-panel";
+import { AgentGraphNode } from "./flow-nodes/agent-node";
+import { IntentGraphNode } from "./flow-nodes/intent-node";
+import { PipelineGraphNodeMemo } from "./flow-nodes/pipeline-node";
+import { ToolGroupNode } from "./flow-nodes/tool-group-node";
+import { ToolGraphNode } from "./flow-nodes/tool-node";
 
 type ViewMode = "pipeline" | "routing";
 
@@ -87,9 +87,10 @@ interface ToolGroupInfo {
 	tools: FlowToolNode[];
 }
 
-function _groupToolsByAgent(
-	data: FlowGraphResponse,
-): { groups: ToolGroupInfo[]; allTools: FlowToolNode[] } {
+function _groupToolsByAgent(data: FlowGraphResponse): {
+	groups: ToolGroupInfo[];
+	allTools: FlowToolNode[];
+} {
 	// Only use DB-backed tools from the graph registry — no catalog heuristic
 	const allTools: FlowToolNode[] = [...data.tools];
 
@@ -118,10 +119,7 @@ function _groupToolsByAgent(
 	return { groups, allTools };
 }
 
-function buildRoutingNodes(
-	data: FlowGraphResponse,
-	expandedGroups: Set<string>,
-): Node[] {
+function buildRoutingNodes(data: FlowGraphResponse, expandedGroups: Set<string>): Node[] {
 	const nodes: Node[] = [];
 
 	// Build tool groups for sizing calculations
@@ -145,9 +143,7 @@ function buildRoutingNodes(
 	}
 
 	// Find agents without any intent connection
-	const unconnectedAgents = data.agents.filter(
-		(a) => !agentToIntent[a.agent_id],
-	);
+	const unconnectedAgents = data.agents.filter((a) => !agentToIntent[a.agent_id]);
 
 	// Calculate tool group height for an agent
 	const getToolGroupHeight = (agentId: string): number => {
@@ -185,9 +181,10 @@ function buildRoutingNodes(
 		groupTotalHeight = Math.max(INTENT_NODE_HEIGHT, groupTotalHeight);
 
 		// Place intent node vertically centered relative to its agents
-		const intentY = connectedAgents.length > 0
-			? currentY + (groupTotalHeight - INTENT_NODE_HEIGHT) / 2
-			: currentY;
+		const intentY =
+			connectedAgents.length > 0
+				? currentY + (groupTotalHeight - INTENT_NODE_HEIGHT) / 2
+				: currentY;
 
 		nodes.push({
 			id: intent.id,
@@ -555,7 +552,7 @@ function buildPipelineNodes(pipelineNodes: PipelineNodeData[]): Node[] {
 
 function buildPipelineEdges(
 	pipelineEdges: PipelineEdgeData[],
-	pipelineNodes: PipelineNodeData[],
+	pipelineNodes: PipelineNodeData[]
 ): Edge[] {
 	const nodeStageMap: Record<string, string> = {};
 	for (const n of pipelineNodes) {
@@ -663,17 +660,36 @@ export function FlowGraphPage() {
 			const resolvedPromptKey = newAgent.prompt_key.trim() || agentId;
 			await adminFlowGraphApiService.upsertAgent({
 				agent_id: agentId,
-				label: newAgent.label.trim() || agentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+				label:
+					newAgent.label.trim() ||
+					agentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
 				description: newAgent.description.trim(),
-				keywords: newAgent.keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				keywords: newAgent.keywords
+					.split(",")
+					.map((k) => k.trim())
+					.filter(Boolean),
 				prompt_key: resolvedPromptKey,
-				namespace: newAgent.namespace.split("/").map((s) => s.trim()).filter(Boolean),
-				routes: newAgent.routes.split(",").map((r) => r.trim()).filter(Boolean),
+				namespace: newAgent.namespace
+					.split("/")
+					.map((s) => s.trim())
+					.filter(Boolean),
+				routes: newAgent.routes
+					.split(",")
+					.map((r) => r.trim())
+					.filter(Boolean),
 				flow_tools: [],
 			});
 			toast.success(`Agent "${agentId}" skapad`);
 			setShowCreateAgent(false);
-			setNewAgent({ agent_id: "", label: "", description: "", keywords: "", prompt_key: "", namespace: "agents/", routes: "" });
+			setNewAgent({
+				agent_id: "",
+				label: "",
+				description: "",
+				keywords: "",
+				prompt_key: "",
+				namespace: "agents/",
+				routes: "",
+			});
 			fetchData();
 		} catch {
 			toast.error("Kunde inte skapa agent");
@@ -692,16 +708,28 @@ export function FlowGraphPage() {
 		try {
 			await adminFlowGraphApiService.upsertIntent({
 				intent_id: intentId,
-				label: newIntent.label.trim() || intentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+				label:
+					newIntent.label.trim() ||
+					intentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
 				description: newIntent.description.trim(),
-				keywords: newIntent.keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				keywords: newIntent.keywords
+					.split(",")
+					.map((k) => k.trim())
+					.filter(Boolean),
 				route: newIntent.route.trim() || "kunskap",
 				priority: parseInt(newIntent.priority, 10) || 500,
 				enabled: true,
 			});
 			toast.success(`Intent "${intentId}" skapad`);
 			setShowCreateIntent(false);
-			setNewIntent({ intent_id: "", label: "", description: "", keywords: "", route: "kunskap", priority: "500" });
+			setNewIntent({
+				intent_id: "",
+				label: "",
+				description: "",
+				keywords: "",
+				route: "kunskap",
+				priority: "500",
+			});
 			fetchData();
 		} catch {
 			toast.error("Kunde inte skapa intent");
@@ -864,10 +892,7 @@ export function FlowGraphPage() {
 				const existingTargetTools = graphData.tools
 					.filter((t) => t.agent_id === targetAgentId)
 					.map((t) => ({ tool_id: t.tool_id, label: t.label }));
-				const targetTools = [
-					...existingTargetTools,
-					{ tool_id: toolId, label: toolLabel },
-				];
+				const targetTools = [...existingTargetTools, { tool_id: toolId, label: toolLabel }];
 				await adminFlowGraphApiService.updateAgentTools(targetAgentId, targetTools);
 
 				// Find the target agent label for the toast
@@ -889,7 +914,7 @@ export function FlowGraphPage() {
 				setEdges(buildRoutingEdges(graphData, expandedGroups));
 			}
 		},
-		[graphData, nodes, expandedGroups, fetchData, setNodes, setEdges],
+		[graphData, nodes, expandedGroups, fetchData, setNodes, setEdges]
 	);
 
 	const onPaneClick = useCallback(() => {
@@ -956,12 +981,7 @@ export function FlowGraphPage() {
 				>
 					<Background gap={20} size={1} />
 					<Controls showInteractive={false} />
-					<MiniMap
-						nodeStrokeWidth={2}
-						pannable
-						zoomable
-						style={{ height: 100, width: 160 }}
-					/>
+					<MiniMap nodeStrokeWidth={2} pannable zoomable style={{ height: 100, width: 160 }} />
 					<Panel position="top-left">
 						<div className="flex items-center gap-4 rounded-lg border bg-background/95 backdrop-blur px-4 py-2 shadow-sm">
 							<Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
@@ -1024,7 +1044,9 @@ export function FlowGraphPage() {
 													<Label className="text-xs">Intent ID</Label>
 													<Input
 														value={newIntent.intent_id}
-														onChange={(e) => setNewIntent((p) => ({ ...p, intent_id: e.target.value }))}
+														onChange={(e) =>
+															setNewIntent((p) => ({ ...p, intent_id: e.target.value }))
+														}
 														className="text-xs h-8"
 														placeholder="t.ex. skolverket_fraga"
 													/>
@@ -1042,7 +1064,9 @@ export function FlowGraphPage() {
 													<Label className="text-xs">Beskrivning</Label>
 													<Textarea
 														value={newIntent.description}
-														onChange={(e) => setNewIntent((p) => ({ ...p, description: e.target.value }))}
+														onChange={(e) =>
+															setNewIntent((p) => ({ ...p, description: e.target.value }))
+														}
 														className="text-xs min-h-[60px]"
 														placeholder="Beskriv vad denna intent fångar..."
 													/>
@@ -1051,7 +1075,9 @@ export function FlowGraphPage() {
 													<Label className="text-xs">Nyckelord (komma-separerade)</Label>
 													<Input
 														value={newIntent.keywords}
-														onChange={(e) => setNewIntent((p) => ({ ...p, keywords: e.target.value }))}
+														onChange={(e) =>
+															setNewIntent((p) => ({ ...p, keywords: e.target.value }))
+														}
 														className="text-xs h-8"
 														placeholder="skola, laroplan, betyg"
 													/>
@@ -1061,7 +1087,9 @@ export function FlowGraphPage() {
 														<Label className="text-xs">Route</Label>
 														<select
 															value={newIntent.route}
-															onChange={(e) => setNewIntent((p) => ({ ...p, route: e.target.value }))}
+															onChange={(e) =>
+																setNewIntent((p) => ({ ...p, route: e.target.value }))
+															}
 															className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 														>
 															<option value="kunskap">kunskap</option>
@@ -1075,18 +1103,28 @@ export function FlowGraphPage() {
 														<Input
 															type="number"
 															value={newIntent.priority}
-															onChange={(e) => setNewIntent((p) => ({ ...p, priority: e.target.value }))}
+															onChange={(e) =>
+																setNewIntent((p) => ({ ...p, priority: e.target.value }))
+															}
 															className="text-xs h-8"
 														/>
 													</div>
 												</div>
 											</div>
 											<DialogFooter>
-												<Button variant="ghost" size="sm" onClick={() => setShowCreateIntent(false)}>
+												<Button
+													variant="ghost"
+													size="sm"
+													onClick={() => setShowCreateIntent(false)}
+												>
 													Avbryt
 												</Button>
 												<Button size="sm" onClick={handleCreateIntent} disabled={creatingIntent}>
-													{creatingIntent ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
+													{creatingIntent ? (
+														<Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+													) : (
+														<Plus className="h-3.5 w-3.5 mr-1.5" />
+													)}
 													Skapa intent
 												</Button>
 											</DialogFooter>
@@ -1103,7 +1141,8 @@ export function FlowGraphPage() {
 											<DialogHeader>
 												<DialogTitle>Skapa ny agent</DialogTitle>
 												<DialogDescription>
-													Fyll i fälten nedan. Du kan tilldela verktyg och redigera detaljer efteråt.
+													Fyll i fälten nedan. Du kan tilldela verktyg och redigera detaljer
+													efteråt.
 												</DialogDescription>
 											</DialogHeader>
 											<div className="space-y-3 py-2">
@@ -1111,7 +1150,9 @@ export function FlowGraphPage() {
 													<Label className="text-xs">Agent ID</Label>
 													<Input
 														value={newAgent.agent_id}
-														onChange={(e) => setNewAgent((p) => ({ ...p, agent_id: e.target.value }))}
+														onChange={(e) =>
+															setNewAgent((p) => ({ ...p, agent_id: e.target.value }))
+														}
 														className="text-xs h-8"
 														placeholder="t.ex. skolverket"
 													/>
@@ -1129,7 +1170,9 @@ export function FlowGraphPage() {
 													<Label className="text-xs">Beskrivning</Label>
 													<Textarea
 														value={newAgent.description}
-														onChange={(e) => setNewAgent((p) => ({ ...p, description: e.target.value }))}
+														onChange={(e) =>
+															setNewAgent((p) => ({ ...p, description: e.target.value }))
+														}
 														className="text-xs min-h-[60px]"
 														placeholder="Beskriv vad agenten gör..."
 													/>
@@ -1138,7 +1181,9 @@ export function FlowGraphPage() {
 													<Label className="text-xs">Nyckelord (komma-separerade)</Label>
 													<Input
 														value={newAgent.keywords}
-														onChange={(e) => setNewAgent((p) => ({ ...p, keywords: e.target.value }))}
+														onChange={(e) =>
+															setNewAgent((p) => ({ ...p, keywords: e.target.value }))
+														}
 														className="text-xs h-8"
 														placeholder="skolverket, skola, laroplan, amnesplan"
 													/>
@@ -1148,7 +1193,9 @@ export function FlowGraphPage() {
 														<Label className="text-xs">Prompt-nyckel</Label>
 														<Input
 															value={newAgent.prompt_key}
-															onChange={(e) => setNewAgent((p) => ({ ...p, prompt_key: e.target.value }))}
+															onChange={(e) =>
+																setNewAgent((p) => ({ ...p, prompt_key: e.target.value }))
+															}
 															className="text-xs h-8"
 															placeholder="skolverket"
 														/>
@@ -1157,7 +1204,9 @@ export function FlowGraphPage() {
 														<Label className="text-xs">Namespace</Label>
 														<Input
 															value={newAgent.namespace}
-															onChange={(e) => setNewAgent((p) => ({ ...p, namespace: e.target.value }))}
+															onChange={(e) =>
+																setNewAgent((p) => ({ ...p, namespace: e.target.value }))
+															}
 															className="text-xs h-8"
 															placeholder="agents/skolverket"
 														/>
@@ -1178,7 +1227,11 @@ export function FlowGraphPage() {
 													Avbryt
 												</Button>
 												<Button size="sm" onClick={handleCreateAgent} disabled={creatingAgent}>
-													{creatingAgent ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
+													{creatingAgent ? (
+														<Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+													) : (
+														<Plus className="h-3.5 w-3.5 mr-1.5" />
+													)}
 													Skapa agent
 												</Button>
 											</DialogFooter>
@@ -1187,12 +1240,7 @@ export function FlowGraphPage() {
 								</>
 							)}
 
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-7 px-2"
-								onClick={fetchData}
-							>
+							<Button variant="ghost" size="sm" className="h-7 px-2" onClick={fetchData}>
 								<RefreshCw className="h-3.5 w-3.5" />
 							</Button>
 						</div>

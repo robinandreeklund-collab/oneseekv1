@@ -28,19 +28,22 @@ class LazyWorkerPool:
         llm: Any,
         dependencies: dict[str, Any],
         checkpointer: Checkpointer | None,
+        llm_gate_mode: bool = False,
     ):
         """Initialize the lazy worker pool.
-        
+
         Args:
             configs: Worker configurations by name
             llm: Language model instance to use for workers
             dependencies: Shared dependencies for worker initialization
             checkpointer: Optional checkpointer for state persistence
+            llm_gate_mode: When True, workers skip vector-based retrieve_tools
         """
         self._configs = configs
         self._llm = llm
         self._dependencies = dependencies
         self._checkpointer = checkpointer
+        self._llm_gate_mode = llm_gate_mode
         self._workers: dict[str, Any] = {}
         self._locks: dict[str, asyncio.Lock] = {
             name: asyncio.Lock() for name in configs
@@ -74,6 +77,7 @@ class LazyWorkerPool:
                 dependencies=self._dependencies,
                 checkpointer=self._checkpointer,
                 config=self._configs[name],
+                llm_gate_mode=self._llm_gate_mode,
             )
             self._workers[name] = worker
             return worker

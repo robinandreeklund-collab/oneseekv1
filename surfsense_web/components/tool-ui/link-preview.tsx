@@ -56,7 +56,9 @@ function LinkPreviewErrorState({ url, error }: { url: string; error: string }) {
 					<AlertCircleIcon className="size-6 text-destructive" />
 				</div>
 				<div className="flex-1 min-w-0">
-					<p className="font-medium text-destructive text-sm">Det gick inte att läsa in förhandsvisning</p>
+					<p className="font-medium text-destructive text-sm">
+						Det gick inte att läsa in förhandsvisning
+					</p>
 					<p className="text-muted-foreground text-xs mt-0.5 truncate">{url}</p>
 					<p className="text-muted-foreground text-xs mt-1">{error}</p>
 				</div>

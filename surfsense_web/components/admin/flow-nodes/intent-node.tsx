@@ -1,12 +1,9 @@
-import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { Zap } from "lucide-react";
+import { memo } from "react";
 import type { FlowIntentNode } from "@/contracts/types/admin-flow-graph.types";
 
-export const IntentGraphNode = memo(function IntentGraphNode({
-	data,
-	selected,
-}: NodeProps) {
+export const IntentGraphNode = memo(function IntentGraphNode({ data, selected }: NodeProps) {
 	const intent = data as unknown as FlowIntentNode;
 	return (
 		<div

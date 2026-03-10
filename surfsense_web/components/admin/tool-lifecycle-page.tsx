@@ -1,28 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { 
-	Search, 
-	CheckCircle2, 
-	Clock, 
-	ShieldAlert,
-	AlertCircle,
-	Loader2,
-	ToggleLeft,
-	ToggleRight
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
+	AlertCircle,
+	CheckCircle2,
+	Clock,
+	Loader2,
+	Search,
+	ShieldAlert,
+	ToggleLeft,
+	ToggleRight,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -33,13 +22,24 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { toast } from "sonner";
-import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
-import type { 
+import type {
+	ToolLifecycleListResponse,
 	ToolLifecycleStatusResponse as ToolLifecycleStatus,
-	ToolLifecycleListResponse 
 } from "@/contracts/types/admin-tool-lifecycle.types";
+import { adminToolLifecycleApiService } from "@/lib/apis/admin-tool-lifecycle-api.service";
 
 export function ToolLifecyclePage() {
 	const [data, setData] = useState<ToolLifecycleListResponse | null>(null);
@@ -68,7 +68,7 @@ export function ToolLifecyclePage() {
 
 	const toggleToolStatus = async (tool: ToolLifecycleStatus) => {
 		const newStatus = tool.status === "live" ? "review" : "live";
-		
+
 		// Check if tool meets threshold for promotion to live
 		if (
 			newStatus === "live" &&
@@ -123,14 +123,20 @@ export function ToolLifecyclePage() {
 	};
 
 	const bulkPromoteToLive = async () => {
-		if (!confirm(`Promote ALL ${data?.review_count || 0} review tools to LIVE status?\n\nThis bypasses threshold checks and is intended for initial migration of existing production tools.`)) {
+		if (
+			!confirm(
+				`Promote ALL ${data?.review_count || 0} review tools to LIVE status?\n\nThis bypasses threshold checks and is intended for initial migration of existing production tools.`
+			)
+		) {
 			return;
 		}
 
 		try {
 			setLoading(true);
 			const result = await adminToolLifecycleApiService.bulkPromoteToLive();
-			toast.success((result as { message?: string })?.message || "Successfully promoted all tools to LIVE");
+			toast.success(
+				(result as { message?: string })?.message || "Successfully promoted all tools to LIVE"
+			);
 			await fetchLifecycleData();
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Failed to bulk promote");
@@ -140,14 +146,14 @@ export function ToolLifecyclePage() {
 		}
 	};
 
-	const filteredTools = data?.tools.filter((tool) =>
-		tool.tool_id.toLowerCase().includes(searchQuery.toLowerCase())
-	) || [];
+	const filteredTools =
+		data?.tools.filter((tool) => tool.tool_id.toLowerCase().includes(searchQuery.toLowerCase())) ||
+		[];
 
 	const canToggle = (tool: ToolLifecycleStatus): boolean => {
 		// Can always toggle from live to review
 		if (tool.status === "live") return true;
-		
+
 		// Can only toggle from review to live if meets threshold
 		if (tool.success_rate === null) return false;
 		return tool.success_rate >= tool.required_success_rate;
@@ -196,9 +202,7 @@ export function ToolLifecyclePage() {
 					</CardHeader>
 					<CardContent>
 						<div className="text-2xl font-bold">{data.live_count}</div>
-						<p className="text-xs text-muted-foreground">
-							Tillgängliga i produktion
-						</p>
+						<p className="text-xs text-muted-foreground">Tillgängliga i produktion</p>
 					</CardContent>
 				</Card>
 
@@ -209,9 +213,7 @@ export function ToolLifecyclePage() {
 					</CardHeader>
 					<CardContent>
 						<div className="text-2xl font-bold">{data.review_count}</div>
-						<p className="text-xs text-muted-foreground">
-							Under evaluering
-						</p>
+						<p className="text-xs text-muted-foreground">Under evaluering</p>
 					</CardContent>
 				</Card>
 
@@ -222,9 +224,7 @@ export function ToolLifecyclePage() {
 					</CardHeader>
 					<CardContent>
 						<div className="text-2xl font-bold">{data.total_count}</div>
-						<p className="text-xs text-muted-foreground">
-							Alla registrerade tools
-						</p>
+						<p className="text-xs text-muted-foreground">Alla registrerade tools</p>
 					</CardContent>
 				</Card>
 			</div>
@@ -240,9 +240,9 @@ export function ToolLifecyclePage() {
 						className="max-w-sm"
 					/>
 				</div>
-				
+
 				{data.review_count > 0 && (
-					<Button 
+					<Button
 						onClick={bulkPromoteToLive}
 						variant="outline"
 						className="gap-2"
@@ -278,16 +278,12 @@ export function ToolLifecyclePage() {
 						) : (
 							filteredTools.map((tool) => (
 								<TableRow key={tool.tool_id}>
-									<TableCell className="font-mono text-sm">
-										{tool.tool_id}
-									</TableCell>
+									<TableCell className="font-mono text-sm">{tool.tool_id}</TableCell>
 									<TableCell>
 										<Badge
 											variant={tool.status === "live" ? "default" : "secondary"}
 											className={
-												tool.status === "live"
-													? "bg-emerald-600 hover:bg-emerald-700"
-													: ""
+												tool.status === "live" ? "bg-emerald-600 hover:bg-emerald-700" : ""
 											}
 										>
 											{tool.status}
@@ -307,9 +303,7 @@ export function ToolLifecyclePage() {
 											<span className="text-muted-foreground">N/A</span>
 										)}
 									</TableCell>
-									<TableCell>
-										≥{(tool.required_success_rate * 100).toFixed(0)}%
-									</TableCell>
+									<TableCell>≥{(tool.required_success_rate * 100).toFixed(0)}%</TableCell>
 									<TableCell>
 										{tool.last_eval_at ? (
 											<span className="text-sm text-muted-foreground">
@@ -379,19 +373,20 @@ export function ToolLifecyclePage() {
 			</Card>
 
 			{/* Emergency Rollback Dialog */}
-			<AlertDialog open={rollbackTool !== null} onOpenChange={(open) => !open && setRollbackTool(null)}>
+			<AlertDialog
+				open={rollbackTool !== null}
+				onOpenChange={(open) => !open && setRollbackTool(null)}
+			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>Emergency Rollback</AlertDialogTitle>
 						<AlertDialogDescription>
-							Sätt tillbaka <span className="font-mono font-semibold">{rollbackTool?.tool_id}</span> till
-							review-status. Detta kommer omedelbart ta bort verktyget från produktion.
+							Sätt tillbaka <span className="font-mono font-semibold">{rollbackTool?.tool_id}</span>{" "}
+							till review-status. Detta kommer omedelbart ta bort verktyget från produktion.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<div className="py-4">
-						<label className="text-sm font-medium mb-2 block">
-							Anledning (krävs):
-						</label>
+						<label className="text-sm font-medium mb-2 block">Anledning (krävs):</label>
 						<Input
 							placeholder="T.ex. Tool orsakar fel i produktion"
 							value={rollbackNotes}
@@ -399,10 +394,12 @@ export function ToolLifecyclePage() {
 						/>
 					</div>
 					<AlertDialogFooter>
-						<AlertDialogCancel onClick={() => {
-							setRollbackTool(null);
-							setRollbackNotes("");
-						}}>
+						<AlertDialogCancel
+							onClick={() => {
+								setRollbackTool(null);
+								setRollbackNotes("");
+							}}
+						>
 							Avbryt
 						</AlertDialogCancel>
 						<AlertDialogAction

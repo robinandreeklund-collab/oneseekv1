@@ -17,14 +17,25 @@
 export const Logo1Icon = ({ size = 32 }: { size?: number }) => (
 	<svg width={size} height={size} viewBox="0 0 32 32" fill="none">
 		<circle cx="14" cy="14" r="10" stroke="currentColor" strokeWidth="3" />
-		<line x1="21.5" y1="21.5" x2="29" y2="29" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+		<line
+			x1="21.5"
+			y1="21.5"
+			x2="29"
+			y2="29"
+			stroke="currentColor"
+			strokeWidth="3"
+			strokeLinecap="round"
+		/>
 	</svg>
 );
 
 export const Logo1Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo1Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -44,7 +55,10 @@ export const Logo2Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo2Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo2Icon size={size} />
-		<span className="text-xl font-semibold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-semibold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -56,7 +70,12 @@ export const Logo2Wordmark = ({ size = 28 }: { size?: number }) => (
 export const Logo3Icon = ({ size = 32 }: { size?: number }) => (
 	<svg width={size} height={size} viewBox="0 0 32 32" fill="none">
 		<circle cx="16" cy="22" r="3" fill="currentColor" />
-		<path d="M10 18a8.5 8.5 0 0112 0" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+		<path
+			d="M10 18a8.5 8.5 0 0112 0"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			strokeLinecap="round"
+		/>
 		<path d="M6 14a14 14 0 0120 0" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
 		<path d="M2 10a20 20 0 0128 0" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
 	</svg>
@@ -65,7 +84,10 @@ export const Logo3Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo3Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo3Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -86,7 +108,10 @@ export const Logo4Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo4Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo4Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -106,7 +131,10 @@ export const Logo5Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo5Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo5Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -118,10 +146,42 @@ export const Logo5Wordmark = ({ size = 28 }: { size?: number }) => (
 export const Logo6Icon = ({ size = 32 }: { size?: number }) => (
 	<svg width={size} height={size} viewBox="0 0 32 32" fill="none">
 		<circle cx="16" cy="16" r="11" stroke="currentColor" strokeWidth="2.5" />
-		<line x1="16" y1="2" x2="16" y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-		<line x1="16" y1="24" x2="16" y2="30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-		<line x1="2" y1="16" x2="8" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-		<line x1="24" y1="16" x2="30" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		<line
+			x1="16"
+			y1="2"
+			x2="16"
+			y2="8"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
+		<line
+			x1="16"
+			y1="24"
+			x2="16"
+			y2="30"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
+		<line
+			x1="2"
+			y1="16"
+			x2="8"
+			y2="16"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
+		<line
+			x1="24"
+			y1="16"
+			x2="30"
+			y2="16"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
 		<circle cx="16" cy="16" r="2" fill="currentColor" />
 	</svg>
 );
@@ -129,7 +189,10 @@ export const Logo6Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo6Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo6Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -141,9 +204,33 @@ export const Logo6Wordmark = ({ size = 28 }: { size?: number }) => (
 export const Logo7Icon = ({ size = 32 }: { size?: number }) => (
 	<svg width={size} height={size} viewBox="0 0 32 32" fill="none">
 		<circle cx="16" cy="16" r="5" fill="currentColor" />
-		<line x1="16" y1="11" x2="16" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-		<line x1="20" y1="19.5" x2="27" y2="25" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-		<line x1="12" y1="19.5" x2="5" y2="25" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		<line
+			x1="16"
+			y1="11"
+			x2="16"
+			y2="3"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
+		<line
+			x1="20"
+			y1="19.5"
+			x2="27"
+			y2="25"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
+		<line
+			x1="12"
+			y1="19.5"
+			x2="5"
+			y2="25"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+		/>
 		<circle cx="16" cy="3" r="2" fill="currentColor" />
 		<circle cx="27" cy="25" r="2" fill="currentColor" />
 		<circle cx="5" cy="25" r="2" fill="currentColor" />
@@ -153,7 +240,10 @@ export const Logo7Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo7Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo7Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -165,14 +255,25 @@ export const Logo7Wordmark = ({ size = 28 }: { size?: number }) => (
 export const Logo8Icon = ({ size = 32 }: { size?: number }) => (
 	<svg width={size} height={size} viewBox="0 0 32 32" fill="none">
 		<circle cx="16" cy="16" r="13" stroke="currentColor" strokeWidth="3" />
-		<line x1="22" y1="6" x2="10" y2="26" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+		<line
+			x1="22"
+			y1="6"
+			x2="10"
+			y2="26"
+			stroke="currentColor"
+			strokeWidth="3"
+			strokeLinecap="round"
+		/>
 	</svg>
 );
 
 export const Logo8Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo8Icon size={size} />
-		<span className="text-xl font-black tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-black tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -194,7 +295,10 @@ export const Logo9Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo9Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo9Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -214,7 +318,10 @@ export const Logo10Icon = ({ size = 32 }: { size?: number }) => (
 export const Logo10Wordmark = ({ size = 28 }: { size?: number }) => (
 	<div className="flex items-center gap-2.5">
 		<Logo10Icon size={size} />
-		<span className="text-xl font-bold tracking-tight" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+		<span
+			className="text-xl font-bold tracking-tight"
+			style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+		>
 			oneseek
 		</span>
 	</div>
@@ -224,16 +331,76 @@ export const Logo10Wordmark = ({ size = 28 }: { size?: number }) => (
    Showcase component — render all 10 proposals side by side
    ────────────────────────────────────────────────────────────── */
 const PROPOSALS = [
-	{ id: 1, name: "Lens", desc: "Ren sökikon — förstoringsglas med rakt handtag", Icon: Logo1Icon, Wordmark: Logo1Wordmark },
-	{ id: 2, name: "Aperture", desc: "Kameraöga — koncentriska cirklar med centrumpunkt", Icon: Logo2Icon, Wordmark: Logo2Wordmark },
-	{ id: 3, name: "Signal", desc: "Radarsignal — koncentriska bågar med punkt", Icon: Logo3Icon, Wordmark: Logo3Wordmark },
-	{ id: 4, name: "Convergence", desc: "Tre linjer som möts — konvergerande insikt", Icon: Logo4Icon, Wordmark: Logo4Wordmark },
-	{ id: 5, name: "Monogram", desc: "Stiliserat 'O' med inre '1'-streck — one+seek", Icon: Logo5Icon, Wordmark: Logo5Wordmark },
-	{ id: 6, name: "Crosshair", desc: "Siktkorset — precisionssökning", Icon: Logo6Icon, Wordmark: Logo6Wordmark },
-	{ id: 7, name: "Node", desc: "Grafnod med 3 kopplingar — AI-pipeline", Icon: Logo7Icon, Wordmark: Logo7Wordmark },
-	{ id: 8, name: "Slash", desc: "Fetstil O med diagonal — Grok-inspirerad", Icon: Logo8Icon, Wordmark: Logo8Wordmark },
-	{ id: 9, name: "Spark", desc: "Abstrakt asterisk — intelligens och insikt", Icon: Logo9Icon, Wordmark: Logo9Wordmark },
-	{ id: 10, name: "Compass", desc: "Kompassnål — riktning och sökning", Icon: Logo10Icon, Wordmark: Logo10Wordmark },
+	{
+		id: 1,
+		name: "Lens",
+		desc: "Ren sökikon — förstoringsglas med rakt handtag",
+		Icon: Logo1Icon,
+		Wordmark: Logo1Wordmark,
+	},
+	{
+		id: 2,
+		name: "Aperture",
+		desc: "Kameraöga — koncentriska cirklar med centrumpunkt",
+		Icon: Logo2Icon,
+		Wordmark: Logo2Wordmark,
+	},
+	{
+		id: 3,
+		name: "Signal",
+		desc: "Radarsignal — koncentriska bågar med punkt",
+		Icon: Logo3Icon,
+		Wordmark: Logo3Wordmark,
+	},
+	{
+		id: 4,
+		name: "Convergence",
+		desc: "Tre linjer som möts — konvergerande insikt",
+		Icon: Logo4Icon,
+		Wordmark: Logo4Wordmark,
+	},
+	{
+		id: 5,
+		name: "Monogram",
+		desc: "Stiliserat 'O' med inre '1'-streck — one+seek",
+		Icon: Logo5Icon,
+		Wordmark: Logo5Wordmark,
+	},
+	{
+		id: 6,
+		name: "Crosshair",
+		desc: "Siktkorset — precisionssökning",
+		Icon: Logo6Icon,
+		Wordmark: Logo6Wordmark,
+	},
+	{
+		id: 7,
+		name: "Node",
+		desc: "Grafnod med 3 kopplingar — AI-pipeline",
+		Icon: Logo7Icon,
+		Wordmark: Logo7Wordmark,
+	},
+	{
+		id: 8,
+		name: "Slash",
+		desc: "Fetstil O med diagonal — Grok-inspirerad",
+		Icon: Logo8Icon,
+		Wordmark: Logo8Wordmark,
+	},
+	{
+		id: 9,
+		name: "Spark",
+		desc: "Abstrakt asterisk — intelligens och insikt",
+		Icon: Logo9Icon,
+		Wordmark: Logo9Wordmark,
+	},
+	{
+		id: 10,
+		name: "Compass",
+		desc: "Kompassnål — riktning och sökning",
+		Icon: Logo10Icon,
+		Wordmark: Logo10Wordmark,
+	},
 ];
 
 export function LogoProposalShowcase() {
@@ -275,9 +442,7 @@ export function LogoProposalShowcase() {
 							</div>
 
 							{/* Description */}
-							<p className="text-sm text-neutral-500 dark:text-neutral-400">
-								{desc}
-							</p>
+							<p className="text-sm text-neutral-500 dark:text-neutral-400">{desc}</p>
 						</div>
 					))}
 				</div>

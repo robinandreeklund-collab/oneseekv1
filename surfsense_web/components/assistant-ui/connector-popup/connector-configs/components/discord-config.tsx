@@ -80,8 +80,8 @@ export const DiscordConfig: FC<DiscordConfigProps> = ({ connector }) => {
 				</div>
 				<div className="text-xs sm:text-sm">
 					<p className="text-muted-foreground mt-1 text-[10px] sm:text-sm">
-						Botten behöver behörigheten &quot;Read Message History&quot; för att indexera
-						kanaler. Be en serveradministratör att ge denna behörighet för kanalerna nedan.
+						Botten behöver behörigheten &quot;Read Message History&quot; för att indexera kanaler.
+						Be en serveradministratör att ge denna behörighet för kanalerna nedan.
 					</p>
 				</div>
 			</div>
@@ -152,8 +152,7 @@ export const DiscordConfig: FC<DiscordConfigProps> = ({ connector }) => {
 									<AlertCircle className="size-3.5 text-amber-500" />
 									<span className="text-[11px] font-medium">Ge behörighet för indexering</span>
 									<span className="text-[10px] text-muted-foreground">
-										{needsPermissions.length}{" "}
-										{needsPermissions.length === 1 ? "kanal" : "kanaler"}
+										{needsPermissions.length} {needsPermissions.length === 1 ? "kanal" : "kanaler"}
 									</span>
 								</div>
 								<div className="flex flex-wrap gap-1.5">

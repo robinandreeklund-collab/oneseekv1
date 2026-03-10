@@ -64,19 +64,21 @@ class IntentResult(BaseModel):
             "kandidatanalys och beslutsunderlag."
         ),
     )
-    intent_id: str = Field(
+    intent_id: int = Field(
         ...,
-        description="ID för vald intent, måste matcha en av kandidaterna.",
+        description="Numeriskt index (idx) för vald intent från kandidatlistan.",
     )
-    route: Literal["kunskap", "skapande", "jämförelse", "konversation", "mixed"] = (
-        Field(
-            ...,
-            description="Övergripande rutt-kategori.",
-        )
+    route: str = Field(
+        ...,
+        description=(
+            "Rutt/domän-ID som matchar den valda intentens domän, "
+            "t.ex. 'väder-och-klimat', 'trafik-och-transport', 'kunskap', "
+            "'skapande', 'konversation', 'jämförelse', eller 'mixed'."
+        ),
     )
-    sub_intents: list[str] = Field(
+    sub_intents: list[int] = Field(
         default_factory=list,
-        description="Del-intents vid mixed route.",
+        description="Numeriska index (idx) för del-intents vid mixed route.",
     )
     reason: str = Field(
         ...,
@@ -790,4 +792,52 @@ class DebateConvergenceResult(BaseModel):
     agreements: list[str] = Field(
         default_factory=list,
         description="Lista med punkter där deltagarna var eniga.",
+    )
+
+
+# ────────────────────────────────────────────────────────────────
+# LLM Gate — structured schemas for pure-LLM routing
+# ────────────────────────────────────────────────────────────────
+
+
+class LlmGateIntentResult(BaseModel):
+    """Output schema for LLM gate intent selection."""
+
+    chosen: int = Field(
+        ...,
+        description="Numeriskt index (idx) för vald domän från kandidatlistan.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Kort motivering på svenska (1-2 meningar) som förklarar ditt val.",
+    )
+
+
+class LlmGateAgentResult(BaseModel):
+    """Output schema for LLM gate agent selection."""
+
+    chosen: str = Field(
+        ...,
+        description="Exakt agent-ID från kandidatlistan, t.ex. 'väder'.",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Kort motivering på svenska (1-2 meningar) som förklarar ditt val.",
+    )
+
+
+class LlmGateToolResult(BaseModel):
+    """Output schema for LLM gate tool selection."""
+
+    chosen: list[str] = Field(
+        ...,
+        description=(
+            "Lista med exakta verktygs-ID:n från kandidatlistan, "
+            "t.ex. ['smhi_temperatur', 'smhi_prognos']. "
+            "Välj 1-3 verktyg som behövs."
+        ),
+    )
+    reasoning: str = Field(
+        ...,
+        description="Kort motivering på svenska som förklarar ditt val.",
     )

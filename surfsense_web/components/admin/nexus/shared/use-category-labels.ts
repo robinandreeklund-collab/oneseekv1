@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { nexusApiService, type CategoryMetadata } from "@/lib/apis/nexus-api.service";
+import { type CategoryMetadata, nexusApiService } from "@/lib/apis/nexus-api.service";
 
 /**
  * Hook that fetches category labels dynamically from the backend.

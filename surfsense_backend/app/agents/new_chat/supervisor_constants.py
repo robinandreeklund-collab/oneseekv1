@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any
 
 # NOTE: Tool definition imports (SCB, Kolada, SMHI, Trafikverket, Riksdagen,
 # Bolagsverket, Marketplace) are lazy-imported inside _build_agent_tool_profiles()
@@ -695,3 +696,162 @@ _ARTIFACT_INTERNAL_TOOL_NAMES = {
     "reflect_on_progress",
 }
 _SANDBOX_ALIAS_TOOL_IDS = {"list_directory"}
+
+
+# ── Registry-aware builder functions ──────────────────────────────────
+# These rebuild the hardcoded structures above from a live GraphRegistry,
+# so adding agents/tools via the admin panel makes them immediately available.
+
+def build_specialized_agents_from_registry(registry: Any) -> set[str]:
+    """Build _SPECIALIZED_AGENTS dynamically from registry.
+
+    An agent is 'specialized' if it has explicit primary_namespaces,
+    meaning it owns domain-specific tools and should not be remapped.
+    """
+    specialized: set[str] = set()
+    for agent_id, agent_data in (registry.agent_index or {}).items():
+        if not agent_data.get("enabled", True):
+            continue
+        primary_ns = agent_data.get("primary_namespaces") or []
+        if primary_ns and any(
+            isinstance(ns, (list, tuple)) and ns for ns in primary_ns
+        ):
+            specialized.add(str(agent_id).strip().lower())
+    return specialized
+
+
+def build_alias_map_from_registry(registry: Any) -> dict[str, str]:
+    """Build _AGENT_NAME_ALIAS_MAP dynamically from registry agent definitions.
+
+    Uses the ``aliases`` field on each agent definition to populate the map.
+    Also adds keyword-based aliases for discoverability.
+    """
+    alias_map: dict[str, str] = {}
+    for agent_id, agent_data in (registry.agent_index or {}).items():
+        if not agent_data.get("enabled", True):
+            continue
+        canonical = str(agent_id).strip().lower()
+        if not canonical:
+            continue
+        # Explicit aliases from the definition
+        for alias in agent_data.get("aliases") or []:
+            alias_normalized = str(alias).strip().lower()
+            if alias_normalized and alias_normalized != canonical:
+                alias_map[alias_normalized] = canonical
+        # Underscore variant of the canonical name (e.g. "trafik_vag" → "trafik-vag")
+        underscore_variant = canonical.replace("-", "_")
+        if underscore_variant != canonical:
+            alias_map[underscore_variant] = canonical
+    return alias_map
+
+
+def build_compat_agent_names_from_registry(registry: Any) -> dict[str, str]:
+    """Build _COMPAT_AGENT_NAMES dynamically from registry aliases.
+
+    Returns English→Swedish agent name mappings for backward compatibility.
+    """
+    compat: dict[str, str] = {}
+    for agent_id, agent_data in (registry.agent_index or {}).items():
+        if not agent_data.get("enabled", True):
+            continue
+        canonical = str(agent_id).strip().lower()
+        for alias in agent_data.get("aliases") or []:
+            alias_normalized = str(alias).strip().lower()
+            # Only include simple English names (no underscores/suffixes)
+            if alias_normalized and "_" not in alias_normalized and alias_normalized != canonical:
+                compat[alias_normalized] = canonical
+    return compat
+
+
+def build_route_defaults_from_registry(registry: Any) -> dict[str, str]:
+    """Build _route_default_agent() defaults dict from registry.
+
+    Maps domain_id → first enabled agent in that domain, plus
+    agent_id → agent_id for identity passthrough.
+    """
+    defaults: dict[str, str] = {}
+    for domain_agents_list in (registry.agents_by_domain or {}).values():
+        for agent in domain_agents_list:
+            if not agent.get("enabled", True):
+                continue
+            agent_id = str(agent.get("agent_id") or "").strip().lower()
+            domain_id = str(agent.get("domain_id") or "").strip().lower()
+            if not agent_id:
+                continue
+            # Identity: agent_id → agent_id
+            defaults[agent_id] = agent_id
+            # Domain → first agent (only if not already set)
+            if domain_id and domain_id not in defaults:
+                defaults[domain_id] = agent_id
+    # Add backward compat broad routes
+    if "skapande" not in defaults:
+        defaults["skapande"] = "åtgärd"
+    if "jämförelse" not in defaults:
+        defaults["jämförelse"] = "syntes"
+    if "konversation" not in defaults:
+        defaults["konversation"] = "konversation"
+    # English backward compat
+    defaults.setdefault("action", defaults.get("åtgärd", "åtgärd"))
+    defaults.setdefault("compare", defaults.get("syntes", "syntes"))
+    defaults.setdefault("smalltalk", defaults.get("konversation", "konversation"))
+    return defaults
+
+
+def build_token_rules_from_registry(
+    registry: Any,
+) -> list[tuple[tuple[str, ...], str]]:
+    """Build token_rules for _guess_agent_from_alias() from registry keywords.
+
+    Groups each agent's keywords into a (keywords_tuple, agent_id) rule.
+    """
+    rules: list[tuple[tuple[str, ...], str]] = []
+    for agent_id, agent_data in (registry.agent_index or {}).items():
+        if not agent_data.get("enabled", True):
+            continue
+        canonical = str(agent_id).strip().lower()
+        keywords = agent_data.get("keywords") or []
+        if not keywords:
+            continue
+        # Take first 10 keywords to keep rules manageable
+        kw_tuple = tuple(
+            str(kw).strip().lower().replace("å", "a").replace("ä", "a").replace("ö", "o")
+            for kw in keywords[:10]
+            if str(kw).strip()
+        )
+        if kw_tuple:
+            rules.append((kw_tuple, canonical))
+    return rules
+
+
+def build_tool_profiles_from_registry(
+    registry: Any,
+) -> dict[str, list[AgentToolProfile]]:
+    """Build _AGENT_TOOL_PROFILES dynamically from registry tools_by_agent.
+
+    Uses the structured tool data from the DB instead of hardcoded
+    tool→agent category mappings.
+    """
+    profiles: dict[str, list[AgentToolProfile]] = {}
+    for agent_id, tools in (registry.tools_by_agent or {}).items():
+        agent_profiles: list[AgentToolProfile] = []
+        for tool in tools:
+            if not tool.get("enabled", True):
+                continue
+            tool_id = str(tool.get("tool_id") or "").strip()
+            if not tool_id:
+                continue
+            agent_profiles.append(
+                AgentToolProfile(
+                    tool_id=tool_id,
+                    category=str(tool.get("category") or "").strip(),
+                    description=str(tool.get("description") or "").strip(),
+                    keywords=tuple(
+                        str(kw).strip()
+                        for kw in (tool.get("keywords") or [])
+                        if str(kw).strip()
+                    ),
+                )
+            )
+        if agent_profiles:
+            profiles[str(agent_id).strip().lower()] = agent_profiles
+    return profiles

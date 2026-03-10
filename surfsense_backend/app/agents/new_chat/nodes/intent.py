@@ -268,6 +268,14 @@ def build_intent_resolver_node(
         else:
             for route_name, intent_id in route_to_intent_id.items():
                 candidates.append({"intent_id": intent_id, "route": route_name})
+
+        # ── Add numeric idx to each candidate for LLM output ──
+        for _i, _c in enumerate(candidates, start=1):
+            _c["idx"] = _i
+        _idx_to_intent_id: dict[int, str] = {
+            _c["idx"]: str(_c.get("intent_id") or "").strip()
+            for _c in candidates
+        }
         if route_hint:
             candidates.sort(
                 key=lambda item: 0 if item.get("route") == route_hint else 1
@@ -276,46 +284,89 @@ def build_intent_resolver_node(
         live_enabled = bool(live_cfg.get("enabled", False))
         phase_index = int(live_cfg.get("phase_index") or 0)
         intent_top_k = max(2, min(int(live_cfg.get("intent_top_k") or 3), 8))
+        llm_gate_mode = bool(live_cfg.get("llm_gate_mode", False))
         use_intent_shortlist = bool(live_enabled and phase_index >= 4)
-        intent_ranked = _rank_intent_candidates(
-            query=latest_user_query,
-            candidates=candidates,
-            lexical_weight=float(live_cfg.get("intent_lexical_weight") or 1.0),
-            embedding_weight=float(live_cfg.get("intent_embedding_weight") or 1.0),
-        )
-        candidate_by_intent: dict[str, dict[str, Any]] = {
-            str(item.get("intent_id") or "").strip(): item
-            for item in candidates
-            if str(item.get("intent_id") or "").strip()
-        }
-        intent_shortlist: list[dict[str, Any]] = []
-        for item in intent_ranked[:intent_top_k]:
-            intent_id = str(item.get("intent_id") or "").strip()
-            if intent_id in candidate_by_intent:
-                intent_shortlist.append(dict(candidate_by_intent[intent_id]))
-        llm_candidates = intent_shortlist if use_intent_shortlist else candidates
-        candidate_ids = {
-            str(item.get("intent_id") or "").strip()
-            for item in llm_candidates
-            if str(item.get("intent_id") or "").strip()
-        }
-        top1_row = intent_ranked[0] if intent_ranked else None
-        top2_row = intent_ranked[1] if len(intent_ranked) > 1 else None
-        intent_margin = (
-            float(top1_row.get("score") or 0.0) - float(top2_row.get("score") or 0.0)
-            if top1_row and top2_row
-            else None
-        )
 
-        resolved = intent_from_route_fn(route_hint)
-        should_resolve_with_llm = bool(latest_user_query)
-        if route_hint and route_hint in route_to_intent_id and not registry_candidates:
-            # Route has already been resolved upstream; skip an extra control-plane
-            # LLM pass and trust route_hint unless we have no candidates at all.
-            # When registry_candidates exist (DB-driven domains), always let
-            # the LLM pick the best domain-level intent instead of accepting
-            # the broad route_hint (e.g. "kunskap" hiding "väder-och-klimat").
+        # ── LLM Gate Mode: bypass all embedding/lexical scoring ──
+        if llm_gate_mode and latest_user_query:
+            from ..llm_gate import llm_gate_select_intent
+
+            gate_result = await llm_gate_select_intent(
+                query=latest_user_query,
+                candidates=candidates,
+                llm=llm,
+            )
+            _gate_chosen_raw = gate_result.get("chosen")
+            # Resolve numeric idx → domain_id string
+            if isinstance(_gate_chosen_raw, int) and _gate_chosen_raw in _idx_to_intent_id:
+                chosen_id = _idx_to_intent_id[_gate_chosen_raw]
+            else:
+                chosen_id = str(_gate_chosen_raw or "").strip()
+            resolved = intent_from_route_fn(route_hint)
+            if chosen_id:
+                matched_candidate = next(
+                    (
+                        c for c in candidates
+                        if str(c.get("intent_id") or "").strip() == chosen_id
+                    ),
+                    None,
+                )
+                resolved = {
+                    "intent_id": chosen_id,
+                    "route": normalize_route_hint_fn(
+                        (matched_candidate or {}).get("route") or chosen_id
+                    ),
+                    "reason": str(gate_result.get("reasoning") or "LLM gate valde intent."),
+                }
+            intent_ranked = []
+            top1_row = None
+            top2_row = None
+            intent_margin = None
+            llm_candidates = candidates
+            candidate_ids = {
+                str(item.get("intent_id") or "").strip()
+                for item in candidates
+                if str(item.get("intent_id") or "").strip()
+            }
+            # Skip the normal LLM resolver block AND coerce override below
             should_resolve_with_llm = False
+
+        else:
+            # ── Normal path: embedding + lexical scoring ──
+            intent_ranked = _rank_intent_candidates(
+                query=latest_user_query,
+                candidates=candidates,
+                lexical_weight=float(live_cfg.get("intent_lexical_weight") or 1.0),
+                embedding_weight=float(live_cfg.get("intent_embedding_weight") or 1.0),
+            )
+            candidate_by_intent: dict[str, dict[str, Any]] = {
+                str(item.get("intent_id") or "").strip(): item
+                for item in candidates
+                if str(item.get("intent_id") or "").strip()
+            }
+            intent_shortlist: list[dict[str, Any]] = []
+            for item in intent_ranked[:intent_top_k]:
+                intent_id = str(item.get("intent_id") or "").strip()
+                if intent_id in candidate_by_intent:
+                    intent_shortlist.append(dict(candidate_by_intent[intent_id]))
+            llm_candidates = intent_shortlist if use_intent_shortlist else candidates
+            candidate_ids = {
+                str(item.get("intent_id") or "").strip()
+                for item in llm_candidates
+                if str(item.get("intent_id") or "").strip()
+            }
+            top1_row = intent_ranked[0] if intent_ranked else None
+            top2_row = intent_ranked[1] if len(intent_ranked) > 1 else None
+            intent_margin = (
+                float(top1_row.get("score") or 0.0) - float(top2_row.get("score") or 0.0)
+                if top1_row and top2_row
+                else None
+            )
+
+            resolved = intent_from_route_fn(route_hint)
+            should_resolve_with_llm = bool(latest_user_query)
+            if route_hint and route_hint in route_to_intent_id and not registry_candidates:
+                should_resolve_with_llm = False
         if latest_user_query and should_resolve_with_llm:
             prompt = append_datetime_context_fn(intent_resolver_prompt_template)
             resolver_input = json.dumps(
@@ -348,7 +399,19 @@ def build_intent_resolver_node(
                     _thinking = _structured.thinking
                 except Exception:
                     parsed = extract_first_json_object_fn(_raw_content)
-                selected_intent = str(parsed.get("intent_id") or "").strip()
+                # Resolve numeric idx → domain_id string
+                _raw_intent_id = parsed.get("intent_id")
+                if isinstance(_raw_intent_id, int) and _raw_intent_id in _idx_to_intent_id:
+                    selected_intent = _idx_to_intent_id[_raw_intent_id]
+                else:
+                    selected_intent = str(_raw_intent_id or "").strip()
+                # Resolve sub_intents numeric idx list
+                _raw_subs = parsed.get("sub_intents") or []
+                parsed["sub_intents"] = [
+                    _idx_to_intent_id[s] if isinstance(s, int) and s in _idx_to_intent_id
+                    else str(s).strip()
+                    for s in _raw_subs
+                ]
                 selected_route = normalize_route_hint_fn(parsed.get("route"))
                 if selected_intent and selected_intent in candidate_ids:
                     resolved = {
@@ -372,7 +435,9 @@ def build_intent_resolver_node(
             except Exception:
                 pass
 
-        if coerce_resolved_intent_fn is not None:
+        # When LLM gate mode is active, the LLM made the authoritative
+        # decision — do NOT let coerce_resolved_intent_fn override it.
+        if coerce_resolved_intent_fn is not None and not llm_gate_mode:
             try:
                 coerced_resolved = coerce_resolved_intent_fn(
                     resolved if isinstance(resolved, dict) else {},
@@ -448,15 +513,25 @@ def build_intent_resolver_node(
             "orchestration_phase": "select_agent",
             "live_routing_trace": {
                 **dict(state.get("live_routing_trace") or {}),
-                "intent": {
-                    "mode": "llm_shortlist" if use_intent_shortlist else "llm_full",
-                    "phase": str(live_cfg.get("phase") or "shadow"),
-                    "top1": (top1_row or {}).get("intent_id"),
-                    "top2": (top2_row or {}).get("intent_id"),
-                    "margin": intent_margin,
-                    "shortlist_size": len(llm_candidates),
-                    "selected": str((resolved or {}).get("intent_id") or ""),
-                },
+                "intent": (
+                    {
+                        "mode": "llm_gate",
+                        "phase": str(live_cfg.get("phase") or "shadow"),
+                        "selected": str((resolved or {}).get("intent_id") or ""),
+                        "reasoning": str((resolved or {}).get("reason") or ""),
+                        "candidates_shown": len(llm_candidates),
+                    }
+                    if llm_gate_mode
+                    else {
+                        "mode": "llm_shortlist" if use_intent_shortlist else "llm_full",
+                        "phase": str(live_cfg.get("phase") or "shadow"),
+                        "top1": (top1_row or {}).get("intent_id"),
+                        "top2": (top2_row or {}).get("intent_id"),
+                        "margin": intent_margin,
+                        "shortlist_size": len(llm_candidates),
+                        "selected": str((resolved or {}).get("intent_id") or ""),
+                    }
+                ),
             },
         }
         if new_user_turn:
@@ -510,7 +585,7 @@ def build_intent_resolver_node(
             logger.info(
                 "live-routing intent-selection phase=%s mode=%s top1=%s top2=%s margin=%s selected=%s",
                 live_cfg.get("phase"),
-                "llm_shortlist" if use_intent_shortlist else "llm_full",
+                "llm_gate" if llm_gate_mode else ("llm_shortlist" if use_intent_shortlist else "llm_full"),
                 (top1_row or {}).get("intent_id"),
                 (top2_row or {}).get("intent_id"),
                 intent_margin,

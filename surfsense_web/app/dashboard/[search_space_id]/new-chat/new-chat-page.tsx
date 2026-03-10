@@ -31,49 +31,52 @@ import {
 } from "@/atoms/chat/plan-state.atom";
 import { membersAtom } from "@/atoms/members/members-query.atoms";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
-import { Thread } from "@/components/assistant-ui/thread";
 import type { ContextStatsEntry } from "@/components/assistant-ui/context-stats";
+import type { TimelineEntry } from "@/components/assistant-ui/thinking-steps";
+import { Thread } from "@/components/assistant-ui/thread";
 import {
 	TracePanelContext,
 	type TracePanelContextValue,
 } from "@/components/assistant-ui/trace-context";
 import { TraceSheet } from "@/components/assistant-ui/trace-sheet";
+import { DebateVoiceContext, LiveDebateStateContext } from "@/components/debate/debate-arena";
 import { ChatHeader } from "@/components/new-chat/chat-header";
-import type { TimelineEntry } from "@/components/assistant-ui/thinking-steps";
-import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
-import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
-import { DisplayImageGalleryToolUI } from "@/components/tool-ui/image-gallery";
-import { GeoapifyStaticMapToolUI } from "@/components/tool-ui/geoapify-static-map";
-import { GeneratePodcastToolUI } from "@/components/tool-ui/generate-podcast";
-import { JobAdLinksToolUI } from "@/components/tool-ui/jobad-links";
-import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
-import { LibrisSearchToolUI } from "@/components/tool-ui/libris-search";
-import { ScrapeWebpageToolUI } from "@/components/tool-ui/scrape-webpage";
-import { SmhiMetfcstToolUI, SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
-import { TrafiklabRouteToolUI } from "@/components/tool-ui/trafiklab-route";
-import { RecallMemoryToolUI, SaveMemoryToolUI } from "@/components/tool-ui/user-memory";
 import {
 	ClaudeToolUI,
 	DeepSeekToolUI,
 	GeminiToolUI,
 	GptToolUI,
 	GrokToolUI,
+	OneseekToolUI,
 	PerplexityToolUI,
 	QwenToolUI,
-	OneseekToolUI,
 } from "@/components/tool-ui/compare-model";
-import { LiveCriterionContext, LiveCriterionPodContext } from "@/components/tool-ui/spotlight-arena";
-import type { LiveCriterionPodMap, CriterionPodMeta } from "@/components/tool-ui/spotlight-arena";
-import { LiveDebateStateContext, DebateVoiceContext } from "@/components/debate/debate-arena";
-import type { DebateState, DebateParticipant } from "@/contracts/types/debate.types";
-import { DEBATE_MODEL_DISPLAY } from "@/contracts/types/debate.types";
-import { useDebateAudio } from "@/hooks/use-debate-audio";
-import { Skeleton } from "@/components/ui/skeleton";
+import type { ThinkingStep } from "@/components/tool-ui/deepagent-thinking";
+import { DisplayImageToolUI } from "@/components/tool-ui/display-image";
+import { GeneratePodcastToolUI } from "@/components/tool-ui/generate-podcast";
+import { GeoapifyStaticMapToolUI } from "@/components/tool-ui/geoapify-static-map";
+import { DisplayImageGalleryToolUI } from "@/components/tool-ui/image-gallery";
+import { JobAdLinksToolUI } from "@/components/tool-ui/jobad-links";
+import { LibrisSearchToolUI } from "@/components/tool-ui/libris-search";
+import { LinkPreviewToolUI } from "@/components/tool-ui/link-preview";
+import { ScrapeWebpageToolUI } from "@/components/tool-ui/scrape-webpage";
+import { SmhiMetfcstToolUI, SmhiWeatherToolUI } from "@/components/tool-ui/smhi-weather";
+import type { CriterionPodMeta, LiveCriterionPodMap } from "@/components/tool-ui/spotlight-arena";
+import {
+	LiveCriterionContext,
+	LiveCriterionPodContext,
+} from "@/components/tool-ui/spotlight-arena";
+import { TrafiklabRouteToolUI } from "@/components/tool-ui/trafiklab-route";
+import { RecallMemoryToolUI, SaveMemoryToolUI } from "@/components/tool-ui/user-memory";
 import { Button } from "@/components/ui/button";
-import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
-import { useMessagesElectric } from "@/hooks/use-messages-electric";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { TraceSpan } from "@/contracts/types/chat-trace.types";
+import type { DebateParticipant, DebateState } from "@/contracts/types/debate.types";
+import { DEBATE_MODEL_DISPLAY } from "@/contracts/types/debate.types";
+import { useChatSessionStateSync } from "@/hooks/use-chat-session-state";
+import { useDebateAudio } from "@/hooks/use-debate-audio";
+import { useMediaQuery } from "@/hooks/use-media-query";
+import { useMessagesElectric } from "@/hooks/use-messages-electric";
 import { chatTraceApiService } from "@/lib/apis/chat-trace-api.service";
 import { documentsApiService } from "@/lib/apis/documents-api.service";
 import { getBearerToken } from "@/lib/auth-utils";
@@ -95,16 +98,16 @@ import {
 	getRegenerateUrl,
 	getThreadFull,
 	getThreadMessages,
-	updateThread,
 	type ThreadRecord,
+	updateThread,
 } from "@/lib/chat/thread-persistence";
-import { cn } from "@/lib/utils";
 import {
 	trackChatCreated,
 	trackChatError,
 	trackChatMessageSent,
 	trackChatResponseReceived,
 } from "@/lib/posthog/events";
+import { cn } from "@/lib/utils";
 
 type RuntimeHitlPayload = Record<string, unknown>;
 
@@ -125,9 +128,7 @@ function parseRuntimeHitlPayload(raw: string | undefined): RuntimeHitlPayload | 
 	}
 }
 
-const PLATFORM_RUNTIME_HITL = parseRuntimeHitlPayload(
-	process.env.NEXT_PUBLIC_RUNTIME_HITL_JSON
-);
+const PLATFORM_RUNTIME_HITL = parseRuntimeHitlPayload(process.env.NEXT_PUBLIC_RUNTIME_HITL_JSON);
 
 /**
  * Extract thinking steps from message content
@@ -214,7 +215,10 @@ function buildChatTitle(rawQuery: string): string {
 const GREETING_REGEX =
 	/^(hej|hejsan|hallå|tjena|tja|tjo|hi|hello|hey|yo|hola|bonjour|ciao|guten tag|god morgon|god kväll)\b/i;
 
-function isLowSignalTitle(title: string | null | undefined, lastAutoTitle?: string | null): boolean {
+function isLowSignalTitle(
+	title: string | null | undefined,
+	lastAutoTitle?: string | null
+): boolean {
 	if (!title) return true;
 	const normalized = title.trim().toLowerCase();
 	if (!normalized) return true;
@@ -332,9 +336,9 @@ export default function NewChatPage() {
 	const [messageThinkingSteps, setMessageThinkingSteps] = useState<Map<string, ThinkingStep[]>>(
 		new Map()
 	);
-	const [messageContextStats, setMessageContextStats] = useState<
-		Map<string, ContextStatsEntry[]>
-	>(new Map());
+	const [messageContextStats, setMessageContextStats] = useState<Map<string, ContextStatsEntry[]>>(
+		new Map()
+	);
 	const [messageReasoningMap, setMessageReasoningMap] = useState<Map<string, string>>(new Map());
 	const [messageTimeline, setMessageTimeline] = useState<Map<string, TimelineEntry[]>>(new Map());
 	// P1-Extra.5: Per-message structured field decisions from pipeline nodes.
@@ -342,9 +346,7 @@ export default function NewChatPage() {
 	const [messageStructuredFields, setMessageStructuredFields] = useState<
 		Map<string, Map<string, { node: string; field: string; value: unknown }[]>>
 	>(new Map());
-	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(
-		new Map()
-	);
+	const [messageTraceSessions, setMessageTraceSessions] = useState<Map<string, string>>(new Map());
 	const [traceSpansBySession, setTraceSpansBySession] = useState<Map<string, TraceSpan[]>>(
 		new Map()
 	);
@@ -382,7 +384,9 @@ export default function NewChatPage() {
 	const isVoiceDebate = debateState?.voiceMode === true;
 	const debateAudio = useDebateAudio(isVoiceDebate);
 	const debateAudioRef = useRef(debateAudio);
-	useEffect(() => { debateAudioRef.current = debateAudio; }, [debateAudio]);
+	useEffect(() => {
+		debateAudioRef.current = debateAudio;
+	}, [debateAudio]);
 
 	// Get mentioned document IDs from the composer
 	const mentionedDocumentIds = useAtomValue(mentionedDocumentIdsAtom);
@@ -435,10 +439,7 @@ export default function NewChatPage() {
 			const messageNumericId = Number.parseInt(match[1], 10);
 			if (!Number.isFinite(messageNumericId)) return;
 			try {
-				const trace = await chatTraceApiService.getTraceByMessage(
-					threadId,
-					messageNumericId
-				);
+				const trace = await chatTraceApiService.getTraceByMessage(threadId, messageNumericId);
 				setMessageTraceSessions((prev) => {
 					const next = new Map(prev);
 					next.set(messageId, trace.session_id);
@@ -604,7 +605,10 @@ export default function NewChatPage() {
 					// Extract and restore thinking steps + reasoning from persisted messages
 					const restoredThinkingSteps = new Map<string, ThinkingStep[]>();
 					const restoredReasoningMap = new Map<string, string>();
-					const restoredStructuredFields = new Map<string, Map<string, { node: string; field: string; value: unknown }[]>>();
+					const restoredStructuredFields = new Map<
+						string,
+						Map<string, { node: string; field: string; value: unknown }[]>
+					>();
 					let restoredDebateSummary: Record<string, unknown> | null = null;
 					// Extract and restore mentioned documents from persisted messages
 					const restoredDocsMap: Record<string, MentionedDocumentInfo[]> = {};
@@ -638,7 +642,11 @@ export default function NewChatPage() {
 							}
 						}
 					}
-					if (restoredThinkingSteps.size > 0 || restoredReasoningMap.size > 0 || restoredStructuredFields.size > 0) {
+					if (
+						restoredThinkingSteps.size > 0 ||
+						restoredReasoningMap.size > 0 ||
+						restoredStructuredFields.size > 0
+					) {
 						if (restoredThinkingSteps.size > 0) {
 							setMessageThinkingSteps(restoredThinkingSteps);
 						}
@@ -669,7 +677,12 @@ export default function NewChatPage() {
 							if (sf) {
 								for (const [, fieldEntries] of sf) {
 									for (const entry of fieldEntries) {
-										entries.push({ kind: "structured" as const, node: entry.node, field: entry.field, value: entry.value });
+										entries.push({
+											kind: "structured" as const,
+											node: entry.node,
+											field: entry.field,
+											value: entry.value,
+										});
 									}
 								}
 							}
@@ -692,11 +705,17 @@ export default function NewChatPage() {
 					// Restore debate state from persisted debate-summary (Issue #3)
 					if (restoredDebateSummary) {
 						const ds = restoredDebateSummary;
-						const restoredParticipants = (ds.participants as Array<Record<string, unknown>> ?? []).map((p) => {
+						const restoredParticipants = (
+							(ds.participants as Array<Record<string, unknown>>) ?? []
+						).map((p) => {
 							const pDisplay = String(p.display ?? "");
 							const pKey = String(p.key ?? "");
-							const roundResponses = ds.round_responses as Record<string, Record<string, string>> ?? {};
-							const responses: Record<number, import("@/contracts/types/debate.types").DebateParticipantResponse> = {};
+							const roundResponses =
+								(ds.round_responses as Record<string, Record<string, string>>) ?? {};
+							const responses: Record<
+								number,
+								import("@/contracts/types/debate.types").DebateParticipantResponse
+							> = {};
 							let totalWc = 0;
 							for (const [rn, rdata] of Object.entries(roundResponses)) {
 								const roundNum = Number(rn);
@@ -744,14 +763,16 @@ export default function NewChatPage() {
 							currentRound: Number(ds.total_rounds ?? 3),
 							totalRounds: Number(ds.total_rounds ?? 3),
 							status: "complete",
-							results: results ? {
-								winner: String(results.winner ?? ""),
-								voteCounts: (results.vote_counts as Record<string, number>) ?? {},
-								wordCounts: (results.word_counts as Record<string, number>) ?? {},
-								tiebreakerUsed: Boolean(results.tiebreaker_used),
-								totalVotes: Number(results.total_votes ?? 0),
-								selfVotesFiltered: Number(results.self_votes_filtered ?? 0),
-							} : undefined,
+							results: results
+								? {
+										winner: String(results.winner ?? ""),
+										voteCounts: (results.vote_counts as Record<string, number>) ?? {},
+										wordCounts: (results.word_counts as Record<string, number>) ?? {},
+										tiebreakerUsed: Boolean(results.tiebreaker_used),
+										totalVotes: Number(results.total_votes ?? 0),
+										selfVotesFiltered: Number(results.self_votes_filtered ?? 0),
+									}
+								: undefined,
 							votes: restoredVotes,
 						});
 					}
@@ -912,8 +933,7 @@ export default function NewChatPage() {
 
 				setIsRunning(true);
 
-				const backendUrl =
-					process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000";
+				const backendUrl = process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000";
 
 				// Build message history for context
 				const messageHistory = messages
@@ -1111,9 +1131,7 @@ export default function NewChatPage() {
 							queryKey: ["threads", "detail", currentThreadId],
 						});
 					})
-					.catch((error) =>
-						console.error("[NewChatPage] Failed to auto-rename thread:", error)
-					);
+					.catch((error) => console.error("[NewChatPage] Failed to auto-rename thread:", error));
 			}
 
 			// Add user message to state
@@ -1221,7 +1239,10 @@ export default function NewChatPage() {
 			let currentReasoningText = "";
 			const currentTimeline: TimelineEntry[] = [];
 			const timelineStepIds = new Set<string>();
-			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
+			const currentStructuredFields = new Map<
+				string,
+				{ node: string; field: string; value: unknown }[]
+			>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 			let debateSummary: unknown | null = null;
@@ -1249,9 +1270,7 @@ export default function NewChatPage() {
 			// Strips any <think>…</think> blocks that might slip through the
 			// backend filter (e.g. when the server hasn't been restarted yet).
 			const appendText = (delta: string) => {
-				const cleaned = delta
-					.replace(/<think>[\s\S]*?<\/think>/gi, "")
-					.replace(/<\/?think>/gi, "");
+				const cleaned = delta.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<\/?think>/gi, "");
 				if (!cleaned) return;
 				if (currentTextPartIndex >= 0 && contentParts[currentTextPartIndex]?.type === "text") {
 					// Append to existing text part
@@ -1569,9 +1588,7 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-trace-session": {
-											const traceSessionId = parsed.data?.trace_session_id as
-												| string
-												| undefined;
+											const traceSessionId = parsed.data?.trace_session_id as string | undefined;
 											if (traceSessionId) {
 												currentTraceSessionId = traceSessionId;
 												setMessageTraceSessions((prev) => {
@@ -1583,9 +1600,7 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-trace-span": {
-											const traceSessionId = parsed.data?.trace_session_id as
-												| string
-												| undefined;
+											const traceSessionId = parsed.data?.trace_session_id as string | undefined;
 											const spanEvent = parsed.data?.event as string | undefined;
 											const span = parsed.data?.span as TraceSpan | undefined;
 											if (traceSessionId && span) {
@@ -1705,7 +1720,10 @@ export default function NewChatPage() {
 												topic: String(diData?.topic ?? ""),
 												participants: diParticipants.map((name) => ({
 													// Strip "call_" prefix so key matches MODEL_LOGOS/COLORS (e.g. "grok", "gpt")
-													key: (Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase()).replace("call_", ""),
+													key: (
+														Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ??
+														name.toLowerCase()
+													).replace("call_", ""),
 													display: name,
 													toolName: "",
 													configId: -1,
@@ -1726,7 +1744,9 @@ export default function NewChatPage() {
 											const drsData = parsed.data as Record<string, unknown>;
 											const drsRound = Number(drsData?.round ?? 0);
 											const drsType = String(drsData?.type ?? "");
-											const drsOrder = Array.isArray(drsData?.order) ? (drsData.order as string[]) : [];
+											const drsOrder = Array.isArray(drsData?.order)
+												? (drsData.order as string[])
+												: [];
 											setDebateState((prev) => {
 												if (!prev) return prev;
 												const statusMap: Record<string, DebateState["status"]> = {
@@ -1741,7 +1761,12 @@ export default function NewChatPage() {
 													status: statusMap[drsType] ?? prev.status,
 													rounds: [
 														...prev.rounds.filter((r) => r.round !== drsRound),
-														{ round: drsRound, type: drsType as "introduction" | "argument" | "deepening" | "voting", order: drsOrder, status: "active" },
+														{
+															round: drsRound,
+															type: drsType as "introduction" | "argument" | "deepening" | "voting",
+															order: drsOrder,
+															status: "active",
+														},
 													],
 												};
 											});
@@ -1759,12 +1784,19 @@ export default function NewChatPage() {
 													participants: prev.participants.map((p) =>
 														p.display === dpsModel
 															? {
-																...p,
-																responses: {
-																	...p.responses,
-																	[dpsRound]: { round: dpsRound, position: dpsPosition, text: "", wordCount: 0, latencyMs: 0, status: "speaking" },
-																},
-															}
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[dpsRound]: {
+																			round: dpsRound,
+																			position: dpsPosition,
+																			text: "",
+																			wordCount: 0,
+																			latencyMs: 0,
+																			status: "speaking",
+																		},
+																	},
+																}
 															: p
 													),
 												};
@@ -1784,16 +1816,23 @@ export default function NewChatPage() {
 														participants: prev.participants.map((p) =>
 															p.display === dpcModel
 																? {
-																	...p,
-																	responses: {
-																		...p.responses,
-																		[dpcRound]: {
-																			...(p.responses[dpcRound] ?? { round: dpcRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }),
-																			text: (p.responses[dpcRound]?.text ?? "") + dpcDelta,
+																		...p,
+																		responses: {
+																			...p.responses,
+																			[dpcRound]: {
+																				...(p.responses[dpcRound] ?? {
+																					round: dpcRound,
+																					position: 0,
+																					text: "",
+																					wordCount: 0,
+																					latencyMs: 0,
+																					status: "speaking",
+																				}),
+																				text: (p.responses[dpcRound]?.text ?? "") + dpcDelta,
+																			},
 																		},
-																	},
-																}
-																: p,
+																	}
+																: p
 														),
 													};
 												});
@@ -1820,20 +1859,27 @@ export default function NewChatPage() {
 													participants: prev.participants.map((p) =>
 														p.display === dptModel
 															? {
-																...p,
-																responses: {
-																	...p.responses,
-																	[dptRound]: {
-																		...(p.responses[dptRound] ?? { round: dptRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }),
-																		text: dptText,
-																		wordCount: dptWordCount,
-																		status: "speaking" as const,
-																		audioDuration: dptAudioDur,
-																		delayPerWord: dptDelay,
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[dptRound]: {
+																			...(p.responses[dptRound] ?? {
+																				round: dptRound,
+																				position: 0,
+																				text: "",
+																				wordCount: 0,
+																				latencyMs: 0,
+																				status: "speaking",
+																			}),
+																			text: dptText,
+																			wordCount: dptWordCount,
+																			status: "speaking" as const,
+																			audioDuration: dptAudioDur,
+																			delayPerWord: dptDelay,
+																		},
 																	},
-																},
-															}
-															: p,
+																}
+															: p
 													),
 												};
 											});
@@ -1859,7 +1905,14 @@ export default function NewChatPage() {
 															responses: {
 																...p.responses,
 																[dpeRound]: {
-																	...(existing ?? { round: dpeRound, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }),
+																	...(existing ?? {
+																		round: dpeRound,
+																		position: 0,
+																		text: "",
+																		wordCount: 0,
+																		latencyMs: 0,
+																		status: "waiting",
+																	}),
 																	text: existing?.text || dpePreview,
 																	wordCount: dpeWordCount,
 																	latencyMs: dpeLatency,
@@ -1899,7 +1952,9 @@ export default function NewChatPage() {
 															voterKey: "",
 															votedFor: String(dvrData?.voted_for ?? ""),
 															shortMotivation: String(dvrData?.motivation ?? ""),
-															threeBullets: Array.isArray(dvrData?.bullets) ? (dvrData.bullets as string[]) : [],
+															threeBullets: Array.isArray(dvrData?.bullets)
+																? (dvrData.bullets as string[])
+																: [],
 														},
 													],
 												};
@@ -1926,9 +1981,7 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-debate-synthesis-complete": {
-											setDebateState((prev) =>
-												prev ? { ...prev, status: "complete" } : prev
-											);
+											setDebateState((prev) => (prev ? { ...prev, status: "complete" } : prev));
 											break;
 										}
 										case "data-debate-summary": {
@@ -1960,7 +2013,7 @@ export default function NewChatPage() {
 											debateAudioRef.current.enqueueChunk(
 												String(dvc?.model ?? ""),
 												String(dvc?.pcm_b64 ?? ""),
-												Number(dvc?.round ?? 0),
+												Number(dvc?.round ?? 0)
 											);
 											break;
 										}
@@ -1987,7 +2040,9 @@ export default function NewChatPage() {
 											if (sfNode && sfField) {
 												setMessageStructuredFields((prev) => {
 													const next = new Map(prev);
-													const fields = next.get(assistantMsgId) ?? new Map<string, { node: string; field: string; value: unknown }[]>();
+													const fields =
+														next.get(assistantMsgId) ??
+														new Map<string, { node: string; field: string; value: unknown }[]>();
 													const entries = fields.get(sfNode) ?? [];
 													entries.push({ node: sfNode, field: sfField, value: sfValue });
 													fields.set(sfNode, entries);
@@ -1998,7 +2053,12 @@ export default function NewChatPage() {
 												const localEntries = currentStructuredFields.get(sfNode) ?? [];
 												localEntries.push({ node: sfNode, field: sfField, value: sfValue });
 												currentStructuredFields.set(sfNode, localEntries);
-												currentTimeline.push({ kind: "structured", node: sfNode, field: sfField, value: sfValue });
+												currentTimeline.push({
+													kind: "structured",
+													node: sfNode,
+													field: sfField,
+													value: sfValue,
+												});
 												setMessageTimeline((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, [...currentTimeline]);
@@ -2010,7 +2070,9 @@ export default function NewChatPage() {
 
 										// P1-Extra.5: thinking-persist for DB persistence
 										case "data-thinking-persist": {
-											const tpData = parsed.data as { node?: string; thinking?: string } | undefined;
+											const tpData = parsed.data as
+												| { node?: string; thinking?: string }
+												| undefined;
 											const tpNode = String(tpData?.node ?? "");
 											const tpThinking = String(tpData?.thinking ?? "");
 											if (tpNode && tpThinking) {
@@ -2050,7 +2112,7 @@ export default function NewChatPage() {
 
 										case "error":
 											throw new Error(parsed.errorText || "Server error");
-	}
+									}
 								} catch (e) {
 									if (e instanceof SyntaxError) continue;
 									throw e;
@@ -2100,7 +2162,6 @@ export default function NewChatPage() {
 							return prev;
 						});
 
-
 						setMessageReasoningMap((prev) => {
 							const reasoning = prev.get(assistantMsgId);
 							if (reasoning) {
@@ -2140,9 +2201,7 @@ export default function NewChatPage() {
 							return newMap;
 						});
 
-						setActiveTraceMessageId((prev) =>
-							prev === assistantMsgId ? newMsgId : prev
-						);
+						setActiveTraceMessageId((prev) => (prev === assistantMsgId ? newMsgId : prev));
 
 						if (currentTraceSessionId) {
 							try {
@@ -2158,7 +2217,6 @@ export default function NewChatPage() {
 					} catch (err) {
 						console.error("Failed to persist assistant message:", err);
 					}
-
 
 					// Track successful response
 					trackChatResponseReceived(searchSpaceId, currentThreadId);
@@ -2233,9 +2291,7 @@ export default function NewChatPage() {
 								newMap.set(newMsgId, traceSessionId);
 								return newMap;
 							});
-							setActiveTraceMessageId((prev) =>
-								prev === assistantMsgId ? newMsgId : prev
-							);
+							setActiveTraceMessageId((prev) => (prev === assistantMsgId ? newMsgId : prev));
 							if (currentTraceSessionId) {
 								try {
 									await chatTraceApiService.attachTraceSession({
@@ -2422,7 +2478,10 @@ export default function NewChatPage() {
 			let currentReasoningText = "";
 			const currentTimeline: TimelineEntry[] = [];
 			const timelineStepIds = new Set<string>();
-			const currentStructuredFields = new Map<string, { node: string; field: string; value: unknown }[]>();
+			const currentStructuredFields = new Map<
+				string,
+				{ node: string; field: string; value: unknown }[]
+			>();
 			let currentTraceSessionId: string | null = null;
 			let compareSummary: unknown | null = null;
 			let debateSummary: unknown | null = null;
@@ -2442,9 +2501,7 @@ export default function NewChatPage() {
 			const toolCallIndices = new Map<string, number>();
 
 			const appendText = (delta: string) => {
-				const cleaned = delta
-					.replace(/<think>[\s\S]*?<\/think>/gi, "")
-					.replace(/<\/?think>/gi, "");
+				const cleaned = delta.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<\/?think>/gi, "");
 				if (!cleaned) return;
 				if (currentTextPartIndex >= 0 && contentParts[currentTextPartIndex]?.type === "text") {
 					(contentParts[currentTextPartIndex] as { type: "text"; text: string }).text += cleaned;
@@ -2708,9 +2765,7 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-trace-session": {
-											const traceSessionId = parsed.data?.trace_session_id as
-												| string
-												| undefined;
+											const traceSessionId = parsed.data?.trace_session_id as string | undefined;
 											if (traceSessionId) {
 												currentTraceSessionId = traceSessionId;
 												setMessageTraceSessions((prev) => {
@@ -2722,9 +2777,7 @@ export default function NewChatPage() {
 											break;
 										}
 										case "data-trace-span": {
-											const traceSessionId = parsed.data?.trace_session_id as
-												| string
-												| undefined;
+											const traceSessionId = parsed.data?.trace_session_id as string | undefined;
 											const spanEvent = parsed.data?.event as string | undefined;
 											const span = parsed.data?.span as TraceSpan | undefined;
 											if (traceSessionId && span) {
@@ -2841,7 +2894,10 @@ export default function NewChatPage() {
 											setDebateState({
 												topic: String(diData2?.topic ?? ""),
 												participants: diParts2.map((name) => ({
-													key: (Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ?? name.toLowerCase()).replace("call_", ""),
+													key: (
+														Object.entries(DEBATE_MODEL_DISPLAY).find(([, v]) => v === name)?.[0] ??
+														name.toLowerCase()
+													).replace("call_", ""),
 													display: name,
 													toolName: "",
 													configId: -1,
@@ -2865,12 +2921,29 @@ export default function NewChatPage() {
 											const drsOrder2 = Array.isArray(drs2?.order) ? (drs2.order as string[]) : [];
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												const sMap: Record<string, DebateState["status"]> = { introduction: "round_1", argument: "round_2", deepening: "round_3", voting: "voting" };
+												const sMap: Record<string, DebateState["status"]> = {
+													introduction: "round_1",
+													argument: "round_2",
+													deepening: "round_3",
+													voting: "voting",
+												};
 												return {
 													...prev,
 													currentRound: drsRound2,
 													status: sMap[drsType2] ?? prev.status,
-													rounds: [...prev.rounds.filter((r) => r.round !== drsRound2), { round: drsRound2, type: drsType2 as "introduction" | "argument" | "deepening" | "voting", order: drsOrder2, status: "active" }],
+													rounds: [
+														...prev.rounds.filter((r) => r.round !== drsRound2),
+														{
+															round: drsRound2,
+															type: drsType2 as
+																| "introduction"
+																| "argument"
+																| "deepening"
+																| "voting",
+															order: drsOrder2,
+															status: "active",
+														},
+													],
 												};
 											});
 											break;
@@ -2882,7 +2955,27 @@ export default function NewChatPage() {
 											const dpsPos2 = Number(dps2?.position ?? 0);
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												return { ...prev, participants: prev.participants.map((p) => p.display === dpsModel2 ? { ...p, responses: { ...p.responses, [dpsRound2]: { round: dpsRound2, position: dpsPos2, text: "", wordCount: 0, latencyMs: 0, status: "speaking" } } } : p) };
+												return {
+													...prev,
+													participants: prev.participants.map((p) =>
+														p.display === dpsModel2
+															? {
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[dpsRound2]: {
+																			round: dpsRound2,
+																			position: dpsPos2,
+																			text: "",
+																			wordCount: 0,
+																			latencyMs: 0,
+																			status: "speaking",
+																		},
+																	},
+																}
+															: p
+													),
+												};
 											});
 											break;
 										}
@@ -2894,7 +2987,30 @@ export default function NewChatPage() {
 											if (dpcD2) {
 												setDebateState((prev) => {
 													if (!prev) return prev;
-													return { ...prev, participants: prev.participants.map((p) => p.display === dpcM2 ? { ...p, responses: { ...p.responses, [dpcR2]: { ...(p.responses[dpcR2] ?? { round: dpcR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: (p.responses[dpcR2]?.text ?? "") + dpcD2 } } } : p) };
+													return {
+														...prev,
+														participants: prev.participants.map((p) =>
+															p.display === dpcM2
+																? {
+																		...p,
+																		responses: {
+																			...p.responses,
+																			[dpcR2]: {
+																				...(p.responses[dpcR2] ?? {
+																					round: dpcR2,
+																					position: 0,
+																					text: "",
+																					wordCount: 0,
+																					latencyMs: 0,
+																					status: "speaking",
+																				}),
+																				text: (p.responses[dpcR2]?.text ?? "") + dpcD2,
+																			},
+																		},
+																	}
+																: p
+														),
+													};
 												});
 											}
 											break;
@@ -2909,7 +3025,34 @@ export default function NewChatPage() {
 											const dptDel2 = Number(dpt2?.delay_per_word ?? 0.15);
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												return { ...prev, participants: prev.participants.map((p) => p.display === dptM2 ? { ...p, responses: { ...p.responses, [dptR2]: { ...(p.responses[dptR2] ?? { round: dptR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "speaking" }), text: dptTxt2, wordCount: dptWc2, status: "speaking" as const, audioDuration: dptDur2, delayPerWord: dptDel2 } } } : p) };
+												return {
+													...prev,
+													participants: prev.participants.map((p) =>
+														p.display === dptM2
+															? {
+																	...p,
+																	responses: {
+																		...p.responses,
+																		[dptR2]: {
+																			...(p.responses[dptR2] ?? {
+																				round: dptR2,
+																				position: 0,
+																				text: "",
+																				wordCount: 0,
+																				latencyMs: 0,
+																				status: "speaking",
+																			}),
+																			text: dptTxt2,
+																			wordCount: dptWc2,
+																			status: "speaking" as const,
+																			audioDuration: dptDur2,
+																			delayPerWord: dptDel2,
+																		},
+																	},
+																}
+															: p
+													),
+												};
 											});
 											break;
 										}
@@ -2922,32 +3065,97 @@ export default function NewChatPage() {
 											const dpePrev2 = String(dpe2?.response_preview ?? "");
 											setDebateState((prev) => {
 												if (!prev) return prev;
-												return { ...prev, participants: prev.participants.map((p) => {
-													if (p.display !== dpeM2) return p;
-													const ex = p.responses[dpeR2];
-													return { ...p, totalWordCount: p.totalWordCount + dpeWc2, responses: { ...p.responses, [dpeR2]: { ...(ex ?? { round: dpeR2, position: 0, text: "", wordCount: 0, latencyMs: 0, status: "waiting" }), text: ex?.text || dpePrev2, wordCount: dpeWc2, latencyMs: dpeLat2, status: "complete" } } };
-												}) };
+												return {
+													...prev,
+													participants: prev.participants.map((p) => {
+														if (p.display !== dpeM2) return p;
+														const ex = p.responses[dpeR2];
+														return {
+															...p,
+															totalWordCount: p.totalWordCount + dpeWc2,
+															responses: {
+																...p.responses,
+																[dpeR2]: {
+																	...(ex ?? {
+																		round: dpeR2,
+																		position: 0,
+																		text: "",
+																		wordCount: 0,
+																		latencyMs: 0,
+																		status: "waiting",
+																	}),
+																	text: ex?.text || dpePrev2,
+																	wordCount: dpeWc2,
+																	latencyMs: dpeLat2,
+																	status: "complete",
+																},
+															},
+														};
+													}),
+												};
 											});
 											break;
 										}
 										case "data-debate-round-end": {
 											const dre2 = parsed.data as Record<string, unknown>;
 											const dreR2 = Number(dre2?.round ?? 0);
-											setDebateState((prev) => prev ? { ...prev, rounds: prev.rounds.map((r) => r.round === dreR2 ? { ...r, status: "complete" } : r) } : prev);
+											setDebateState((prev) =>
+												prev
+													? {
+															...prev,
+															rounds: prev.rounds.map((r) =>
+																r.round === dreR2 ? { ...r, status: "complete" } : r
+															),
+														}
+													: prev
+											);
 											break;
 										}
 										case "data-debate-vote-result": {
 											const dvr2 = parsed.data as Record<string, unknown>;
-											setDebateState((prev) => prev ? { ...prev, votes: [...prev.votes, { voter: String(dvr2?.voter ?? ""), voterKey: "", votedFor: String(dvr2?.voted_for ?? ""), shortMotivation: String(dvr2?.motivation ?? ""), threeBullets: Array.isArray(dvr2?.bullets) ? (dvr2.bullets as string[]) : [] }] } : prev);
+											setDebateState((prev) =>
+												prev
+													? {
+															...prev,
+															votes: [
+																...prev.votes,
+																{
+																	voter: String(dvr2?.voter ?? ""),
+																	voterKey: "",
+																	votedFor: String(dvr2?.voted_for ?? ""),
+																	shortMotivation: String(dvr2?.motivation ?? ""),
+																	threeBullets: Array.isArray(dvr2?.bullets)
+																		? (dvr2.bullets as string[])
+																		: [],
+																},
+															],
+														}
+													: prev
+											);
 											break;
 										}
 										case "data-debate-results": {
 											const drr2 = parsed.data as Record<string, unknown>;
-											setDebateState((prev) => prev ? { ...prev, status: "results", results: { winner: String(drr2?.winner ?? ""), voteCounts: (drr2?.vote_counts as Record<string, number>) ?? {}, wordCounts: (drr2?.word_counts as Record<string, number>) ?? {}, tiebreakerUsed: Boolean(drr2?.tiebreaker_used), totalVotes: Number(drr2?.total_votes ?? 0), selfVotesFiltered: 0 } } : prev);
+											setDebateState((prev) =>
+												prev
+													? {
+															...prev,
+															status: "results",
+															results: {
+																winner: String(drr2?.winner ?? ""),
+																voteCounts: (drr2?.vote_counts as Record<string, number>) ?? {},
+																wordCounts: (drr2?.word_counts as Record<string, number>) ?? {},
+																tiebreakerUsed: Boolean(drr2?.tiebreaker_used),
+																totalVotes: Number(drr2?.total_votes ?? 0),
+																selfVotesFiltered: 0,
+															},
+														}
+													: prev
+											);
 											break;
 										}
 										case "data-debate-synthesis-complete": {
-											setDebateState((prev) => prev ? { ...prev, status: "complete" } : prev);
+											setDebateState((prev) => (prev ? { ...prev, status: "complete" } : prev));
 											break;
 										}
 										case "data-debate-summary": {
@@ -2971,7 +3179,7 @@ export default function NewChatPage() {
 											debateAudioRef.current.enqueueChunk(
 												String(dvc2?.model ?? ""),
 												String(dvc2?.pcm_b64 ?? ""),
-												Number(dvc2?.round ?? 0),
+												Number(dvc2?.round ?? 0)
 											);
 											break;
 										}
@@ -2996,7 +3204,9 @@ export default function NewChatPage() {
 											if (sfNode2 && sfField2) {
 												setMessageStructuredFields((prev) => {
 													const next = new Map(prev);
-													const fields = next.get(assistantMsgId) ?? new Map<string, { node: string; field: string; value: unknown }[]>();
+													const fields =
+														next.get(assistantMsgId) ??
+														new Map<string, { node: string; field: string; value: unknown }[]>();
 													const entries = fields.get(sfNode2) ?? [];
 													entries.push({ node: sfNode2, field: sfField2, value: sfValue2 });
 													fields.set(sfNode2, entries);
@@ -3007,7 +3217,12 @@ export default function NewChatPage() {
 												const localEntries2 = currentStructuredFields.get(sfNode2) ?? [];
 												localEntries2.push({ node: sfNode2, field: sfField2, value: sfValue2 });
 												currentStructuredFields.set(sfNode2, localEntries2);
-												currentTimeline.push({ kind: "structured", node: sfNode2, field: sfField2, value: sfValue2 });
+												currentTimeline.push({
+													kind: "structured",
+													node: sfNode2,
+													field: sfField2,
+													value: sfValue2,
+												});
 												setMessageTimeline((prev) => {
 													const newMap = new Map(prev);
 													newMap.set(assistantMsgId, [...currentTimeline]);
@@ -3019,7 +3234,9 @@ export default function NewChatPage() {
 
 										// P1-Extra.5: thinking-persist for DB persistence
 										case "data-thinking-persist": {
-											const tpData2 = parsed.data as { node?: string; thinking?: string } | undefined;
+											const tpData2 = parsed.data as
+												| { node?: string; thinking?: string }
+												| undefined;
 											const tpNode2 = String(tpData2?.node ?? "");
 											const tpThinking2 = String(tpData2?.thinking ?? "");
 											if (tpNode2 && tpThinking2) {
@@ -3059,7 +3276,7 @@ export default function NewChatPage() {
 
 										case "error":
 											throw new Error(parsed.errorText || "Server error");
-	}
+									}
 								} catch (e) {
 									if (e instanceof SyntaxError) continue;
 									throw e;
@@ -3114,38 +3331,38 @@ export default function NewChatPage() {
 							return prev;
 						});
 
-					setMessageReasoningMap((prev) => {
-						const reasoning = prev.get(assistantMsgId);
-						if (reasoning) {
-							const newMap = new Map(prev);
-							newMap.delete(assistantMsgId);
-							newMap.set(newMsgId, reasoning);
-							return newMap;
-						}
-						return prev;
-					});
-					setMessageTimeline((prev) => {
-						const tl = prev.get(assistantMsgId);
-						if (tl) {
-							const newMap = new Map(prev);
-							newMap.delete(assistantMsgId);
-							newMap.set(newMsgId, tl);
-							return newMap;
-						}
-						return prev;
-					});
-					setMessageStructuredFields((prev) => {
-						const sf = prev.get(assistantMsgId);
-						if (sf) {
-							const newMap = new Map(prev);
-							newMap.delete(assistantMsgId);
-							newMap.set(newMsgId, sf);
-							return newMap;
-						}
-						return prev;
-					});
+						setMessageReasoningMap((prev) => {
+							const reasoning = prev.get(assistantMsgId);
+							if (reasoning) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, reasoning);
+								return newMap;
+							}
+							return prev;
+						});
+						setMessageTimeline((prev) => {
+							const tl = prev.get(assistantMsgId);
+							if (tl) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, tl);
+								return newMap;
+							}
+							return prev;
+						});
+						setMessageStructuredFields((prev) => {
+							const sf = prev.get(assistantMsgId);
+							if (sf) {
+								const newMap = new Map(prev);
+								newMap.delete(assistantMsgId);
+								newMap.set(newMsgId, sf);
+								return newMap;
+							}
+							return prev;
+						});
 
-					// Track successful response
+						// Track successful response
 						trackChatResponseReceived(searchSpaceId, threadId);
 					} catch (err) {
 						console.error("Failed to persist regenerated message:", err);
@@ -3178,14 +3395,7 @@ export default function NewChatPage() {
 				abortControllerRef.current = null;
 			}
 		},
-		[
-			isPublicChat,
-			threadId,
-			searchSpaceId,
-			messages,
-			activeTraceMessageId,
-			setMessageThinkingSteps,
-		]
+		[isPublicChat, threadId, searchSpaceId, messages, activeTraceMessageId, setMessageThinkingSteps]
 	);
 
 	// Handle editing a message - truncates history and regenerates with new query
@@ -3326,100 +3536,103 @@ export default function NewChatPage() {
 	}
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
-		<LiveCriterionContext.Provider value={liveCriterionScores}>
-		<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
-		<LiveDebateStateContext.Provider value={debateState}>
-		<DebateVoiceContext.Provider value={isVoiceDebate ? {
-			voiceState: debateAudio.voiceState,
-			togglePlayPause: debateAudio.togglePlayPause,
-			setVolume: debateAudio.setVolume,
-			exportAudioBlob: debateAudio.exportAudioBlob,
-			resumeAudioContext: debateAudio.resumeAudioContext,
-			lastError: debateAudio.lastError,
-		} : null}>
-			{!isPublicChat && <GeneratePodcastToolUI />}
-			<LinkPreviewToolUI />
-			<DisplayImageToolUI />
-			<DisplayImageGalleryToolUI />
-			<GeoapifyStaticMapToolUI />
-			<ScrapeWebpageToolUI />
-			<SmhiWeatherToolUI />
-			<SmhiMetfcstToolUI />
-			<TrafiklabRouteToolUI />
-			<LibrisSearchToolUI />
-			<JobAdLinksToolUI />
-			<GrokToolUI />
-			<ClaudeToolUI />
-			<GptToolUI />
-			<GeminiToolUI />
-			<DeepSeekToolUI />
-			<PerplexityToolUI />
-			<QwenToolUI />
-			<OneseekToolUI />
-			{!isPublicChat && <SaveMemoryToolUI />}
-			{!isPublicChat && <RecallMemoryToolUI />}
-			<TracePanelContext.Provider value={traceContextValue}>
-				<div
-					ref={traceLayoutRef}
-					className="flex h-[calc(100vh-64px)] overflow-hidden"
-				>
-					<div className="flex min-w-0 flex-1 flex-col">
-						<Thread
-							messageThinkingSteps={messageThinkingSteps}
-							messageContextStats={messageContextStats}
-							messageReasoningMap={messageReasoningMap}
-							messageTimeline={messageTimeline}
-							isPublicChat={isPublicChat}
-							header={
-								<div className="flex items-center justify-between gap-2">
-									<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
-									{!isPublicChat && (
-										<Button
-											variant="outline"
-											size="sm"
-											className="gap-2"
-											disabled={!lastAssistantMessageId}
-											onClick={() => openTraceForMessage(lastAssistantMessageId ?? null)}
-										>
-											<Activity
-												className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}
-											/>
-											Live-spårning
-										</Button>
+			<LiveCriterionContext.Provider value={liveCriterionScores}>
+				<LiveCriterionPodContext.Provider value={liveCriterionPodInfo}>
+					<LiveDebateStateContext.Provider value={debateState}>
+						<DebateVoiceContext.Provider
+							value={
+								isVoiceDebate
+									? {
+											voiceState: debateAudio.voiceState,
+											togglePlayPause: debateAudio.togglePlayPause,
+											setVolume: debateAudio.setVolume,
+											exportAudioBlob: debateAudio.exportAudioBlob,
+											resumeAudioContext: debateAudio.resumeAudioContext,
+											lastError: debateAudio.lastError,
+										}
+									: null
+							}
+						>
+							{!isPublicChat && <GeneratePodcastToolUI />}
+							<LinkPreviewToolUI />
+							<DisplayImageToolUI />
+							<DisplayImageGalleryToolUI />
+							<GeoapifyStaticMapToolUI />
+							<ScrapeWebpageToolUI />
+							<SmhiWeatherToolUI />
+							<SmhiMetfcstToolUI />
+							<TrafiklabRouteToolUI />
+							<LibrisSearchToolUI />
+							<JobAdLinksToolUI />
+							<GrokToolUI />
+							<ClaudeToolUI />
+							<GptToolUI />
+							<GeminiToolUI />
+							<DeepSeekToolUI />
+							<PerplexityToolUI />
+							<QwenToolUI />
+							<OneseekToolUI />
+							{!isPublicChat && <SaveMemoryToolUI />}
+							{!isPublicChat && <RecallMemoryToolUI />}
+							<TracePanelContext.Provider value={traceContextValue}>
+								<div ref={traceLayoutRef} className="flex h-[calc(100vh-64px)] overflow-hidden">
+									<div className="flex min-w-0 flex-1 flex-col">
+										<Thread
+											messageThinkingSteps={messageThinkingSteps}
+											messageContextStats={messageContextStats}
+											messageReasoningMap={messageReasoningMap}
+											messageTimeline={messageTimeline}
+											isPublicChat={isPublicChat}
+											header={
+												<div className="flex items-center justify-between gap-2">
+													<ChatHeader searchSpaceId={searchSpaceId} isPublicChat={isPublicChat} />
+													{!isPublicChat && (
+														<Button
+															variant="outline"
+															size="sm"
+															className="gap-2"
+															disabled={!lastAssistantMessageId}
+															onClick={() => openTraceForMessage(lastAssistantMessageId ?? null)}
+														>
+															<Activity
+																className={cn("size-4", isTraceOpen ? "animate-pulse" : "")}
+															/>
+															Live-spårning
+														</Button>
+													)}
+												</div>
+											}
+										/>
+									</div>
+									{isInlineTrace && (
+										<TraceSheet
+											open={isTraceOpen}
+											onOpenChange={setIsTraceOpen}
+											messageId={activeTraceMessageId}
+											sessionId={activeTraceSessionId}
+											spans={activeTraceSpans}
+											variant="inline"
+											dock="right"
+											maxWidth={traceMaxWidth}
+										/>
 									)}
 								</div>
-							}
-						/>
-					</div>
-					{isInlineTrace && (
-						<TraceSheet
-							open={isTraceOpen}
-							onOpenChange={setIsTraceOpen}
-							messageId={activeTraceMessageId}
-							sessionId={activeTraceSessionId}
-							spans={activeTraceSpans}
-							variant="inline"
-							dock="right"
-							maxWidth={traceMaxWidth}
-						/>
-					)}
-				</div>
-				{!isInlineTrace && (
-					<TraceSheet
-						open={isTraceOpen}
-						onOpenChange={setIsTraceOpen}
-						messageId={activeTraceMessageId}
-						sessionId={activeTraceSessionId}
-						spans={activeTraceSpans}
-						variant="overlay"
-						dock="right"
-					/>
-				)}
-			</TracePanelContext.Provider>
-		</DebateVoiceContext.Provider>
-		</LiveDebateStateContext.Provider>
-		</LiveCriterionPodContext.Provider>
-		</LiveCriterionContext.Provider>
+								{!isInlineTrace && (
+									<TraceSheet
+										open={isTraceOpen}
+										onOpenChange={setIsTraceOpen}
+										messageId={activeTraceMessageId}
+										sessionId={activeTraceSessionId}
+										spans={activeTraceSpans}
+										variant="overlay"
+										dock="right"
+									/>
+								)}
+							</TracePanelContext.Provider>
+						</DebateVoiceContext.Provider>
+					</LiveDebateStateContext.Provider>
+				</LiveCriterionPodContext.Provider>
+			</LiveCriterionContext.Provider>
 		</AssistantRuntimeProvider>
 	);
 }

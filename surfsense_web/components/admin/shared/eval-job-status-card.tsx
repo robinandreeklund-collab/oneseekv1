@@ -1,10 +1,10 @@
 "use client";
 
+import { AlertCircle, Download } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Download } from "lucide-react";
 
 interface CaseStatus {
 	test_id: string;
@@ -70,14 +70,18 @@ export function EvalJobStatusCard({
 				<div className="flex flex-wrap items-center justify-between gap-2 text-sm">
 					<div className="flex flex-wrap items-center gap-2">
 						<Badge variant={statusVariant(status)}>{status ?? "pending"}</Badge>
-						<span>{completedTests}/{totalTests} frågor</span>
+						<span>
+							{completedTests}/{totalTests} frågor
+						</span>
 					</div>
 					<div className="flex items-center gap-2">
 						<Button variant="outline" size="sm" onClick={onExportJson} disabled={exportDisabled}>
-							<Download className="h-4 w-4 mr-1" />JSON
+							<Download className="h-4 w-4 mr-1" />
+							JSON
 						</Button>
 						<Button variant="outline" size="sm" onClick={onExportYaml} disabled={exportDisabled}>
-							<Download className="h-4 w-4 mr-1" />YAML
+							<Download className="h-4 w-4 mr-1" />
+							YAML
 						</Button>
 					</div>
 				</div>

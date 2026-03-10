@@ -12,12 +12,8 @@ export function FeaturesCards() {
 		<section className="py-2 md:py-8 dark:bg-transparent">
 			<div className="@container mx-auto max-w-7xl">
 				<div className="text-center">
-					<h2 className="text-balance text-4xl font-semibold lg:text-5xl">
-						{t("features_title")}
-					</h2>
-					<p className="mt-4">
-						{t("features_subtitle")}
-					</p>
+					<h2 className="text-balance text-4xl font-semibold lg:text-5xl">{t("features_title")}</h2>
+					<p className="mt-4">{t("features_subtitle")}</p>
 				</div>
 				<div className="@min-4xl:max-w-full @min-4xl:grid-cols-3 mx-auto mt-8 grid max-w-sm gap-6 *:text-center md:mt-16">
 					<Card className="group shadow-black-950/5">

@@ -1,8 +1,8 @@
+import { desc, eq } from "drizzle-orm";
+import { getLocale, getTranslations } from "next-intl/server";
 import { db } from "@/app/db";
 import { postsTable } from "@/app/db/schema";
-import { eq, desc } from "drizzle-orm";
 import { formatDate } from "@/lib/utils";
-import { getLocale, getTranslations } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
 
@@ -28,9 +28,7 @@ export default async function ChangelogPage() {
 							<h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-400 bg-clip-text text-transparent">
 								{t("title")}
 							</h1>
-							<p className="text-muted-foreground mt-2">
-								{t("subtitle")}
-							</p>
+							<p className="text-muted-foreground mt-2">{t("subtitle")}</p>
 						</div>
 					</div>
 				</div>
@@ -47,7 +45,12 @@ export default async function ChangelogPage() {
 						{publishedPosts.map((post) => {
 							const date = new Date(post.createdAt);
 							const formattedDate = formatDate(date, locale as "sv");
-							const tags = post.tags ? post.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
+							const tags = post.tags
+								? post.tags
+										.split(",")
+										.map((t) => t.trim())
+										.filter(Boolean)
+								: [];
 
 							return (
 								<div key={post.id} className="relative">

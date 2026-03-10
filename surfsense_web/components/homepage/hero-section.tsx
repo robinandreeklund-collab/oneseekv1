@@ -96,29 +96,26 @@ function LiveDemo() {
 	const ref = useRef<HTMLDivElement>(null);
 	const isInView = useInView(ref, { once: true, amount: 0.3 });
 
-	const streamText = useCallback(
-		(text: string, modelIndex: number, delay: number) => {
-			return new Promise<void>((resolve) => {
-				setTimeout(() => {
-					let charIndex = 0;
-					const interval = setInterval(() => {
-						if (charIndex < text.length) {
-							setModelTexts((prev) => {
-								const next = [...prev];
-								next[modelIndex] = text.slice(0, charIndex + 1);
-								return next;
-							});
-							charIndex++;
-						} else {
-							clearInterval(interval);
-							resolve();
-						}
-					}, 12);
-				}, delay);
-			});
-		},
-		[]
-	);
+	const streamText = useCallback((text: string, modelIndex: number, delay: number) => {
+		return new Promise<void>((resolve) => {
+			setTimeout(() => {
+				let charIndex = 0;
+				const interval = setInterval(() => {
+					if (charIndex < text.length) {
+						setModelTexts((prev) => {
+							const next = [...prev];
+							next[modelIndex] = text.slice(0, charIndex + 1);
+							return next;
+						});
+						charIndex++;
+					} else {
+						clearInterval(interval);
+						resolve();
+					}
+				}, 12);
+			}, delay);
+		});
+	}, []);
 
 	useEffect(() => {
 		if (!isInView || hasPlayed) return;
@@ -160,7 +157,10 @@ function LiveDemo() {
 	}, [isInView, hasPlayed, streamText]);
 
 	return (
-		<div ref={ref} className="w-full max-w-5xl mx-auto mt-12 md:mt-16 min-h-[420px] md:min-h-[480px]">
+		<div
+			ref={ref}
+			className="w-full max-w-5xl mx-auto mt-12 md:mt-16 min-h-[420px] md:min-h-[480px]"
+		>
 			<div className="relative rounded-2xl border border-neutral-200/50 dark:border-white/10 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl shadow-2xl shadow-purple-500/5 overflow-hidden">
 				{/* Window chrome */}
 				<div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-100 dark:border-white/5">
@@ -219,9 +219,7 @@ function LiveDemo() {
 										key={model.name}
 										initial={{ opacity: 0, y: 10 }}
 										animate={
-											visibleModels.includes(i)
-												? { opacity: 1, y: 0 }
-												: { opacity: 0, y: 10 }
+											visibleModels.includes(i) ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }
 										}
 										transition={{ duration: 0.3, delay: i * 0.08 }}
 										className="rounded-xl bg-neutral-50 dark:bg-neutral-800/40 border border-neutral-200/30 dark:border-white/5 p-4"
@@ -234,12 +232,7 @@ function LiveDemo() {
 												height={18}
 												className="rounded-sm"
 											/>
-											<span
-												className={cn(
-													"text-xs font-semibold",
-													model.accent
-												)}
-											>
+											<span className={cn("text-xs font-semibold", model.accent)}>
 												{model.name}
 											</span>
 										</div>
@@ -284,11 +277,7 @@ function LiveDemo() {
 											stroke="currentColor"
 											strokeWidth={2.5}
 										>
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												d="M5 13l4 4L19 7"
-											/>
+											<path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
 										</svg>
 									</div>
 									<span className="text-xs font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-cyan-600 dark:from-purple-400 dark:to-cyan-400">
@@ -380,11 +369,7 @@ export function HeroSection() {
 							stroke="currentColor"
 							strokeWidth={2}
 						>
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								d="M13 7l5 5m0 0l-5 5m5-5H6"
-							/>
+							<path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
 						</svg>
 					</Link>
 				)}

@@ -305,7 +305,7 @@ class TestSpecializedAgentResolution:
     """Specialized agents in _SPECIALIZED_AGENTS must not be remapped."""
 
     def test_specialized_check_before_selected_agents_lock(self):
-        """_SPECIALIZED_AGENTS return must come before selected_agents_lock return."""
+        """specialized_agents check must come before selected_agents_lock return."""
         supervisor_path = (
             _PROJECT_ROOT / "app" / "agents" / "new_chat"
             / "supervisor_agent.py"
@@ -314,19 +314,22 @@ class TestSpecializedAgentResolution:
         # Find the _resolve_agent_name function
         fn_start = source.find("def _resolve_agent_name")
         assert fn_start > 0
-        fn_source = source[fn_start:fn_start + 5000]
-        # The actual return statement with _SPECIALIZED_AGENTS must come
+        fn_source = source[fn_start:fn_start + 8000]
+        # The actual return statement with specialized_agents must come
         # BEFORE the return statement with "selected_agents_lock".
         # We look for the code patterns, not comments.
-        spec_return = fn_source.find("if requested_raw in _SPECIALIZED_AGENTS:")
+        # Accept both static _SPECIALIZED_AGENTS and dynamic specialized_agents
+        spec_return = fn_source.find("if requested_raw in specialized_agents:")
+        if spec_return < 0:
+            spec_return = fn_source.find("if requested_raw in _SPECIALIZED_AGENTS:")
         lock_return = fn_source.find('return fallback, f"selected_agents_lock:')
         assert spec_return > 0, (
-            "if requested_raw in _SPECIALIZED_AGENTS: not found"
+            "specialized agents check not found in _resolve_agent_name"
         )
         assert lock_return > 0, (
             'return fallback, f"selected_agents_lock: not found'
         )
         assert spec_return < lock_return, (
-            "_SPECIALIZED_AGENTS check must come BEFORE selected_agents_lock "
+            "specialized_agents check must come BEFORE selected_agents_lock "
             "return in _resolve_agent_name to prevent remapping specialized agents"
         )

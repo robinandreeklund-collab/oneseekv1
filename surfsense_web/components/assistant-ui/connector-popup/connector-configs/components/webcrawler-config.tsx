@@ -54,8 +54,8 @@ export const WebcrawlerConfig: FC<ConnectorConfigProps> = ({ connector, onConfig
 			<div className="space-y-1 sm:space-y-2">
 				<h3 className="font-medium text-sm sm:text-base">Webbcrawler-konfiguration</h3>
 				<p className="text-xs sm:text-sm text-muted-foreground">
-					Konfigurera inställningarna för din webbcrawler. Du kan lägga till en Firecrawl
-					API-nyckel för förbättrad crawling eller använda det kostnadsfria reservalternativet.
+					Konfigurera inställningarna för din webbcrawler. Du kan lägga till en Firecrawl API-nyckel
+					för förbättrad crawling eller använda det kostnadsfria reservalternativet.
 				</p>
 			</div>
 

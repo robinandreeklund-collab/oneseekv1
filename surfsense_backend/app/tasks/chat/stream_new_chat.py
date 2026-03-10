@@ -872,6 +872,65 @@ _PIPELINE_JSON_KEYS = (
     "confidence",
 )
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.IGNORECASE)
+
+# ── Trace output sanitization ────────────────────────────────────────
+# LangGraph chain events include the full graph state as output.
+# Strip internal-only keys so they don't leak into the live trace.
+_TRACE_INTERNAL_STATE_KEYS = frozenset({
+    "live_routing_trace",
+    "worker_system_prompt",
+    "micro_plans",
+    "retrieval_feedback",
+    "targeted_missing_info",
+    "cross_session_memory_context",
+    "critic_history",
+    "no_progress_runs",
+    "replan_count",
+    "guard_finalized",
+    "guard_parallel_preview",
+    "pending_hitl_payload",
+    "pending_hitl_stage",
+    "user_feedback",
+})
+# Keys to strip from selected_agents dicts (internal retrieval metadata)
+_AGENT_INTERNAL_KEYS = frozenset({
+    "keywords", "excludes", "priority", "fallback_route",
+})
+
+
+def _sanitize_chain_output_for_trace(output: Any) -> Any:
+    """Remove internal state keys from LangGraph chain output for trace."""
+    if not isinstance(output, dict):
+        return output
+    cleaned = {
+        k: v for k, v in output.items()
+        if k not in _TRACE_INTERNAL_STATE_KEYS
+    }
+    # Strip internal metadata from selected_agents list
+    agents = cleaned.get("selected_agents")
+    if isinstance(agents, list):
+        cleaned["selected_agents"] = [
+            {k: v for k, v in a.items() if k not in _AGENT_INTERNAL_KEYS}
+            if isinstance(a, dict) else a
+            for a in agents
+        ]
+    # Strip confidence from result_contract (it's an internal quality score)
+    for key in ("step_results", "recent_agent_calls"):
+        items = cleaned.get(key)
+        if isinstance(items, list):
+            sanitized = []
+            for item in items:
+                if isinstance(item, dict):
+                    rc = item.get("result_contract")
+                    if isinstance(rc, dict) and "confidence" in rc:
+                        item = {**item, "result_contract": {
+                            k: v for k, v in rc.items() if k != "confidence"
+                        }}
+                sanitized.append(item)
+            cleaned[key] = sanitized
+    return cleaned
+
+
 _INTERNAL_PIPELINE_CHAIN_TOKENS = (
     "resolve_intent",
     "memory_context",
@@ -1869,6 +1928,18 @@ async def stream_new_chat(
         except Exception:
             intent_definitions = list(get_default_intent_definitions().values())
 
+        # Determine if LLM gate mode is active so the dispatcher can adapt
+        _llm_gate_mode = False
+        try:
+            from app.services.tool_retrieval_tuning_service import (
+                get_global_tool_retrieval_tuning,
+            )
+
+            _tuning = await get_global_tool_retrieval_tuning(session)
+            _llm_gate_mode = bool(_tuning.get("llm_gate_mode", False))
+        except Exception:
+            pass
+
         route, route_decision = await dispatch_route_with_trace(
             raw_user_query,
             llm,
@@ -1877,6 +1948,7 @@ async def stream_new_chat(
             system_prompt_override=router_prompt,
             conversation_history=routing_history,
             intent_definitions=intent_definitions,
+            llm_gate_mode=_llm_gate_mode,
         )
 
         # Sync compare_mode with route decision
@@ -2236,9 +2308,7 @@ async def stream_new_chat(
             route_meta = {
                 "route": route.value,
                 "route_source": str(route_decision.get("source") or ""),
-                "route_confidence": route_decision.get("confidence"),
                 "route_reason": str(route_decision.get("reason") or ""),
-                "route_candidates": route_decision.get("candidates") or [],
                 "citations_enabled": citations_enabled,
                 "citation_instructions_enabled": citations_enabled,
                 "runtime_hitl": runtime_hitl or {},
@@ -2679,6 +2749,16 @@ async def stream_new_chat(
         route_label = f"Supervisor/{route.value.capitalize()}"
         route_prefix = f"[{route_label}] "
 
+        def _update_route_label(new_domain: str) -> None:
+            """Update route_label/route_prefix after resolve_intent resolves the real domain."""
+            nonlocal route_label, route_prefix
+            clean = str(new_domain or "").strip()
+            if not clean:
+                return
+            # Capitalise first letter, keep rest (e.g. "väder-och-klimat" → "Väder-och-klimat")
+            route_label = f"Supervisor/{clean[0].upper()}{clean[1:]}"
+            route_prefix = f"[{route_label}] "
+
         def format_step_title(title: str) -> str:
             if not title:
                 return title
@@ -2727,19 +2807,19 @@ async def stream_new_chat(
                 title = format_step_title("Uppdaterar intern planerare")
                 items: list[str] = []
                 if kind == "intent":
-                    title = format_step_title("Tolkar avsikt")
                     intent_id = str(payload.get("intent_id") or "").strip()
+                    # Dynamically update the route label to show the resolved domain
+                    if intent_id:
+                        _update_route_label(intent_id)
+                    title = format_step_title("Tolkar avsikt")
                     graph_complexity = str(
                         payload.get("graph_complexity") or ""
                     ).strip()
                     reason = str(payload.get("reason") or "").strip()
-                    confidence = payload.get("confidence")
                     if intent_id:
                         items.append(f"Avsikt: {intent_id}")
                     if graph_complexity:
                         items.append(f"Komplexitet: {graph_complexity}")
-                    if isinstance(confidence, (int, float)):
-                        items.append(f"Konfidens: {float(confidence):.2f}")
                     if reason:
                         items.append(f"Orsak: {reason[:180]}")
                 elif kind == "agent_resolver":
@@ -3440,7 +3520,7 @@ async def stream_new_chat(
                         yield synthesis_event
                     trace_event = await trace_recorder.end_span(
                         span_id=run_id,
-                        output_data=chain_output,
+                        output_data=_sanitize_chain_output_for_trace(chain_output),
                         status="completed",
                     )
                     if trace_event:

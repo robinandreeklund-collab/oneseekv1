@@ -1,17 +1,13 @@
 "use client";
 
+import { CheckCircle2, Hash, Loader2, Mic, Save, Volume2 } from "lucide-react";
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -22,18 +18,9 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import {
-	CheckCircle2,
-	Loader2,
-	Mic,
-	Save,
-	Volume2,
-	Hash,
-} from "lucide-react";
-import {
 	adminDebateApiService,
 	type DebateVoiceSettings,
 } from "@/lib/apis/admin-debate-api.service";
-import Image from "next/image";
 
 // All 13 built-in voices for gpt-4o-mini-tts
 const OPENAI_VOICES = [
@@ -190,45 +177,36 @@ export function DebateSettingsPage() {
 		}
 	}, [settings]);
 
-	const updateVoice = useCallback(
-		(participant: string, voice: string) => {
-			setSettings((prev) => ({
-				...prev,
-				voice_map: { ...prev.voice_map, [participant]: voice },
-			}));
-		},
-		[],
-	);
+	const updateVoice = useCallback((participant: string, voice: string) => {
+		setSettings((prev) => ({
+			...prev,
+			voice_map: { ...prev.voice_map, [participant]: voice },
+		}));
+	}, []);
 
-	const updateLangInstruction = useCallback(
-		(participant: string, value: string) => {
-			setSettings((prev) => {
-				const instructions = { ...(prev.language_instructions ?? {}) };
-				if (value.trim()) {
-					instructions[participant] = value;
-				} else {
-					delete instructions[participant];
-				}
-				return { ...prev, language_instructions: instructions };
-			});
-		},
-		[],
-	);
+	const updateLangInstruction = useCallback((participant: string, value: string) => {
+		setSettings((prev) => {
+			const instructions = { ...(prev.language_instructions ?? {}) };
+			if (value.trim()) {
+				instructions[participant] = value;
+			} else {
+				delete instructions[participant];
+			}
+			return { ...prev, language_instructions: instructions };
+		});
+	}, []);
 
-	const updateModelMaxTokens = useCallback(
-		(participant: string, value: number | null) => {
-			setSettings((prev) => {
-				const map = { ...(prev.max_tokens_map ?? {}) };
-				if (value === null) {
-					delete map[participant];
-				} else {
-					map[participant] = value;
-				}
-				return { ...prev, max_tokens_map: map };
-			});
-		},
-		[],
-	);
+	const updateModelMaxTokens = useCallback((participant: string, value: number | null) => {
+		setSettings((prev) => {
+			const map = { ...(prev.max_tokens_map ?? {}) };
+			if (value === null) {
+				delete map[participant];
+			} else {
+				map[participant] = value;
+			}
+			return { ...prev, max_tokens_map: map };
+		});
+	}, []);
 
 	if (isLoading) {
 		return (
@@ -258,7 +236,8 @@ export function DebateSettingsPage() {
 						TTS-konfiguration
 					</CardTitle>
 					<CardDescription>
-						V&auml;lj TTS-leverant&ouml;r och konfigurera API-nycklar f&ouml;r r&ouml;stdebatt (/dvoice)
+						V&auml;lj TTS-leverant&ouml;r och konfigurera API-nycklar f&ouml;r r&ouml;stdebatt
+						(/dvoice)
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -268,9 +247,10 @@ export function DebateSettingsPage() {
 						<Select
 							value={settings.tts_provider ?? "cartesia"}
 							onValueChange={(value) => {
-								const newVoiceMap = value === "cartesia"
-									? { ...DEFAULT_CARTESIA_VOICE_MAP }
-									: { ...DEFAULT_VOICE_MAP };
+								const newVoiceMap =
+									value === "cartesia"
+										? { ...DEFAULT_CARTESIA_VOICE_MAP }
+										: { ...DEFAULT_VOICE_MAP };
 								setSettings((prev) => ({
 									...prev,
 									tts_provider: value,
@@ -310,7 +290,12 @@ export function DebateSettingsPage() {
 								/>
 								<p className="text-[10px] text-muted-foreground">
 									Fr&aring;n{" "}
-									<a href="https://play.cartesia.ai/" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+									<a
+										href="https://play.cartesia.ai/"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="text-primary underline"
+									>
 										play.cartesia.ai
 									</a>
 								</p>
@@ -374,9 +359,7 @@ export function DebateSettingsPage() {
 								<Label htmlFor="tts-model">TTS-modell</Label>
 								<Select
 									value={settings.model || "gpt-4o-mini-tts"}
-									onValueChange={(value) =>
-										setSettings((prev) => ({ ...prev, model: value }))
-									}
+									onValueChange={(value) => setSettings((prev) => ({ ...prev, model: value }))}
 								>
 									<SelectTrigger id="tts-model">
 										<SelectValue />
@@ -401,9 +384,7 @@ export function DebateSettingsPage() {
 							max={(settings.tts_provider ?? "cartesia") === "cartesia" ? 1.5 : 4.0}
 							step={0.05}
 							value={[settings.speed]}
-							onValueChange={([v]) =>
-								setSettings((prev) => ({ ...prev, speed: v }))
-							}
+							onValueChange={([v]) => setSettings((prev) => ({ ...prev, speed: v }))}
 						/>
 						{(settings.tts_provider ?? "cartesia") === "cartesia" && (
 							<p className="text-[10px] text-muted-foreground">
@@ -427,8 +408,8 @@ export function DebateSettingsPage() {
 							}
 						/>
 						<p className="text-[10px] text-muted-foreground">
-							Justerar hur snabbt text visas i f&ouml;rh&aring;llande till ljud.
-							1.0 = synkad med TTS-l&auml;ngd. &lt;1 = text snabbare &auml;n ljud. &gt;1 = text l&aring;ngsammare.
+							Justerar hur snabbt text visas i f&ouml;rh&aring;llande till ljud. 1.0 = synkad med
+							TTS-l&auml;ngd. &lt;1 = text snabbare &auml;n ljud. &gt;1 = text l&aring;ngsammare.
 						</p>
 					</div>
 				</CardContent>
@@ -442,8 +423,9 @@ export function DebateSettingsPage() {
 						Token-begr&auml;nsning
 					</CardTitle>
 					<CardDescription>
-						Max antal tokens per deltagare per runda. Begr&auml;nsar hur l&aring;nga svar varje modell f&aring;r generera.
-						S&auml;tt per modell eller anv&auml;nd standard f&ouml;r alla.
+						Max antal tokens per deltagare per runda. Begr&auml;nsar hur l&aring;nga svar varje
+						modell f&aring;r generera. S&auml;tt per modell eller anv&auml;nd standard f&ouml;r
+						alla.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -462,12 +444,11 @@ export function DebateSettingsPage() {
 							max={MAX_TOKENS}
 							step={50}
 							value={[settings.max_tokens]}
-							onValueChange={([v]) =>
-								setSettings((prev) => ({ ...prev, max_tokens: v }))
-							}
+							onValueChange={([v]) => setSettings((prev) => ({ ...prev, max_tokens: v }))}
 						/>
 						<p className="text-[10px] text-muted-foreground">
-							{MIN_TOKENS} &ndash; {MAX_TOKENS} tokens. Ca {Math.round(settings.max_tokens * 0.75)} ord per svar.
+							{MIN_TOKENS} &ndash; {MAX_TOKENS} tokens. Ca {Math.round(settings.max_tokens * 0.75)}{" "}
+							ord per svar.
 						</p>
 					</div>
 
@@ -499,9 +480,7 @@ export function DebateSettingsPage() {
 										<div className="flex items-center justify-between mb-1">
 											<span className="text-xs font-medium">{name}</span>
 											<div className="flex items-center gap-1.5">
-												<span className="text-xs font-mono tabular-nums">
-													{effectiveValue}
-												</span>
+												<span className="text-xs font-mono tabular-nums">{effectiveValue}</span>
 												{hasOverride ? (
 													<button
 														type="button"
@@ -541,8 +520,8 @@ export function DebateSettingsPage() {
 					<CardDescription>
 						{(settings.tts_provider ?? "cartesia") === "cartesia"
 							? "Ange Cartesia voice-ID (UUID) per deltagare. Bläddra röster på play.cartesia.ai"
-							: "Välj röst (13 tillgängliga) och ange instruktioner för accent, ton, känsla m.m."}
-						{" "}Klicka p&aring; en deltagare f&ouml;r att expandera instruktionsf&auml;ltet.
+							: "Välj röst (13 tillgängliga) och ange instruktioner för accent, ton, känsla m.m."}{" "}
+						Klicka p&aring; en deltagare f&ouml;r att expandera instruktionsf&auml;ltet.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -594,7 +573,10 @@ export function DebateSettingsPage() {
 											>
 												<span className="text-sm font-medium">{name}</span>
 												{hasInstruction && (
-													<Badge variant="outline" className="border-primary/30 text-primary text-[9px] px-1.5 py-0">
+													<Badge
+														variant="outline"
+														className="border-primary/30 text-primary text-[9px] px-1.5 py-0"
+													>
 														instruktion
 													</Badge>
 												)}
@@ -640,7 +622,8 @@ export function DebateSettingsPage() {
 												className="text-xs"
 											/>
 											<p className="text-[10px] text-muted-foreground leading-relaxed">
-												Styr: accent, emotional range, intonation, impressions, speed, tone, whispering
+												Styr: accent, emotional range, intonation, impressions, speed, tone,
+												whispering
 											</p>
 										</div>
 									)}

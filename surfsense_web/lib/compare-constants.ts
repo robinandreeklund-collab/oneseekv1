@@ -25,9 +25,18 @@ export const MODEL_LOGOS: Record<string, { src: string; alt: string }> = {
 // Backend (_LEAKED_JSON_FIELDS in compare_executor.py) mirrors this list.
 // Keep both in sync when adding new field names.
 export const LEAKED_JSON_FIELDS = [
-	"search_queries", "search_results", "winner_answer", "winner_rationale",
-	"reasoning", "thinking", "arena_analysis", "consensus", "disagreements",
-	"unique_contributions", "reliability_notes", "score",
+	"search_queries",
+	"search_results",
+	"winner_answer",
+	"winner_rationale",
+	"reasoning",
+	"thinking",
+	"arena_analysis",
+	"consensus",
+	"disagreements",
+	"unique_contributions",
+	"reliability_notes",
+	"score",
 ] as const;
 
 // ── Formatting helpers ──────────────────────────────────────────────

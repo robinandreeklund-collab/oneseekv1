@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Loader2, Gauge } from "lucide-react";
+import { Gauge, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { nexusApiService } from "@/lib/apis/nexus-api.service";
@@ -14,15 +14,22 @@ export function ConcurrencyControl() {
 	const [saving, setSaving] = useState(false);
 
 	const load = useCallback(() => {
-		nexusApiService.getConcurrencySettings().then((data) => {
-			setMaxConcurrency(data.max_concurrency);
-			setSliderValue(data.max_concurrency);
-			setActiveTasks(data.active_tasks);
-			setPeakActive(data.peak_active);
-		}).catch(() => { /* non-critical */ });
+		nexusApiService
+			.getConcurrencySettings()
+			.then((data) => {
+				setMaxConcurrency(data.max_concurrency);
+				setSliderValue(data.max_concurrency);
+				setActiveTasks(data.active_tasks);
+				setPeakActive(data.peak_active);
+			})
+			.catch(() => {
+				/* non-critical */
+			});
 	}, []);
 
-	useEffect(() => { load(); }, [load]);
+	useEffect(() => {
+		load();
+	}, [load]);
 
 	const handleSave = () => {
 		if (sliderValue === maxConcurrency) return;
@@ -32,7 +39,9 @@ export function ConcurrencyControl() {
 			.then((data) => {
 				setMaxConcurrency(data.max_concurrency);
 			})
-			.catch(() => { /* ignore */ })
+			.catch(() => {
+				/* ignore */
+			})
 			.finally(() => setSaving(false));
 	};
 
@@ -70,11 +79,7 @@ export function ConcurrencyControl() {
 					disabled={!isDirty || saving}
 					onClick={handleSave}
 				>
-					{saving ? (
-						<Loader2 className="h-3.5 w-3.5 animate-spin" />
-					) : (
-						"Spara"
-					)}
+					{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Spara"}
 				</Button>
 			</div>
 		</div>

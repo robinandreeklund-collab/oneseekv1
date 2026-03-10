@@ -110,8 +110,8 @@ export function parseSerializableArticle(data: unknown): ArticleProps {
 		domain: parsed.domain ?? undefined,
 		author: parsed.author ?? undefined,
 		date: parsed.date ?? undefined,
-		wordCount: (parsed.word_count ?? parsed.wordCount) ?? undefined,
-		wasTruncated: (parsed.was_truncated ?? parsed.wasTruncated) ?? undefined,
+		wordCount: parsed.word_count ?? parsed.wordCount ?? undefined,
+		wasTruncated: parsed.was_truncated ?? parsed.wasTruncated ?? undefined,
 		error: parsed.error ?? undefined,
 	};
 }
@@ -166,7 +166,9 @@ export function Article({
 							<AlertCircleIcon className="size-5 text-destructive" />
 						</div>
 						<div className="flex-1 min-w-0">
-							<p className="font-medium text-destructive text-sm">Det gick inte att skrapa webbsidan</p>
+							<p className="font-medium text-destructive text-sm">
+								Det gick inte att skrapa webbsidan
+							</p>
 							{href && <p className="text-muted-foreground text-xs mt-0.5 truncate">{href}</p>}
 							<p className="text-muted-foreground text-xs mt-1">{error}</p>
 						</div>

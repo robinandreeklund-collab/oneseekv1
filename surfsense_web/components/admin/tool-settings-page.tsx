@@ -1,19 +1,37 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { toast } from "sonner";
 import { useAtomValue } from "jotai";
+import { AlertCircle, Download, Loader2, Plus, RotateCcw, Save, X } from "lucide-react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { stringify as stringifyYaml } from "yaml";
 import { currentUserAtom } from "@/atoms/user/user-query.atoms";
+import { MetadataCatalogTab } from "@/components/admin/metadata-catalog-tab";
+import {
+	Accordion,
+	AccordionContent,
+	AccordionItem,
+	AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import type {
-	ToolAutoLoopDraftPromptItem,
 	ToolApiInputEvaluationJobStatusResponse,
 	ToolApiInputEvaluationResponse,
 	ToolApiInputEvaluationTestCase,
+	ToolAutoLoopDraftPromptItem,
 	ToolEvaluationJobStatusResponse,
-	ToolEvaluationRunComparison,
 	ToolEvaluationResponse,
+	ToolEvaluationRunComparison,
 	ToolEvaluationStageHistoryResponse,
 	ToolEvaluationTestCase,
 	ToolMetadataItem,
@@ -21,38 +39,9 @@ import type {
 	ToolRetrievalTuning,
 } from "@/contracts/types/admin-tool-settings.types";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
-import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import {
-	Accordion,
-	AccordionContent,
-	AccordionItem,
-	AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Separator } from "@/components/ui/separator";
-import { AlertCircle, Save, RotateCcw, Plus, X, Loader2, Download } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
-import { MetadataCatalogTab } from "@/components/admin/metadata-catalog-tab";
 
 type EvalExportFormat = "json" | "yaml";
-type LiveRoutingPhase =
-	| "shadow"
-	| "tool_gate"
-	| "agent_auto"
-	| "adaptive"
-	| "intent_finetune";
+type LiveRoutingPhase = "shadow" | "tool_gate" | "agent_auto" | "adaptive" | "intent_finetune";
 type NumericRetrievalTuningField = {
 	[K in keyof ToolRetrievalTuning]: ToolRetrievalTuning[K] extends number ? K : never;
 }[keyof ToolRetrievalTuning];
@@ -122,7 +111,9 @@ function formatSignedPercent(value: number | null | undefined) {
 }
 
 function formatDifficultyLabel(value: string | null | undefined) {
-	const normalized = String(value ?? "").trim().toLowerCase();
+	const normalized = String(value ?? "")
+		.trim()
+		.toLowerCase();
 	if (!normalized) return "Okänd";
 	if (normalized === "lätt" || normalized === "latt" || normalized === "easy") {
 		return "Lätt";
@@ -137,7 +128,9 @@ function formatDifficultyLabel(value: string | null | undefined) {
 }
 
 function formatAutoLoopStopReason(reason: string | null | undefined) {
-	const normalized = String(reason ?? "").trim().toLowerCase();
+	const normalized = String(reason ?? "")
+		.trim()
+		.toLowerCase();
 	if (!normalized) return "Okänd stop-orsak";
 	if (normalized === "target_reached") return "Målnivå uppnådd";
 	if (normalized === "no_improvement") return "Avbruten p.g.a. utebliven förbättring";
@@ -154,8 +147,7 @@ function buildFailureReasons(result: Record<string, unknown>): string[] {
 	if (result.passed_plan === false) reasons.push("Plankrav ej uppfyllda");
 	if (result.passed_tool === false) reasons.push("Tool mismatch");
 	if (result.passed_api_input === false) reasons.push("API-input mismatch");
-	if (result.supervisor_review_passed === false)
-		reasons.push("Supervisor-spår behöver förbättras");
+	if (result.supervisor_review_passed === false) reasons.push("Supervisor-spår behöver förbättras");
 	return reasons;
 }
 
@@ -314,7 +306,7 @@ function StageHistoryTabContent({
 	const effectiveCategory =
 		categoryOptions.includes(selectedCategory) && selectedCategory
 			? selectedCategory
-			: categoryOptions[0] ?? "";
+			: (categoryOptions[0] ?? "");
 	const selectedSeries = history?.category_series?.find(
 		(series) => series.category_id === effectiveCategory
 	);
@@ -347,9 +339,7 @@ function StageHistoryTabContent({
 						<p className="text-xs text-muted-foreground">Senaste stage-metric</p>
 						<p className="text-sm font-medium">
 							{latest?.stage_metric_name
-								? `${latest.stage_metric_name}: ${formatPercent(
-										latest.stage_metric_value ?? null
-									)}`
+								? `${latest.stage_metric_name}: ${formatPercent(latest.stage_metric_value ?? null)}`
 								: "-"}
 						</p>
 					</div>
@@ -372,9 +362,7 @@ function StageHistoryTabContent({
 						label="Övergripande success rate över tid"
 					/>
 					<div className="space-y-2">
-						<Label htmlFor={`${history?.stage ?? "stage"}-history-category`}>
-							Kategori
-						</Label>
+						<Label htmlFor={`${history?.stage ?? "stage"}-history-category`}>Kategori</Label>
 						<select
 							id={`${history?.stage ?? "stage"}-history-category`}
 							className="h-10 w-full rounded-md border bg-background px-3 text-sm"
@@ -395,9 +383,7 @@ function StageHistoryTabContent({
 						points={selectedSeries?.points ?? []}
 						valueKey="success_rate"
 						label={
-							effectiveCategory
-								? `Kategori ${effectiveCategory}: success rate`
-								: "Kategori-trend"
+							effectiveCategory ? `Kategori ${effectiveCategory}: success rate` : "Kategori-trend"
 						}
 					/>
 				</CardContent>
@@ -426,9 +412,7 @@ function StageHistoryTabContent({
 									<p className="text-muted-foreground">
 										Success: {formatPercent(item.success_rate)} · Stage:{" "}
 										{item.stage_metric_name
-											? `${item.stage_metric_name} ${formatPercent(
-													item.stage_metric_value
-												)}`
+											? `${item.stage_metric_name} ${formatPercent(item.stage_metric_value)}`
 											: "-"}
 									</p>
 									<p className="text-muted-foreground">
@@ -476,7 +460,7 @@ function ToolEditor({
 		onChange(tool.tool_id, {
 			keywords: tool.keywords.filter((_, i) => i !== index),
 		});
-	}
+	};
 
 	const addExample = () => {
 		if (newExample.trim()) {
@@ -491,7 +475,7 @@ function ToolEditor({
 		onChange(tool.tool_id, {
 			example_queries: tool.example_queries.filter((_, i) => i !== index),
 		});
-	}
+	};
 
 	return (
 		<div className="space-y-4">
@@ -528,10 +512,7 @@ function ToolEditor({
 					{tool.keywords.map((keyword, index) => (
 						<Badge key={index} variant="secondary" className="gap-1">
 							{keyword}
-							<button
-								onClick={() => removeKeyword(index)}
-								className="ml-1 hover:text-destructive"
-							>
+							<button onClick={() => removeKeyword(index)} className="ml-1 hover:text-destructive">
 								<X className="h-3 w-3" />
 							</button>
 						</Badge>
@@ -560,14 +541,8 @@ function ToolEditor({
 				<div className="space-y-2 mb-2">
 					{tool.example_queries.map((example, index) => (
 						<div key={index} className="flex items-center gap-2">
-							<div className="flex-1 text-sm bg-muted p-2 rounded">
-								{example}
-							</div>
-							<Button
-								onClick={() => removeExample(index)}
-								size="sm"
-								variant="ghost"
-							>
+							<div className="flex-1 text-sm bg-muted p-2 rounded">{example}</div>
+							<Button onClick={() => removeExample(index)} size="sm" variant="ghost">
 								<X className="h-4 w-4" />
 							</Button>
 						</div>
@@ -593,11 +568,7 @@ function ToolEditor({
 
 			{hasChanges && (
 				<div className="flex gap-2 pt-4">
-					<Button
-						onClick={() => onSave(tool.tool_id)}
-						className="gap-2"
-						disabled={isSaving}
-					>
+					<Button onClick={() => onSave(tool.tool_id)} className="gap-2" disabled={isSaving}>
 						<Save className="h-4 w-4" />
 						Spara ändringar
 					</Button>
@@ -624,8 +595,9 @@ export function ToolSettingsPage() {
 	const [activeTab, setActiveTab] = useState("metadata");
 	const [savingToolId, setSavingToolId] = useState<string | null>(null);
 	const [isSavingAll, setIsSavingAll] = useState(false);
-	const [draftRetrievalTuning, setDraftRetrievalTuning] =
-		useState<ToolRetrievalTuning | null>(null);
+	const [draftRetrievalTuning, setDraftRetrievalTuning] = useState<ToolRetrievalTuning | null>(
+		null
+	);
 	const [isSavingRetrievalTuning, setIsSavingRetrievalTuning] = useState(false);
 	const [evalInput, setEvalInput] = useState("");
 	const [showEvalJsonInput, setShowEvalJsonInput] = useState(false);
@@ -633,15 +605,15 @@ export function ToolSettingsPage() {
 	const [holdoutInput, setHoldoutInput] = useState("");
 	const [showHoldoutJsonInput, setShowHoldoutJsonInput] = useState(false);
 	const [evalInputError, setEvalInputError] = useState<string | null>(null);
-	const [generationMode, setGenerationMode] = useState<
-		"category" | "provider" | "global_random"
-	>("category");
+	const [generationMode, setGenerationMode] = useState<"category" | "provider" | "global_random">(
+		"category"
+	);
 	const [evaluationStepTab, setEvaluationStepTab] = useState<
 		"all" | "guide" | "generation" | "agent_eval" | "api_input"
 	>("all");
-	const [generationEvalType, setGenerationEvalType] = useState<
-		"tool_selection" | "api_input"
-	>("tool_selection");
+	const [generationEvalType, setGenerationEvalType] = useState<"tool_selection" | "api_input">(
+		"tool_selection"
+	);
 	const [generationProvider, setGenerationProvider] = useState("scb");
 	const [generationCategory, setGenerationCategory] = useState("");
 	const [generationQuestionCount, setGenerationQuestionCount] = useState(12);
@@ -662,9 +634,9 @@ export function ToolSettingsPage() {
 	const [isStartingAutoLoop, setIsStartingAutoLoop] = useState(false);
 	const [autoLoopJobId, setAutoLoopJobId] = useState<string | null>(null);
 	const [lastAutoLoopNotice, setLastAutoLoopNotice] = useState<string | null>(null);
-	const [autoLoopPromptDrafts, setAutoLoopPromptDrafts] = useState<
-		ToolAutoLoopDraftPromptItem[]
-	>([]);
+	const [autoLoopPromptDrafts, setAutoLoopPromptDrafts] = useState<ToolAutoLoopDraftPromptItem[]>(
+		[]
+	);
 	const [isSavingAutoLoopPromptDrafts, setIsSavingAutoLoopPromptDrafts] = useState(false);
 	const [selectedLibraryPath, setSelectedLibraryPath] = useState("");
 	const [selectedHoldoutLibraryPath, setSelectedHoldoutLibraryPath] = useState("");
@@ -674,30 +646,24 @@ export function ToolSettingsPage() {
 	const [retrievalLimit, setRetrievalLimit] = useState(5);
 	const [useLlmSupervisorReview, setUseLlmSupervisorReview] = useState(true);
 	const [includeDraftMetadata, setIncludeDraftMetadata] = useState(true);
-	const [evaluationResult, setEvaluationResult] =
-		useState<ToolEvaluationResponse | null>(null);
+	const [evaluationResult, setEvaluationResult] = useState<ToolEvaluationResponse | null>(null);
 	const [apiInputEvaluationResult, setApiInputEvaluationResult] =
 		useState<ToolApiInputEvaluationResponse | null>(null);
 	const [evalJobId, setEvalJobId] = useState<string | null>(null);
 	const [apiInputEvalJobId, setApiInputEvalJobId] = useState<string | null>(null);
 	const [lastEvalJobNotice, setLastEvalJobNotice] = useState<string | null>(null);
-	const [lastApiInputEvalJobNotice, setLastApiInputEvalJobNotice] = useState<string | null>(
-		null
-	);
-	const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(
+	const [lastApiInputEvalJobNotice, setLastApiInputEvalJobNotice] = useState<string | null>(null);
+	const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(new Set());
+	const [selectedPromptSuggestionKeys, setSelectedPromptSuggestionKeys] = useState<Set<string>>(
 		new Set()
 	);
-	const [selectedPromptSuggestionKeys, setSelectedPromptSuggestionKeys] = useState<
-		Set<string>
-	>(new Set());
 	const [selectedToolPromptSuggestionKeys, setSelectedToolPromptSuggestionKeys] = useState<
 		Set<string>
 	>(new Set());
 	const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
 	const [isSavingSuggestions, setIsSavingSuggestions] = useState(false);
 	const [isSavingPromptSuggestions, setIsSavingPromptSuggestions] = useState(false);
-	const [isSavingToolPromptSuggestions, setIsSavingToolPromptSuggestions] =
-		useState(false);
+	const [isSavingToolPromptSuggestions, setIsSavingToolPromptSuggestions] = useState(false);
 	const [agentHistoryCategory, setAgentHistoryCategory] = useState("");
 	const [toolHistoryCategory, setToolHistoryCategory] = useState("");
 	const [apiInputHistoryCategory, setApiInputHistoryCategory] = useState("");
@@ -710,8 +676,7 @@ export function ToolSettingsPage() {
 
 	const { data: apiCategories } = useQuery({
 		queryKey: ["admin-tool-api-categories", data?.search_space_id],
-		queryFn: () =>
-			adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
+		queryFn: () => adminToolSettingsApiService.getToolApiCategories(data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
@@ -724,10 +689,7 @@ export function ToolSettingsPage() {
 	const { data: agentEvalHistory } = useQuery({
 		queryKey: ["admin-tool-eval-history", data?.search_space_id, "agent"],
 		queryFn: () =>
-			adminToolSettingsApiService.getToolEvaluationHistory(
-				"agent",
-				data?.search_space_id
-			),
+			adminToolSettingsApiService.getToolEvaluationHistory("agent", data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
@@ -741,10 +703,7 @@ export function ToolSettingsPage() {
 	const { data: apiInputEvalHistory } = useQuery({
 		queryKey: ["admin-tool-eval-history", data?.search_space_id, "api_input"],
 		queryFn: () =>
-			adminToolSettingsApiService.getToolEvaluationHistory(
-				"api_input",
-				data?.search_space_id
-			),
+			adminToolSettingsApiService.getToolEvaluationHistory("api_input", data?.search_space_id),
 		enabled: !!currentUser && typeof data?.search_space_id === "number",
 	});
 
@@ -762,9 +721,7 @@ export function ToolSettingsPage() {
 	const { data: apiInputEvalJobStatus } = useQuery({
 		queryKey: ["admin-tool-api-input-evaluation-job", apiInputEvalJobId],
 		queryFn: () =>
-			adminToolSettingsApiService.getToolApiInputEvaluationStatus(
-				apiInputEvalJobId as string
-			),
+			adminToolSettingsApiService.getToolApiInputEvaluationStatus(apiInputEvalJobId as string),
 		enabled: !!apiInputEvalJobId,
 		refetchInterval: (query) => {
 			const status = query.state.data?.status;
@@ -787,9 +744,7 @@ export function ToolSettingsPage() {
 	const apiProviders = useMemo(() => apiCategories?.providers ?? [], [apiCategories?.providers]);
 
 	const generationCategoryOptions = useMemo(() => {
-		const provider = apiProviders.find(
-			(item) => item.provider_key === generationProvider
-		);
+		const provider = apiProviders.find((item) => item.provider_key === generationProvider);
 		const deduped = new Map<string, { category_id: string; category_name: string }>();
 		for (const item of provider?.categories ?? []) {
 			if (!deduped.has(item.category_id)) {
@@ -960,9 +915,7 @@ export function ToolSettingsPage() {
 
 	const isEvalJobRunning =
 		!!evalJobId &&
-		(!evalJobStatus ||
-			evalJobStatus.status === "pending" ||
-			evalJobStatus.status === "running");
+		(!evalJobStatus || evalJobStatus.status === "pending" || evalJobStatus.status === "running");
 
 	const isApiInputEvalJobRunning =
 		!!apiInputEvalJobId &&
@@ -976,10 +929,7 @@ export function ToolSettingsPage() {
 			autoLoopJobStatus.status === "pending" ||
 			autoLoopJobStatus.status === "running");
 
-	const handleExportEvalRun = (
-		kind: "tool_selection" | "api_input",
-		format: EvalExportFormat
-	) => {
+	const handleExportEvalRun = (kind: "tool_selection" | "api_input", format: EvalExportFormat) => {
 		const isApiInput = kind === "api_input";
 		const jobId = isApiInput ? apiInputEvalJobId : evalJobId;
 		const jobStatus: ExportableEvalJobStatus | undefined = isApiInput
@@ -1020,11 +970,7 @@ export function ToolSettingsPage() {
 					"application/json"
 				);
 			} else {
-				downloadTextFile(
-					stringifyYaml(exportPayload),
-					fileName,
-					"application/yaml"
-				);
+				downloadTextFile(stringifyYaml(exportPayload), fileName, "application/yaml");
 			}
 			toast.success(`Exporterade eval-körning som ${format.toUpperCase()}`);
 		} catch (_error) {
@@ -1042,10 +988,7 @@ export function ToolSettingsPage() {
 		}));
 	};
 
-	const updateRetrievalTuningField = (
-		key: NumericRetrievalTuningField,
-		value: number
-	) => {
+	const updateRetrievalTuningField = (key: NumericRetrievalTuningField, value: number) => {
 		setDraftRetrievalTuning((prev) => {
 			const current = prev ?? data?.retrieval_tuning;
 			if (!current) return prev;
@@ -1068,10 +1011,7 @@ export function ToolSettingsPage() {
 			}
 			return {
 				...current,
-				[key]:
-					key === "rerank_candidates"
-						? Math.max(1, Math.round(value))
-						: Number(value),
+				[key]: key === "rerank_candidates" ? Math.max(1, Math.round(value)) : Number(value),
 				...(key === "semantic_embedding_weight" || key === "structural_embedding_weight"
 					? {
 							embedding_weight:
@@ -1125,10 +1065,7 @@ export function ToolSettingsPage() {
 		if (!data?.search_space_id) return;
 		const tools = toolIds.map((toolId) => draftTools[toolId]).filter(Boolean);
 		if (!tools.length) return;
-		await adminToolSettingsApiService.updateToolSettings(
-			{ tools },
-			data.search_space_id
-		);
+		await adminToolSettingsApiService.updateToolSettings({ tools }, data.search_space_id);
 		await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
 		await refetch();
 	};
@@ -1192,9 +1129,10 @@ export function ToolSettingsPage() {
 				search_space_id: data.search_space_id,
 				eval_type: generationEvalType,
 				mode: generationMode,
-				provider_key: generationMode === "global_random" && generationProvider === "all"
-					? null
-					: generationProvider,
+				provider_key:
+					generationMode === "global_random" && generationProvider === "all"
+						? null
+						: generationProvider,
 				category_id: generationMode === "category" ? generationCategory : null,
 				weather_suite_mode: "mixed",
 				question_count: Math.max(1, Math.min(100, Math.round(normalizedQuestionCount))),
@@ -1212,9 +1150,7 @@ export function ToolSettingsPage() {
 			const generatedTests = Array.isArray(response.payload.tests)
 				? response.payload.tests.length
 				: 0;
-			toast.success(
-				`Genererade ${generatedTests} frågor och sparade ${response.file_name}`
-			);
+			toast.success(`Genererade ${generatedTests} frågor och sparade ${response.file_name}`);
 		} catch (error) {
 			toast.error("Kunde inte generera eval-fil");
 		} finally {
@@ -1270,9 +1206,7 @@ export function ToolSettingsPage() {
 				},
 				use_holdout_suite: autoUseHoldoutSuite,
 				holdout_question_count: normalizedHoldoutCount,
-				holdout_difficulty_profile: autoUseHoldoutSuite
-					? autoHoldoutDifficultyProfile
-					: null,
+				holdout_difficulty_profile: autoUseHoldoutSuite ? autoHoldoutDifficultyProfile : null,
 				target_success_rate: normalizedTarget,
 				max_iterations: normalizedIterations,
 				patience: normalizedPatience,
@@ -1349,50 +1283,44 @@ export function ToolSettingsPage() {
 				setEvalInputError("JSON måste innehålla en tests-array.");
 				return null;
 			}
-			const tests: ToolEvaluationTestCase[] = envelope.tests.map(
-				(item: any, index: number) => ({
-					id: String(item.id ?? `case-${index + 1}`),
-					question: String(item.question ?? ""),
-					difficulty:
-						typeof item.difficulty === "string" ? item.difficulty : undefined,
-					expected:
-						item.expected ||
-						item.expected_tool ||
-						item.expected_category ||
-						item.expected_agent ||
-						item.expected_route ||
-						item.expected_sub_route ||
-						item.plan_requirements
-							? {
-									tool: item.expected?.tool ?? item.expected_tool ?? null,
-									category:
-										item.expected?.category ?? item.expected_category ?? null,
-									agent: item.expected?.agent ?? item.expected_agent ?? null,
-									route: item.expected?.route ?? item.expected_route ?? null,
-									sub_route:
-										item.expected?.sub_route ?? item.expected_sub_route ?? null,
-									plan_requirements: Array.isArray(
-										item.expected?.plan_requirements ?? item.plan_requirements
-									)
-										? (
-												item.expected?.plan_requirements ?? item.plan_requirements
-											).map((value: unknown) => String(value))
-										: [],
-								}
-							: undefined,
-					allowed_tools: Array.isArray(item.allowed_tools)
-						? item.allowed_tools.map((value: unknown) => String(value))
-						: [],
-				})
-			);
+			const tests: ToolEvaluationTestCase[] = envelope.tests.map((item: any, index: number) => ({
+				id: String(item.id ?? `case-${index + 1}`),
+				question: String(item.question ?? ""),
+				difficulty: typeof item.difficulty === "string" ? item.difficulty : undefined,
+				expected:
+					item.expected ||
+					item.expected_tool ||
+					item.expected_category ||
+					item.expected_agent ||
+					item.expected_route ||
+					item.expected_sub_route ||
+					item.plan_requirements
+						? {
+								tool: item.expected?.tool ?? item.expected_tool ?? null,
+								category: item.expected?.category ?? item.expected_category ?? null,
+								agent: item.expected?.agent ?? item.expected_agent ?? null,
+								route: item.expected?.route ?? item.expected_route ?? null,
+								sub_route: item.expected?.sub_route ?? item.expected_sub_route ?? null,
+								plan_requirements: Array.isArray(
+									item.expected?.plan_requirements ?? item.plan_requirements
+								)
+									? (item.expected?.plan_requirements ?? item.plan_requirements).map(
+											(value: unknown) => String(value)
+										)
+									: [],
+							}
+						: undefined,
+				allowed_tools: Array.isArray(item.allowed_tools)
+					? item.allowed_tools.map((value: unknown) => String(value))
+					: [],
+			}));
 			const invalidCase = tests.find((test) => !test.question.trim());
 			if (invalidCase) {
 				setEvalInputError(`Test ${invalidCase.id} saknar question.`);
 				return null;
 			}
 			return {
-				eval_name:
-					typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
+				eval_name: typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
 				target_success_rate:
 					typeof envelope.target_success_rate === "number"
 						? envelope.target_success_rate
@@ -1430,26 +1358,23 @@ export function ToolSettingsPage() {
 							plan_requirements: Array.isArray(
 								item.expected?.plan_requirements ?? item.plan_requirements
 							)
-								? (
-										item.expected?.plan_requirements ?? item.plan_requirements
-									).map((value: unknown) => String(value))
-								: [],
-							required_fields: Array.isArray(
-								item.expected?.required_fields ?? item.required_fields
-							)
-								? (item.expected?.required_fields ?? item.required_fields).map(
+								? (item.expected?.plan_requirements ?? item.plan_requirements).map(
 										(value: unknown) => String(value)
 									)
 								: [],
+							required_fields: Array.isArray(item.expected?.required_fields ?? item.required_fields)
+								? (item.expected?.required_fields ?? item.required_fields).map((value: unknown) =>
+										String(value)
+									)
+								: [],
 							field_values:
-								typeof (item.expected?.field_values ?? item.field_values) ===
-									"object" &&
+								typeof (item.expected?.field_values ?? item.field_values) === "object" &&
 								(item.expected?.field_values ?? item.field_values) !== null
 									? (item.expected?.field_values ?? item.field_values)
 									: {},
 							allow_clarification:
-								typeof (item.expected?.allow_clarification ??
-									item.allow_clarification) === "boolean"
+								typeof (item.expected?.allow_clarification ?? item.allow_clarification) ===
+								"boolean"
 									? (item.expected?.allow_clarification ?? item.allow_clarification)
 									: undefined,
 						}
@@ -1502,9 +1427,7 @@ export function ToolSettingsPage() {
 
 			let holdoutTestsRaw: any[] = [];
 			if (useHoldoutSuite) {
-				holdoutTestsRaw = Array.isArray(envelope.holdout_tests)
-					? envelope.holdout_tests
-					: [];
+				holdoutTestsRaw = Array.isArray(envelope.holdout_tests) ? envelope.holdout_tests : [];
 				const holdoutTrimmed = holdoutInput.trim();
 				if (holdoutTrimmed) {
 					let parsedHoldout: any;
@@ -1516,9 +1439,7 @@ export function ToolSettingsPage() {
 					}
 					const extractedHoldoutTests = extractTestsArrayFromEnvelope(parsedHoldout);
 					if (!extractedHoldoutTests) {
-						setEvalInputError(
-							"Holdout-JSON måste innehålla en tests-array (eller holdout_tests)."
-						);
+						setEvalInputError("Holdout-JSON måste innehålla en tests-array (eller holdout_tests).");
 						return null;
 					}
 					holdoutTestsRaw = extractedHoldoutTests;
@@ -1537,8 +1458,7 @@ export function ToolSettingsPage() {
 				return null;
 			}
 			return {
-				eval_name:
-					typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
+				eval_name: typeof envelope.eval_name === "string" ? envelope.eval_name : undefined,
 				target_success_rate:
 					typeof envelope.target_success_rate === "number"
 						? envelope.target_success_rate
@@ -1566,9 +1486,7 @@ export function ToolSettingsPage() {
 				tests: parsedInput.tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				retrieval_tuning_override:
-					includeDraftMetadata && draftRetrievalTuning
-						? draftRetrievalTuning
-						: undefined,
+					includeDraftMetadata && draftRetrievalTuning ? draftRetrievalTuning : undefined,
 			});
 			setEvalJobId(started.job_id);
 			setLastEvalJobNotice(null);
@@ -1598,9 +1516,7 @@ export function ToolSettingsPage() {
 				holdout_tests: parsedInput.holdout_tests,
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				retrieval_tuning_override:
-					includeDraftMetadata && draftRetrievalTuning
-						? draftRetrievalTuning
-						: undefined,
+					includeDraftMetadata && draftRetrievalTuning ? draftRetrievalTuning : undefined,
 			});
 			setApiInputEvalJobId(started.job_id);
 			setLastApiInputEvalJobNotice(null);
@@ -1770,9 +1686,7 @@ export function ToolSettingsPage() {
 				metadata_patch: includeDraftMetadata ? metadataPatch : [],
 				failed_cases: evaluationResult.results.filter((result) => !result.passed),
 			});
-			setEvaluationResult((prev) =>
-				prev ? { ...prev, suggestions: response.suggestions } : prev
-			);
+			setEvaluationResult((prev) => (prev ? { ...prev, suggestions: response.suggestions } : prev));
 			setSelectedSuggestionIds(new Set());
 			toast.success("Förslag uppdaterade");
 		} catch (error) {
@@ -1798,9 +1712,7 @@ export function ToolSettingsPage() {
 		}
 		setIsSavingRetrievalTuning(true);
 		try {
-			await adminToolSettingsApiService.updateRetrievalTuning(
-				suggestion.proposed_tuning
-			);
+			await adminToolSettingsApiService.updateRetrievalTuning(suggestion.proposed_tuning);
 			await queryClient.invalidateQueries({ queryKey: ["admin-tool-settings"] });
 			await refetch();
 			setDraftRetrievalTuning(suggestion.proposed_tuning);
@@ -1890,8 +1802,7 @@ export function ToolSettingsPage() {
 			<Alert variant="destructive">
 				<AlertCircle className="h-4 w-4" />
 				<AlertDescription>
-					Fel vid hämtning av verktygsdata. Kontrollera att du har
-					administratörsbehörighet.
+					Fel vid hämtning av verktygsdata. Kontrollera att du har administratörsbehörighet.
 				</AlertDescription>
 			</Alert>
 		);
@@ -1914,15 +1825,10 @@ export function ToolSettingsPage() {
 		}))
 		.filter((category) => category.tools.length > 0);
 
-	const totalTools = filteredCategories.reduce(
-		(acc, cat) => acc + cat.tools.length,
-		0
-	);
+	const totalTools = filteredCategories.reduce((acc, cat) => acc + cat.tools.length, 0);
 	const showGuideSections = evaluationStepTab === "all" || evaluationStepTab === "guide";
-	const showGenerationSections =
-		evaluationStepTab === "all" || evaluationStepTab === "generation";
-	const showAgentSections =
-		evaluationStepTab === "all" || evaluationStepTab === "agent_eval";
+	const showGenerationSections = evaluationStepTab === "all" || evaluationStepTab === "generation";
+	const showAgentSections = evaluationStepTab === "all" || evaluationStepTab === "agent_eval";
 	const showApiSections = evaluationStepTab === "all" || evaluationStepTab === "api_input";
 
 	return (
@@ -1930,15 +1836,15 @@ export function ToolSettingsPage() {
 			<div>
 				<h1 className="text-3xl font-bold">Tool Settings</h1>
 				<p className="text-muted-foreground mt-2">
-						Hantera metadata och kör Tool Evaluation Loop i samma adminflöde.
+					Hantera metadata och kör Tool Evaluation Loop i samma adminflöde.
 				</p>
 			</div>
 
 			<Alert>
 				<AlertCircle className="h-4 w-4" />
 				<AlertDescription>
-					Metadata här styr verklig tool_retrieval. Evaluation kör planering och
-					toolval i dry-run utan riktiga API-anrop.
+					Metadata här styr verklig tool_retrieval. Evaluation kör planering och toolval i dry-run
+					utan riktiga API-anrop.
 				</AlertDescription>
 			</Alert>
 
@@ -1957,8 +1863,8 @@ export function ToolSettingsPage() {
 						<CardHeader>
 							<CardTitle>Guide: Så använder du Metadata-fliken</CardTitle>
 							<CardDescription>
-								Denna flik styr produktionsbeteendet för tool retrieval. Spara här när
-								du är nöjd med resultat från eval-fliken.
+								Denna flik styr produktionsbeteendet för tool retrieval. Spara här när du är nöjd
+								med resultat från eval-fliken.
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-3 text-sm">
@@ -1970,25 +1876,22 @@ export function ToolSettingsPage() {
 										<span className="font-medium">Exempelfrågor</span> per verktyg.
 									</li>
 									<li>
-										Ställ in <span className="font-medium">Retrieval Tuning</span> om
-										tool-valen missar rätt kandidat.
+										Ställ in <span className="font-medium">Retrieval Tuning</span> om tool-valen
+										missar rätt kandidat.
+									</li>
+									<li>Spara ändringar i metadata-fliken (enskilt eller “Spara alla ändringar”).</li>
+									<li>
+										Gå till <span className="font-medium">Tool Evaluation</span> och kör nya tester.
 									</li>
 									<li>
-										Spara ändringar i metadata-fliken (enskilt eller “Spara alla ändringar”).
-									</li>
-									<li>
-										Gå till <span className="font-medium">Tool Evaluation</span> och kör
-										nya tester.
-									</li>
-									<li>
-										Kom tillbaka hit och spara bara de ändringar som förbättrar både
-										huvudsuite och holdout.
+										Kom tillbaka hit och spara bara de ändringar som förbättrar både huvudsuite och
+										holdout.
 									</li>
 								</ol>
 							</div>
 							<p className="text-xs text-muted-foreground">
-								Tips: “Senaste eval-körning” visar snabb status på hur senaste
-								justeringar presterade.
+								Tips: “Senaste eval-körning” visar snabb status på hur senaste justeringar
+								presterade.
 							</p>
 						</CardContent>
 					</Card>
@@ -2004,9 +1907,7 @@ export function ToolSettingsPage() {
 							</CardHeader>
 							<CardContent className="space-y-4">
 								{apiCategories.providers.map((provider) => {
-									const topLevel = provider.categories.filter(
-										(item) => item.level === "top_level"
-									);
+									const topLevel = provider.categories.filter((item) => item.level === "top_level");
 									const subcategories = provider.categories.filter(
 										(item) => item.level !== "top_level"
 									);
@@ -2014,12 +1915,8 @@ export function ToolSettingsPage() {
 										<div key={provider.provider_key} className="rounded border p-3 space-y-3">
 											<div className="flex flex-wrap items-center gap-2">
 												<Badge variant="secondary">{provider.provider_name}</Badge>
-												<Badge variant="outline">
-													{topLevel.length} toppnivå
-												</Badge>
-												<Badge variant="outline">
-													{subcategories.length} underkategorier
-												</Badge>
+												<Badge variant="outline">{topLevel.length} toppnivå</Badge>
+												<Badge variant="outline">{subcategories.length} underkategorier</Badge>
 											</div>
 											<div className="grid gap-4 lg:grid-cols-2">
 												<div className="space-y-2">
@@ -2118,16 +2015,14 @@ export function ToolSettingsPage() {
 											<div>
 												<p className="text-sm font-medium">Live routing rollout</p>
 												<p className="text-xs text-muted-foreground">
-													Aktivera fasstyrd utrullning (Shadow → Tool gate → Agent auto → Adaptive
-													→ Intent finjustering).
+													Aktivera fasstyrd utrullning (Shadow → Tool gate → Agent auto → Adaptive →
+													Intent finjustering).
 												</p>
 											</div>
 											<div className="flex items-center gap-2">
 												<Badge
 													variant={
-														draftRetrievalTuning.live_routing_enabled
-															? "default"
-															: "outline"
+														draftRetrievalTuning.live_routing_enabled ? "default" : "outline"
 													}
 												>
 													{draftRetrievalTuning.live_routing_enabled ? "Aktiv" : "Av"}
@@ -2154,9 +2049,7 @@ export function ToolSettingsPage() {
 													<option value="tool_gate">Fas 1 — Tool gate</option>
 													<option value="agent_auto">Fas 1b — Agent auto-select</option>
 													<option value="adaptive">Fas 2 — Adaptiva per-tool thresholds</option>
-													<option value="intent_finetune">
-														Fas 3 — Intent shortlist/vikter
-													</option>
+													<option value="intent_finetune">Fas 3 — Intent shortlist/vikter</option>
 												</select>
 											</div>
 											<div className="space-y-1">
@@ -2456,24 +2349,18 @@ export function ToolSettingsPage() {
 									</div>
 									<div className="flex items-center gap-2">
 										<Badge variant="outline">
-											{retrievalTuningChanged
-												? "Osparade viktändringar"
-												: "Vikter i synk"}
+											{retrievalTuningChanged ? "Osparade viktändringar" : "Vikter i synk"}
 										</Badge>
 										<Button
 											onClick={saveRetrievalTuning}
 											disabled={!retrievalTuningChanged || isSavingRetrievalTuning}
 										>
-											{isSavingRetrievalTuning
-												? "Sparar vikter..."
-												: "Spara retrieval-vikter"}
+											{isSavingRetrievalTuning ? "Sparar vikter..." : "Spara retrieval-vikter"}
 										</Button>
 									</div>
 								</>
 							) : (
-								<p className="text-sm text-muted-foreground">
-									Kunde inte läsa retrieval-vikter.
-								</p>
+								<p className="text-sm text-muted-foreground">Kunde inte läsa retrieval-vikter.</p>
 							)}
 						</CardContent>
 					</Card>
@@ -2488,18 +2375,14 @@ export function ToolSettingsPage() {
 						<div className="text-sm text-muted-foreground">
 							{totalTools} verktyg i {filteredCategories.length} kategorier
 						</div>
-						<Badge variant="outline">
-							{changedToolIds.length} osparade ändringar
-						</Badge>
+						<Badge variant="outline">{changedToolIds.length} osparade ändringar</Badge>
 						<Button
 							onClick={saveAllChanges}
 							disabled={!changedToolIds.length || isSavingAll}
 							className="gap-2"
 						>
 							<Save className="h-4 w-4" />
-							{isSavingAll
-								? "Sparar..."
-								: `Spara alla ändringar (${changedToolIds.length})`}
+							{isSavingAll ? "Sparar..." : `Spara alla ändringar (${changedToolIds.length})`}
 						</Button>
 					</div>
 
@@ -2511,9 +2394,7 @@ export function ToolSettingsPage() {
 										<AccordionTrigger className="hover:no-underline">
 											<div className="flex items-center gap-3">
 												<CardTitle>{category.category_name}</CardTitle>
-												<Badge variant="outline">
-													{category.tools.length} verktyg
-												</Badge>
+												<Badge variant="outline">{category.tools.length} verktyg</Badge>
 											</div>
 										</AccordionTrigger>
 									</CardHeader>
@@ -2530,17 +2411,11 @@ export function ToolSettingsPage() {
 																<div>
 																	<div className="flex items-center gap-2 mb-1">
 																		<h3 className="font-semibold">{draft.name}</h3>
-																		<Badge
-																			variant="secondary"
-																			className="text-xs"
-																		>
+																		<Badge variant="secondary" className="text-xs">
 																			{draft.tool_id}
 																		</Badge>
 																		{(tool.has_override || changed) && (
-																			<Badge
-																				variant="outline"
-																				className="text-xs"
-																			>
+																			<Badge variant="outline" className="text-xs">
 																				override
 																			</Badge>
 																		)}
@@ -2613,150 +2488,137 @@ export function ToolSettingsPage() {
 					</Card>
 
 					{showGuideSections && (
-					<Card>
-						<CardHeader>
-							<CardTitle>Steg 0: Guide och arbetssätt</CardTitle>
-							<CardDescription>
-								Följ stegen nedan i ordning för att trimma route, agentval, tool-val,
-								API-input och prompts på ett säkert sätt (dry-run).
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-4 text-sm">
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg 1: Förbered test-upplägg</p>
-								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-									<li>
-										Börja med <span className="font-medium">Per kategori/API</span> för
-										precision.
-									</li>
-									<li>
-										Använd sedan <span className="font-medium">Global random mix</span>{" "}
-										för regression över flera kategorier.
-									</li>
-									<li>
-										Rekommendation: 10-15 frågor per kategori och 25-40 frågor globalt.
-									</li>
-								</ul>
-							</div>
+						<Card>
+							<CardHeader>
+								<CardTitle>Steg 0: Guide och arbetssätt</CardTitle>
+								<CardDescription>
+									Följ stegen nedan i ordning för att trimma route, agentval, tool-val, API-input
+									och prompts på ett säkert sätt (dry-run).
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4 text-sm">
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Steg 1: Förbered test-upplägg</p>
+									<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+										<li>
+											Börja med <span className="font-medium">Per kategori/API</span> för precision.
+										</li>
+										<li>
+											Använd sedan <span className="font-medium">Global random mix</span> för
+											regression över flera kategorier.
+										</li>
+										<li>Rekommendation: 10-15 frågor per kategori och 25-40 frågor globalt.</li>
+									</ul>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg 2: Generera eller ladda eval-JSON</p>
-								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
-									<li>Välj Läge, Eval-typ, Provider, Kategori och antal frågor.</li>
-									<li>Klicka “Generera + spara eval JSON”.</li>
-									<li>
-										Klicka “Ladda i eval-input” på filen i listan
-										(<span className="font-medium">/eval/api</span>).
-									</li>
-									<li>
-										Alternativt: ladda upp egen fil via “Ladda JSON-fil” eller klistra in i
-										JSON-fältet.
-									</li>
-								</ol>
-							</div>
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Steg 2: Generera eller ladda eval-JSON</p>
+									<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+										<li>Välj Läge, Eval-typ, Provider, Kategori och antal frågor.</li>
+										<li>Klicka “Generera + spara eval JSON”.</li>
+										<li>
+											Klicka “Ladda i eval-input” på filen i listan (
+											<span className="font-medium">/eval/api</span>).
+										</li>
+										<li>
+											Alternativt: ladda upp egen fil via “Ladda JSON-fil” eller klistra in i
+											JSON-fältet.
+										</li>
+									</ol>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">
-									Steg 3: Kör Agentval Eval (route + sub-route + agent + tool + plan)
-								</p>
-								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
-									<li>
-										Sätt <span className="font-medium">Retrieval K</span> (5 är standard,
-										8-10 för svårare frågor).
-									</li>
-									<li>
-										Behåll “Inkludera draft metadata” aktiv om du vill testa osparade
-										ändringar.
-									</li>
-									<li>Klicka “Run Tool Evaluation”.</li>
-									<li>
-										Följ “Körstatus per fråga” och kontrollera:
-										<span className="font-medium">
-											{" "}
-											Route accuracy, Sub-route accuracy, Agent accuracy, Plan
-											accuracy, Tool accuracy
-										</span>
-										.
-									</li>
-								</ol>
-							</div>
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">
+										Steg 3: Kör Agentval Eval (route + sub-route + agent + tool + plan)
+									</p>
+									<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+										<li>
+											Sätt <span className="font-medium">Retrieval K</span> (5 är standard, 8-10 för
+											svårare frågor).
+										</li>
+										<li>
+											Behåll “Inkludera draft metadata” aktiv om du vill testa osparade ändringar.
+										</li>
+										<li>Klicka “Run Tool Evaluation”.</li>
+										<li>
+											Följ “Körstatus per fråga” och kontrollera:
+											<span className="font-medium">
+												{" "}
+												Route accuracy, Sub-route accuracy, Agent accuracy, Plan accuracy, Tool
+												accuracy
+											</span>
+											.
+										</li>
+									</ol>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg 4: Förbättra och kör om</p>
-								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
-									<li>
-										Använd “Metadata-förslag” för description, keywords och
-										exempelfrågor.
-									</li>
-									<li>
-										Använd “Föreslagen tuning” för retrieval-vikter och spara vid behov.
-									</li>
-									<li>
-										Använd “Prompt-förslag från Tool Eval” för router/agent-prompts.
-									</li>
-									<li>Kör om samma suite och jämför del-metrics tills resultatet stabiliseras.</li>
-								</ol>
-							</div>
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Steg 4: Förbättra och kör om</p>
+									<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+										<li>Använd “Metadata-förslag” för description, keywords och exempelfrågor.</li>
+										<li>Använd “Föreslagen tuning” för retrieval-vikter och spara vid behov.</li>
+										<li>Använd “Prompt-förslag från Tool Eval” för router/agent-prompts.</li>
+										<li>
+											Kör om samma suite och jämför del-metrics tills resultatet stabiliseras.
+										</li>
+									</ol>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">
-									Retrieval refresh triggers (arkitekturregel)
-								</p>
-								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-									<li>
-										Om vald agent inte kan lösa frågan med tillgängliga verktyg:
-										kör <span className="font-medium">retrieve_agents()</span> igen.
-									</li>
-									<li>
-										Om valda verktyg inte matchar uppgiften:
-										kör <span className="font-medium">retrieve_tools</span> igen med
-										omformulerad intent.
-									</li>
-									<li>
-										Om användaren byter riktning/ämne:
-										sluta forcera tidigare val och gör ny retrieval innan nästa steg.
-									</li>
-									<li>
-										Eval-systemet visar nu supervisor-spår och en automatisk
-										supervisor-granskning per test för att upptäcka detta tidigt.
-									</li>
-								</ul>
-							</div>
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Retrieval refresh triggers (arkitekturregel)</p>
+									<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+										<li>
+											Om vald agent inte kan lösa frågan med tillgängliga verktyg: kör{" "}
+											<span className="font-medium">retrieve_agents()</span> igen.
+										</li>
+										<li>
+											Om valda verktyg inte matchar uppgiften: kör{" "}
+											<span className="font-medium">retrieve_tools</span> igen med omformulerad
+											intent.
+										</li>
+										<li>
+											Om användaren byter riktning/ämne: sluta forcera tidigare val och gör ny
+											retrieval innan nästa steg.
+										</li>
+										<li>
+											Eval-systemet visar nu supervisor-spår och en automatisk supervisor-granskning
+											per test för att upptäcka detta tidigt.
+										</li>
+									</ul>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg 5: Kör API Input Eval (utan API-anrop)</p>
-								<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
-									<li>
-										Välj suite med <span className="font-medium">required_fields</span>{" "}
-										(och gärna <span className="font-medium">field_values</span>).
-									</li>
-									<li>Klicka “Run API Input Eval (dry-run)”.</li>
-									<li>
-										Kontrollera: Schema validity, Required-field recall, Field-value
-										accuracy, Clarification accuracy.
-									</li>
-									<li>
-										Spara “Prompt-förslag från API Input Eval” och kör om tills stabilt.
-									</li>
-								</ol>
-							</div>
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Steg 5: Kör API Input Eval (utan API-anrop)</p>
+									<ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+										<li>
+											Välj suite med <span className="font-medium">required_fields</span> (och gärna{" "}
+											<span className="font-medium">field_values</span>).
+										</li>
+										<li>Klicka “Run API Input Eval (dry-run)”.</li>
+										<li>
+											Kontrollera: Schema validity, Required-field recall, Field-value accuracy,
+											Clarification accuracy.
+										</li>
+										<li>Spara “Prompt-förslag från API Input Eval” och kör om tills stabilt.</li>
+									</ol>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Steg 6: Använd holdout (anti-overfitting)</p>
-								<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-									<li>Aktivera “Använd holdout-suite”.</li>
-									<li>Klistra in separat holdout-JSON eller lägg holdout_tests i huvud-JSON.</li>
-									<li>
-										Optimera på huvudsuite, men godkänn endast ändringar som även förbättrar
-										holdout.
-									</li>
-								</ul>
-							</div>
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Steg 6: Använd holdout (anti-overfitting)</p>
+									<ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+										<li>Aktivera “Använd holdout-suite”.</li>
+										<li>Klistra in separat holdout-JSON eller lägg holdout_tests i huvud-JSON.</li>
+										<li>
+											Optimera på huvudsuite, men godkänn endast ändringar som även förbättrar
+											holdout.
+										</li>
+									</ul>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Minsta JSON-format (Tool Eval)</p>
-								<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
-{`{
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Minsta JSON-format (Tool Eval)</p>
+									<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
+										{`{
   "target_success_rate": 0.85,
   "tests": [
     {
@@ -2776,13 +2638,13 @@ export function ToolSettingsPage() {
     }
   ]
 }`}
-								</pre>
-							</div>
+									</pre>
+								</div>
 
-							<div className="rounded border p-3 space-y-2">
-								<p className="font-medium">Minsta JSON-format (API Input Eval)</p>
-								<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
-{`{
+								<div className="rounded border p-3 space-y-2">
+									<p className="font-medium">Minsta JSON-format (API Input Eval)</p>
+									<pre className="text-[11px] whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-muted-foreground">
+										{`{
   "target_success_rate": 0.85,
   "tests": [
     {
@@ -2804,409 +2666,383 @@ export function ToolSettingsPage() {
     }
   ]
 }`}
-								</pre>
-							</div>
-						</CardContent>
-					</Card>
+									</pre>
+								</div>
+							</CardContent>
+						</Card>
 					)}
 
 					{showGuideSections && (
-					<Card>
-						<CardHeader>
-							<CardTitle>Stegöversikt</CardTitle>
-							<CardDescription>
-								Arbeta i denna ordning för ett tydligt och repeterbart eval-flöde.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="flex flex-wrap items-center gap-2 text-xs">
-							<Badge variant="secondary">Steg 1: Generera/Ladda frågor</Badge>
-							<Badge variant="secondary">
-								Steg 2: Agentval Eval (route + agent + tool + plan)
-							</Badge>
-							<Badge variant="secondary">Steg 3: API Input Eval</Badge>
-							<Badge variant="secondary">Steg 4: Holdout + spara förbättringar</Badge>
-						</CardContent>
-					</Card>
+						<Card>
+							<CardHeader>
+								<CardTitle>Stegöversikt</CardTitle>
+								<CardDescription>
+									Arbeta i denna ordning för ett tydligt och repeterbart eval-flöde.
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="flex flex-wrap items-center gap-2 text-xs">
+								<Badge variant="secondary">Steg 1: Generera/Ladda frågor</Badge>
+								<Badge variant="secondary">
+									Steg 2: Agentval Eval (route + agent + tool + plan)
+								</Badge>
+								<Badge variant="secondary">Steg 3: API Input Eval</Badge>
+								<Badge variant="secondary">Steg 4: Holdout + spara förbättringar</Badge>
+							</CardContent>
+						</Card>
 					)}
 
 					{showGenerationSections && (
-					<Card>
-						<CardHeader>
-							<CardTitle>Steg 1: Generera/Ladda eval-frågor</CardTitle>
-							<CardDescription>
-								Skapa JSON i rätt format, spara i /eval/api och ladda direkt in i
-								eval-run. Frågor genereras på svenska och med Sverige-fokus
-								(städer, vägar, politik, väder m.m.) utifrån vald tool-kategori.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
-								<div className="space-y-2">
-									<Label htmlFor="generation-mode">Läge</Label>
-									<select
-										id="generation-mode"
-										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-										value={generationMode}
-										onChange={(event) =>
-											setGenerationMode(
-												event.target.value === "global_random"
-													? "global_random"
-													: event.target.value === "provider"
-														? "provider"
-														: "category"
-											)
-										}
-									>
-										<option value="category">Per kategori/API</option>
-										<option value="provider">
-											Huvudkategori/provider (alla underkategorier)
-										</option>
-										<option value="global_random">
-											Random mix från flera kategorier (global tuning)
-										</option>
-									</select>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="generation-eval-type">Eval-typ</Label>
-									<select
-										id="generation-eval-type"
-										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-										value={generationEvalType}
-										onChange={(event) =>
-											setGenerationEvalType(
-												event.target.value === "api_input"
-													? "api_input"
-													: "tool_selection"
-											)
-										}
-									>
-										<option value="tool_selection">Tool selection</option>
-										<option value="api_input">API input (required fields)</option>
-									</select>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="generation-provider">Provider</Label>
-									<select
-										id="generation-provider"
-										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-										value={generationProvider}
-										onChange={(event) => setGenerationProvider(event.target.value)}
-									>
-										{generationMode === "global_random" && (
-											<option value="all">Alla providers</option>
-										)}
-										{apiProviders.map((provider) => (
-											<option
-												key={provider.provider_key}
-												value={provider.provider_key}
-											>
-												{provider.provider_name}
-											</option>
-										))}
-									</select>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="generation-question-count">Antal frågor</Label>
-									<Input
-										id="generation-question-count"
-										type="number"
-										min={1}
-										max={100}
-										value={generationQuestionCount}
-										onChange={(event) =>
-											setGenerationQuestionCount(
-												Number.parseInt(event.target.value || "12", 10)
-											)
-										}
-									/>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="generation-difficulty">Svårighetsgrad</Label>
-									<select
-										id="generation-difficulty"
-										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-										value={generationDifficultyProfile}
-										onChange={(event) =>
-											setGenerationDifficultyProfile(
-												event.target.value === "lätt"
-													? "lätt"
-													: event.target.value === "medel"
-														? "medel"
-														: event.target.value === "svår"
-															? "svår"
-															: "mixed"
-											)
-										}
-									>
-										<option value="mixed">Blandad (lätt + medel + svår)</option>
-										<option value="lätt">Lätt</option>
-										<option value="medel">Medel</option>
-										<option value="svår">Svår</option>
-									</select>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="generation-eval-name">Eval-namn (valfritt)</Label>
-									<Input
-										id="generation-eval-name"
-										placeholder="scb-prisindex-mars-2026"
-										value={generationEvalName}
-										onChange={(event) => setGenerationEvalName(event.target.value)}
-									/>
-								</div>
-							</div>
-
-							{generationMode === "category" && (
-								<div className="space-y-2">
-									<Label htmlFor="generation-category">Kategori</Label>
-									<select
-										id="generation-category"
-										className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-										value={generationCategory}
-										onChange={(event) => setGenerationCategory(event.target.value)}
-									>
-										{generationCategoryOptions.length === 0 && (
-											<option value="">Inga kategorier hittades</option>
-										)}
-										{generationCategoryOptions.map((option) => (
-											<option key={option.category_id} value={option.category_id}>
-												{option.category_name} ({option.category_id})
-											</option>
-										))}
-									</select>
-								</div>
-							)}
-							{generationMode === "provider" && (
-								<p className="text-xs text-muted-foreground">
-									Huvudkategori-läge: frågor genereras över hela vald provider
-									(underkategorier blandas automatiskt).
-								</p>
-							)}
-							<p className="text-xs text-muted-foreground">
-								Svårighetsgrad sparas i varje test som <span className="font-medium">difficulty</span>{" "}
-								och visas i eval-resultaten för separat uppföljning.
-							</p>
-
-							<div className="flex flex-wrap items-center gap-2">
-								<Button
-									onClick={handleGenerateEvalLibraryFile}
-									disabled={isGeneratingEvalFile}
-								>
-									{isGeneratingEvalFile ? "Genererar..." : "Generera + spara eval JSON"}
-								</Button>
-								{selectedLibraryPath && (
-									<Badge variant="outline">Vald fil: {selectedLibraryPath}</Badge>
-								)}
-							</div>
-
-							<div className="rounded border p-3 space-y-3">
-								<div className="flex flex-wrap items-center justify-between gap-2">
-									<p className="text-sm font-medium">
-										Auto-läge: loopa till önskad success rate
-									</p>
-									{autoLoopJobId && (
-										<Badge variant="outline">Jobb: {autoLoopJobId.slice(0, 8)}</Badge>
-									)}
-								</div>
-								<p className="text-xs text-muted-foreground">
-									Flöde: generera frågor → kör eval → föreslå metadata/prompt/vikter →
-									uppdatera draft-utkast → kör igen tills target nås eller failsafe bryter.
-								</p>
-								<div className="grid gap-3 md:grid-cols-4">
+						<Card>
+							<CardHeader>
+								<CardTitle>Steg 1: Generera/Ladda eval-frågor</CardTitle>
+								<CardDescription>
+									Skapa JSON i rätt format, spara i /eval/api och ladda direkt in i eval-run. Frågor
+									genereras på svenska och med Sverige-fokus (städer, vägar, politik, väder m.m.)
+									utifrån vald tool-kategori.
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4">
+								<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
 									<div className="space-y-2">
-										<Label htmlFor="auto-target-success">Target success</Label>
-										<Input
-											id="auto-target-success"
-											type="number"
-											min={0}
-											max={1}
-											step={0.01}
-											value={autoTargetSuccessRate}
+										<Label htmlFor="generation-mode">Läge</Label>
+										<select
+											id="generation-mode"
+											className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+											value={generationMode}
 											onChange={(event) =>
-												setAutoTargetSuccessRate(
-													Number.parseFloat(event.target.value || "0.85")
+												setGenerationMode(
+													event.target.value === "global_random"
+														? "global_random"
+														: event.target.value === "provider"
+															? "provider"
+															: "category"
 												)
-											}
-										/>
-									</div>
-									<div className="space-y-2">
-										<Label htmlFor="auto-max-iterations">Max iterationer</Label>
-										<Input
-											id="auto-max-iterations"
-											type="number"
-											min={1}
-											max={30}
-											value={autoMaxIterations}
-											onChange={(event) =>
-												setAutoMaxIterations(
-													Number.parseInt(event.target.value || "6", 10)
-												)
-											}
-										/>
-									</div>
-									<div className="space-y-2">
-										<Label htmlFor="auto-patience">Patience (failsafe)</Label>
-										<Input
-											id="auto-patience"
-											type="number"
-											min={1}
-											max={12}
-											value={autoPatience}
-											onChange={(event) =>
-												setAutoPatience(
-													Number.parseInt(event.target.value || "2", 10)
-												)
-											}
-										/>
-									</div>
-									<div className="space-y-2">
-										<Label htmlFor="auto-min-delta">Min förbättring / run</Label>
-										<Input
-											id="auto-min-delta"
-											type="number"
-											min={0}
-											max={0.25}
-											step={0.001}
-											value={autoMinImprovementDelta}
-											onChange={(event) =>
-												setAutoMinImprovementDelta(
-													Number.parseFloat(event.target.value || "0.005")
-												)
-											}
-										/>
-									</div>
-								</div>
-								<div className="rounded border p-3 space-y-3">
-									<div className="flex items-center gap-2">
-										<Switch
-											checked={autoUseHoldoutSuite}
-											onCheckedChange={setAutoUseHoldoutSuite}
-										/>
-										<span className="text-sm font-medium">
-											Inkludera auto-genererad holdout-suite
-										</span>
-									</div>
-									<p className="text-xs text-muted-foreground">
-										När holdout är på genereras en separat suite. Auto-läget jämför train
-										och holdout per iteration för att upptäcka överanpassning.
-									</p>
-									{autoUseHoldoutSuite && (
-										<div className="grid gap-3 md:grid-cols-2">
-											<div className="space-y-2">
-												<Label htmlFor="auto-holdout-question-count">
-													Holdout antal frågor
-												</Label>
-												<Input
-													id="auto-holdout-question-count"
-													type="number"
-													min={1}
-													max={100}
-													value={autoHoldoutQuestionCount}
-													onChange={(event) =>
-														setAutoHoldoutQuestionCount(
-															Number.parseInt(event.target.value || "8", 10)
-														)
-													}
-												/>
-											</div>
-											<div className="space-y-2">
-												<Label htmlFor="auto-holdout-difficulty">
-													Holdout svårighetsprofil
-												</Label>
-												<select
-													id="auto-holdout-difficulty"
-													className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-													value={autoHoldoutDifficultyProfile}
-													onChange={(event) =>
-														setAutoHoldoutDifficultyProfile(
-															event.target.value === "lätt"
-																? "lätt"
-																: event.target.value === "medel"
-																	? "medel"
-																	: event.target.value === "svår"
-																		? "svår"
-																		: "mixed"
-														)
-													}
-												>
-													<option value="mixed">Blandad</option>
-													<option value="lätt">Lätt</option>
-													<option value="medel">Medel</option>
-													<option value="svår">Svår</option>
-												</select>
-											</div>
-										</div>
-									)}
-								</div>
-								<div className="flex flex-wrap items-center gap-2">
-									<Button
-										onClick={handleStartAutoLoop}
-										disabled={isStartingAutoLoop || isAutoLoopRunning}
-									>
-										{isStartingAutoLoop
-											? "Startar auto-läge..."
-											: isAutoLoopRunning
-												? "Auto-läge körs..."
-												: "Starta auto-läge"}
-									</Button>
-									{autoLoopJobStatus && (
-										<Badge
-											variant={
-												autoLoopJobStatus.status === "failed"
-													? "destructive"
-													: autoLoopJobStatus.status === "completed"
-														? "default"
-														: "secondary"
 											}
 										>
-											{autoLoopJobStatus.status}
-										</Badge>
+											<option value="category">Per kategori/API</option>
+											<option value="provider">
+												Huvudkategori/provider (alla underkategorier)
+											</option>
+											<option value="global_random">
+												Random mix från flera kategorier (global tuning)
+											</option>
+										</select>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="generation-eval-type">Eval-typ</Label>
+										<select
+											id="generation-eval-type"
+											className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+											value={generationEvalType}
+											onChange={(event) =>
+												setGenerationEvalType(
+													event.target.value === "api_input" ? "api_input" : "tool_selection"
+												)
+											}
+										>
+											<option value="tool_selection">Tool selection</option>
+											<option value="api_input">API input (required fields)</option>
+										</select>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="generation-provider">Provider</Label>
+										<select
+											id="generation-provider"
+											className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+											value={generationProvider}
+											onChange={(event) => setGenerationProvider(event.target.value)}
+										>
+											{generationMode === "global_random" && (
+												<option value="all">Alla providers</option>
+											)}
+											{apiProviders.map((provider) => (
+												<option key={provider.provider_key} value={provider.provider_key}>
+													{provider.provider_name}
+												</option>
+											))}
+										</select>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="generation-question-count">Antal frågor</Label>
+										<Input
+											id="generation-question-count"
+											type="number"
+											min={1}
+											max={100}
+											value={generationQuestionCount}
+											onChange={(event) =>
+												setGenerationQuestionCount(Number.parseInt(event.target.value || "12", 10))
+											}
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="generation-difficulty">Svårighetsgrad</Label>
+										<select
+											id="generation-difficulty"
+											className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+											value={generationDifficultyProfile}
+											onChange={(event) =>
+												setGenerationDifficultyProfile(
+													event.target.value === "lätt"
+														? "lätt"
+														: event.target.value === "medel"
+															? "medel"
+															: event.target.value === "svår"
+																? "svår"
+																: "mixed"
+												)
+											}
+										>
+											<option value="mixed">Blandad (lätt + medel + svår)</option>
+											<option value="lätt">Lätt</option>
+											<option value="medel">Medel</option>
+											<option value="svår">Svår</option>
+										</select>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="generation-eval-name">Eval-namn (valfritt)</Label>
+										<Input
+											id="generation-eval-name"
+											placeholder="scb-prisindex-mars-2026"
+											value={generationEvalName}
+											onChange={(event) => setGenerationEvalName(event.target.value)}
+										/>
+									</div>
+								</div>
+
+								{generationMode === "category" && (
+									<div className="space-y-2">
+										<Label htmlFor="generation-category">Kategori</Label>
+										<select
+											id="generation-category"
+											className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+											value={generationCategory}
+											onChange={(event) => setGenerationCategory(event.target.value)}
+										>
+											{generationCategoryOptions.length === 0 && (
+												<option value="">Inga kategorier hittades</option>
+											)}
+											{generationCategoryOptions.map((option) => (
+												<option key={option.category_id} value={option.category_id}>
+													{option.category_name} ({option.category_id})
+												</option>
+											))}
+										</select>
+									</div>
+								)}
+								{generationMode === "provider" && (
+									<p className="text-xs text-muted-foreground">
+										Huvudkategori-läge: frågor genereras över hela vald provider (underkategorier
+										blandas automatiskt).
+									</p>
+								)}
+								<p className="text-xs text-muted-foreground">
+									Svårighetsgrad sparas i varje test som{" "}
+									<span className="font-medium">difficulty</span> och visas i eval-resultaten för
+									separat uppföljning.
+								</p>
+
+								<div className="flex flex-wrap items-center gap-2">
+									<Button onClick={handleGenerateEvalLibraryFile} disabled={isGeneratingEvalFile}>
+										{isGeneratingEvalFile ? "Genererar..." : "Generera + spara eval JSON"}
+									</Button>
+									{selectedLibraryPath && (
+										<Badge variant="outline">Vald fil: {selectedLibraryPath}</Badge>
 									)}
 								</div>
-								{autoLoopJobStatus && (
-									<div className="rounded bg-muted/30 p-3 space-y-2">
-										<div className="grid gap-2 md:grid-cols-4 text-xs">
-											<p>
-												Iteration: {autoLoopJobStatus.completed_iterations}/
-												{autoLoopJobStatus.total_iterations}
-											</p>
-											<p>
-												Bästa success:{" "}
-												{formatPercent(autoLoopJobStatus.best_success_rate)}
-											</p>
-											<p>Utebliven förbättring: {autoLoopJobStatus.no_improvement_runs}</p>
-											<p>{autoLoopJobStatus.message || "-"}</p>
+
+								<div className="rounded border p-3 space-y-3">
+									<div className="flex flex-wrap items-center justify-between gap-2">
+										<p className="text-sm font-medium">Auto-läge: loopa till önskad success rate</p>
+										{autoLoopJobId && (
+											<Badge variant="outline">Jobb: {autoLoopJobId.slice(0, 8)}</Badge>
+										)}
+									</div>
+									<p className="text-xs text-muted-foreground">
+										Flöde: generera frågor → kör eval → föreslå metadata/prompt/vikter → uppdatera
+										draft-utkast → kör igen tills target nås eller failsafe bryter.
+									</p>
+									<div className="grid gap-3 md:grid-cols-4">
+										<div className="space-y-2">
+											<Label htmlFor="auto-target-success">Target success</Label>
+											<Input
+												id="auto-target-success"
+												type="number"
+												min={0}
+												max={1}
+												step={0.01}
+												value={autoTargetSuccessRate}
+												onChange={(event) =>
+													setAutoTargetSuccessRate(Number.parseFloat(event.target.value || "0.85"))
+												}
+											/>
 										</div>
-										{(autoLoopJobStatus.iterations ?? []).length > 0 && (
-											<div className="space-y-1">
-												{autoLoopJobStatus.iterations.slice(-6).map((item) => (
-													<p
-														key={`auto-iter-${item.iteration}`}
-														className="text-xs text-muted-foreground"
+										<div className="space-y-2">
+											<Label htmlFor="auto-max-iterations">Max iterationer</Label>
+											<Input
+												id="auto-max-iterations"
+												type="number"
+												min={1}
+												max={30}
+												value={autoMaxIterations}
+												onChange={(event) =>
+													setAutoMaxIterations(Number.parseInt(event.target.value || "6", 10))
+												}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="auto-patience">Patience (failsafe)</Label>
+											<Input
+												id="auto-patience"
+												type="number"
+												min={1}
+												max={12}
+												value={autoPatience}
+												onChange={(event) =>
+													setAutoPatience(Number.parseInt(event.target.value || "2", 10))
+												}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="auto-min-delta">Min förbättring / run</Label>
+											<Input
+												id="auto-min-delta"
+												type="number"
+												min={0}
+												max={0.25}
+												step={0.001}
+												value={autoMinImprovementDelta}
+												onChange={(event) =>
+													setAutoMinImprovementDelta(
+														Number.parseFloat(event.target.value || "0.005")
+													)
+												}
+											/>
+										</div>
+									</div>
+									<div className="rounded border p-3 space-y-3">
+										<div className="flex items-center gap-2">
+											<Switch
+												checked={autoUseHoldoutSuite}
+												onCheckedChange={setAutoUseHoldoutSuite}
+											/>
+											<span className="text-sm font-medium">
+												Inkludera auto-genererad holdout-suite
+											</span>
+										</div>
+										<p className="text-xs text-muted-foreground">
+											När holdout är på genereras en separat suite. Auto-läget jämför train och
+											holdout per iteration för att upptäcka överanpassning.
+										</p>
+										{autoUseHoldoutSuite && (
+											<div className="grid gap-3 md:grid-cols-2">
+												<div className="space-y-2">
+													<Label htmlFor="auto-holdout-question-count">Holdout antal frågor</Label>
+													<Input
+														id="auto-holdout-question-count"
+														type="number"
+														min={1}
+														max={100}
+														value={autoHoldoutQuestionCount}
+														onChange={(event) =>
+															setAutoHoldoutQuestionCount(
+																Number.parseInt(event.target.value || "8", 10)
+															)
+														}
+													/>
+												</div>
+												<div className="space-y-2">
+													<Label htmlFor="auto-holdout-difficulty">Holdout svårighetsprofil</Label>
+													<select
+														id="auto-holdout-difficulty"
+														className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+														value={autoHoldoutDifficultyProfile}
+														onChange={(event) =>
+															setAutoHoldoutDifficultyProfile(
+																event.target.value === "lätt"
+																	? "lätt"
+																	: event.target.value === "medel"
+																		? "medel"
+																		: event.target.value === "svår"
+																			? "svår"
+																			: "mixed"
+															)
+														}
 													>
-														Iter {item.iteration}: train{" "}
-														{formatPercent(item.success_rate)}
-														{typeof item.success_delta_vs_previous === "number"
-															? ` (${formatSignedPercent(item.success_delta_vs_previous)})`
-															: ""}
-														{typeof item.holdout_success_rate === "number"
-															? ` · holdout ${formatPercent(item.holdout_success_rate)}`
-															: ""}
-														{typeof item.holdout_delta_vs_previous === "number"
-															? ` (${formatSignedPercent(item.holdout_delta_vs_previous)})`
-															: ""}
-														{typeof item.combined_score === "number"
-															? ` · kombinerad ${formatPercent(item.combined_score)}`
-															: ""}
-														{typeof item.combined_delta_vs_previous === "number"
-															? ` (${formatSignedPercent(item.combined_delta_vs_previous)})`
-															: ""}
-														{item.note ? ` · ${item.note}` : ""}
-													</p>
-												))}
+														<option value="mixed">Blandad</option>
+														<option value="lätt">Lätt</option>
+														<option value="medel">Medel</option>
+														<option value="svår">Svår</option>
+													</select>
+												</div>
 											</div>
 										)}
-										{autoLoopJobStatus.status === "completed" &&
-											autoLoopJobStatus.result && (
+									</div>
+									<div className="flex flex-wrap items-center gap-2">
+										<Button
+											onClick={handleStartAutoLoop}
+											disabled={isStartingAutoLoop || isAutoLoopRunning}
+										>
+											{isStartingAutoLoop
+												? "Startar auto-läge..."
+												: isAutoLoopRunning
+													? "Auto-läge körs..."
+													: "Starta auto-läge"}
+										</Button>
+										{autoLoopJobStatus && (
+											<Badge
+												variant={
+													autoLoopJobStatus.status === "failed"
+														? "destructive"
+														: autoLoopJobStatus.status === "completed"
+															? "default"
+															: "secondary"
+												}
+											>
+												{autoLoopJobStatus.status}
+											</Badge>
+										)}
+									</div>
+									{autoLoopJobStatus && (
+										<div className="rounded bg-muted/30 p-3 space-y-2">
+											<div className="grid gap-2 md:grid-cols-4 text-xs">
+												<p>
+													Iteration: {autoLoopJobStatus.completed_iterations}/
+													{autoLoopJobStatus.total_iterations}
+												</p>
+												<p>Bästa success: {formatPercent(autoLoopJobStatus.best_success_rate)}</p>
+												<p>Utebliven förbättring: {autoLoopJobStatus.no_improvement_runs}</p>
+												<p>{autoLoopJobStatus.message || "-"}</p>
+											</div>
+											{(autoLoopJobStatus.iterations ?? []).length > 0 && (
+												<div className="space-y-1">
+													{autoLoopJobStatus.iterations.slice(-6).map((item) => (
+														<p
+															key={`auto-iter-${item.iteration}`}
+															className="text-xs text-muted-foreground"
+														>
+															Iter {item.iteration}: train {formatPercent(item.success_rate)}
+															{typeof item.success_delta_vs_previous === "number"
+																? ` (${formatSignedPercent(item.success_delta_vs_previous)})`
+																: ""}
+															{typeof item.holdout_success_rate === "number"
+																? ` · holdout ${formatPercent(item.holdout_success_rate)}`
+																: ""}
+															{typeof item.holdout_delta_vs_previous === "number"
+																? ` (${formatSignedPercent(item.holdout_delta_vs_previous)})`
+																: ""}
+															{typeof item.combined_score === "number"
+																? ` · kombinerad ${formatPercent(item.combined_score)}`
+																: ""}
+															{typeof item.combined_delta_vs_previous === "number"
+																? ` (${formatSignedPercent(item.combined_delta_vs_previous)})`
+																: ""}
+															{item.note ? ` · ${item.note}` : ""}
+														</p>
+													))}
+												</div>
+											)}
+											{autoLoopJobStatus.status === "completed" && autoLoopJobStatus.result && (
 												<div className="space-y-1">
 													<p className="text-xs text-muted-foreground">
 														Stop-orsak:{" "}
@@ -3223,275 +3059,254 @@ export function ToolSettingsPage() {
 													)}
 												</div>
 											)}
-										{autoLoopPromptDrafts.length > 0 && (
-											<div className="flex flex-wrap items-center gap-2">
-												<Badge variant="outline">
-													{autoLoopPromptDrafts.length} promptutkast redo
-												</Badge>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={saveAutoLoopPromptDraftSuggestions}
-													disabled={isSavingAutoLoopPromptDrafts}
-												>
-													{isSavingAutoLoopPromptDrafts
-														? "Sparar promptutkast..."
-														: "Spara promptutkast"}
-												</Button>
-											</div>
-										)}
-									</div>
-								)}
-							</div>
-
-							<div className="rounded border p-3 space-y-2">
-								<div className="flex items-center justify-between gap-2">
-									<p className="text-sm font-medium">Sparade eval-filer (/eval/api)</p>
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={() =>
-											queryClient.invalidateQueries({
-												queryKey: ["admin-tool-eval-library-files"],
-											})
-										}
-									>
-										Uppdatera lista
-									</Button>
-								</div>
-								<div className="space-y-2">
-									{(evalLibraryFiles?.items ?? []).length === 0 ? (
-										<p className="text-xs text-muted-foreground">
-											Inga sparade filer ännu.
-										</p>
-									) : (
-										(evalLibraryFiles?.items ?? []).slice(0, 25).map((item) => (
-											<div
-												key={item.relative_path}
-												className="flex flex-wrap items-center justify-between gap-2 rounded border p-2"
-											>
-												<div className="space-y-1">
-													<p className="text-xs font-medium">{item.file_name}</p>
-													<p className="text-xs text-muted-foreground">
-														{item.relative_path} ·{" "}
-														{new Date(item.created_at).toLocaleString("sv-SE")}
-														{typeof item.test_count === "number"
-															? ` · ${item.test_count} frågor`
-															: ""}
-													</p>
-												</div>
-												<div className="flex items-center gap-2">
+											{autoLoopPromptDrafts.length > 0 && (
+												<div className="flex flex-wrap items-center gap-2">
+													<Badge variant="outline">
+														{autoLoopPromptDrafts.length} promptutkast redo
+													</Badge>
 													<Button
-														variant={
-															selectedLibraryPath === item.relative_path
-																? "default"
-																: "outline"
-														}
+														variant="outline"
 														size="sm"
-														onClick={() => loadEvalLibraryFile(item.relative_path)}
-														disabled={isLoadingLibraryFile}
+														onClick={saveAutoLoopPromptDraftSuggestions}
+														disabled={isSavingAutoLoopPromptDrafts}
 													>
-														Ladda i eval-input
-													</Button>
-													<Button
-														variant={
-															selectedHoldoutLibraryPath === item.relative_path
-																? "default"
-																: "outline"
-														}
-														size="sm"
-														onClick={() =>
-															loadEvalLibraryFileToHoldout(item.relative_path)
-														}
-														disabled={isLoadingLibraryFile}
-													>
-														Ladda i holdout
+														{isSavingAutoLoopPromptDrafts
+															? "Sparar promptutkast..."
+															: "Spara promptutkast"}
 													</Button>
 												</div>
-											</div>
-										))
+											)}
+										</div>
 									)}
 								</div>
-							</div>
-						</CardContent>
-					</Card>
+
+								<div className="rounded border p-3 space-y-2">
+									<div className="flex items-center justify-between gap-2">
+										<p className="text-sm font-medium">Sparade eval-filer (/eval/api)</p>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() =>
+												queryClient.invalidateQueries({
+													queryKey: ["admin-tool-eval-library-files"],
+												})
+											}
+										>
+											Uppdatera lista
+										</Button>
+									</div>
+									<div className="space-y-2">
+										{(evalLibraryFiles?.items ?? []).length === 0 ? (
+											<p className="text-xs text-muted-foreground">Inga sparade filer ännu.</p>
+										) : (
+											(evalLibraryFiles?.items ?? []).slice(0, 25).map((item) => (
+												<div
+													key={item.relative_path}
+													className="flex flex-wrap items-center justify-between gap-2 rounded border p-2"
+												>
+													<div className="space-y-1">
+														<p className="text-xs font-medium">{item.file_name}</p>
+														<p className="text-xs text-muted-foreground">
+															{item.relative_path} ·{" "}
+															{new Date(item.created_at).toLocaleString("sv-SE")}
+															{typeof item.test_count === "number"
+																? ` · ${item.test_count} frågor`
+																: ""}
+														</p>
+													</div>
+													<div className="flex items-center gap-2">
+														<Button
+															variant={
+																selectedLibraryPath === item.relative_path ? "default" : "outline"
+															}
+															size="sm"
+															onClick={() => loadEvalLibraryFile(item.relative_path)}
+															disabled={isLoadingLibraryFile}
+														>
+															Ladda i eval-input
+														</Button>
+														<Button
+															variant={
+																selectedHoldoutLibraryPath === item.relative_path
+																	? "default"
+																	: "outline"
+															}
+															size="sm"
+															onClick={() => loadEvalLibraryFileToHoldout(item.relative_path)}
+															disabled={isLoadingLibraryFile}
+														>
+															Ladda i holdout
+														</Button>
+													</div>
+												</div>
+											))
+										)}
+									</div>
+								</div>
+							</CardContent>
+						</Card>
 					)}
 
 					{(showAgentSections || showApiSections) && (
-					<Card>
-						<CardHeader>
-							<CardTitle>Steg 2: Kör Agentval Eval och API Input Eval</CardTitle>
-							<CardDescription>
-								Här testar du hela agentvalet från route/sub-route till agentval,
-								tool-val och plan,
-								samt API-input i dry-run.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<div className="flex flex-wrap items-center gap-3">
-								<Input
-									type="file"
-									accept="application/json"
-									onChange={uploadEvalFile}
-									className="max-w-sm"
-								/>
-								<div className="flex items-center gap-2">
-									<Label htmlFor="retrieval-limit">Retrieval K</Label>
-									<Input
-										id="retrieval-limit"
-										type="number"
-										value={retrievalLimit}
-										onChange={(e) =>
-											setRetrievalLimit(Number.parseInt(e.target.value || "5", 10))
-										}
-										className="w-24"
-										min={1}
-										max={15}
-									/>
-								</div>
-								<div className="flex items-center gap-2">
-									<Switch
-										checked={includeDraftMetadata}
-										onCheckedChange={setIncludeDraftMetadata}
-									/>
-									<span className="text-sm">
-										Inkludera osparad draft (metadata + retrieval-vikter)
-									</span>
-								</div>
-								<div className="flex items-center gap-2">
-									<Switch
-										checked={useLlmSupervisorReview}
-										onCheckedChange={setUseLlmSupervisorReview}
-									/>
-									<span className="text-sm">
-										LLM-granskning av supervisor-spår
-									</span>
-								</div>
-								<Button
-									onClick={handleRunEvaluation}
-									disabled={isEvaluating || isEvalJobRunning}
-								>
-									{isEvaluating
-										? "Startar agentval-eval..."
-										: isEvalJobRunning
-											? "Agentval-eval körs..."
-											: "Run Agentval Eval (route + agent + tool + plan)"}
-								</Button>
-								<Button
-									variant="outline"
-									onClick={handleRunApiInputEvaluation}
-									disabled={isApiInputEvaluating || isApiInputEvalJobRunning}
-								>
-									{isApiInputEvaluating
-										? "Startar API input eval..."
-										: isApiInputEvalJobRunning
-											? "API input eval körs..."
-											: "Run API Input Eval (dry-run)"}
-								</Button>
-							</div>
-							<p className="text-xs text-muted-foreground">
-								Retrieval K = antal top-kandidater som tas vidare från retrieval i
-								eval-runen. 5 är bra standard; höj till 8-10 för breda/svåra frågor.
-							</p>
-							<p className="text-xs text-muted-foreground">
-								Agentval Eval = starten av pipelinen: route/sub-route, valt agentsteg,
-								valt verktyg och
-								om planen uppfyller plan_requirements.
-							</p>
-							<p className="text-xs text-muted-foreground">
-								När LLM-granskning är av används en heuristisk rubric för supervisor-spår.
-								När den är på får du mer kvalitativ granskning (högre latens/kostnad).
-							</p>
-							<div className="rounded border p-3 space-y-3">
-								<div className="flex items-center justify-between gap-2">
-									<p className="text-sm font-medium">Eval JSON</p>
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={() => setShowEvalJsonInput((prev) => !prev)}
-									>
-										{showEvalJsonInput ? "Minimera JSON-fält" : "Visa JSON-fält"}
-									</Button>
-								</div>
-								{showEvalJsonInput ? (
-									<Textarea
-										placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"intent":"action","route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","tool:smhi_weather"]}}]}'
-										value={evalInput}
-										onChange={(e) => setEvalInput(e.target.value)}
-										rows={12}
-										className="font-mono text-xs"
-									/>
-								) : (
-									<p className="text-xs text-muted-foreground">
-										JSON-fältet är minimerat för bättre överblick. Klicka &quot;Visa
-										JSON-fält&quot; för att redigera manuellt.
-									</p>
-								)}
-							</div>
-							<div className="rounded border p-3 space-y-3">
-								<div className="flex flex-wrap items-center justify-between gap-2">
-									<div className="flex items-center gap-2">
-										<Switch
-											checked={useHoldoutSuite}
-											onCheckedChange={setUseHoldoutSuite}
-										/>
-										<p className="text-sm font-medium">Använd holdout-suite</p>
-									</div>
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={() => setShowHoldoutJsonInput((prev) => !prev)}
-									>
-										{showHoldoutJsonInput
-											? "Minimera holdout-fält"
-											: "Visa holdout-fält"}
-									</Button>
-								</div>
-								<p className="text-xs text-muted-foreground">
-									Holdout-suite används för anti-overfitting: promptförslag optimeras på
-									huvudtesterna men kvaliteten mäts separat på holdout.
-								</p>
-								<p className="text-xs text-muted-foreground">
-									Holdout körs endast när du klickar{" "}
-									<span className="font-medium">Run API Input Eval (dry-run)</span> och
-									visas under <span className="font-medium">Steg 4: Holdout-suite</span>.
-								</p>
-								<div className="flex flex-wrap items-center gap-2">
+						<Card>
+							<CardHeader>
+								<CardTitle>Steg 2: Kör Agentval Eval och API Input Eval</CardTitle>
+								<CardDescription>
+									Här testar du hela agentvalet från route/sub-route till agentval, tool-val och
+									plan, samt API-input i dry-run.
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-4">
+								<div className="flex flex-wrap items-center gap-3">
 									<Input
 										type="file"
 										accept="application/json"
-										onChange={uploadHoldoutFile}
+										onChange={uploadEvalFile}
 										className="max-w-sm"
 									/>
-									{selectedHoldoutLibraryPath && (
-										<Badge variant="outline">
-											Holdout-fil: {selectedHoldoutLibraryPath}
-										</Badge>
+									<div className="flex items-center gap-2">
+										<Label htmlFor="retrieval-limit">Retrieval K</Label>
+										<Input
+											id="retrieval-limit"
+											type="number"
+											value={retrievalLimit}
+											onChange={(e) =>
+												setRetrievalLimit(Number.parseInt(e.target.value || "5", 10))
+											}
+											className="w-24"
+											min={1}
+											max={15}
+										/>
+									</div>
+									<div className="flex items-center gap-2">
+										<Switch
+											checked={includeDraftMetadata}
+											onCheckedChange={setIncludeDraftMetadata}
+										/>
+										<span className="text-sm">
+											Inkludera osparad draft (metadata + retrieval-vikter)
+										</span>
+									</div>
+									<div className="flex items-center gap-2">
+										<Switch
+											checked={useLlmSupervisorReview}
+											onCheckedChange={setUseLlmSupervisorReview}
+										/>
+										<span className="text-sm">LLM-granskning av supervisor-spår</span>
+									</div>
+									<Button onClick={handleRunEvaluation} disabled={isEvaluating || isEvalJobRunning}>
+										{isEvaluating
+											? "Startar agentval-eval..."
+											: isEvalJobRunning
+												? "Agentval-eval körs..."
+												: "Run Agentval Eval (route + agent + tool + plan)"}
+									</Button>
+									<Button
+										variant="outline"
+										onClick={handleRunApiInputEvaluation}
+										disabled={isApiInputEvaluating || isApiInputEvalJobRunning}
+									>
+										{isApiInputEvaluating
+											? "Startar API input eval..."
+											: isApiInputEvalJobRunning
+												? "API input eval körs..."
+												: "Run API Input Eval (dry-run)"}
+									</Button>
+								</div>
+								<p className="text-xs text-muted-foreground">
+									Retrieval K = antal top-kandidater som tas vidare från retrieval i eval-runen. 5
+									är bra standard; höj till 8-10 för breda/svåra frågor.
+								</p>
+								<p className="text-xs text-muted-foreground">
+									Agentval Eval = starten av pipelinen: route/sub-route, valt agentsteg, valt
+									verktyg och om planen uppfyller plan_requirements.
+								</p>
+								<p className="text-xs text-muted-foreground">
+									När LLM-granskning är av används en heuristisk rubric för supervisor-spår. När den
+									är på får du mer kvalitativ granskning (högre latens/kostnad).
+								</p>
+								<div className="rounded border p-3 space-y-3">
+									<div className="flex items-center justify-between gap-2">
+										<p className="text-sm font-medium">Eval JSON</p>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => setShowEvalJsonInput((prev) => !prev)}
+										>
+											{showEvalJsonInput ? "Minimera JSON-fält" : "Visa JSON-fält"}
+										</Button>
+									</div>
+									{showEvalJsonInput ? (
+										<Textarea
+											placeholder='{"eval_name":"routing-smoke","tests":[{"id":"t1","question":"...","difficulty":"lätt","expected":{"intent":"action","route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","tool:smhi_weather"]}}]}'
+											value={evalInput}
+											onChange={(e) => setEvalInput(e.target.value)}
+											rows={12}
+											className="font-mono text-xs"
+										/>
+									) : (
+										<p className="text-xs text-muted-foreground">
+											JSON-fältet är minimerat för bättre överblick. Klicka &quot;Visa
+											JSON-fält&quot; för att redigera manuellt.
+										</p>
 									)}
 								</div>
-								{showHoldoutJsonInput ? (
-									<Textarea
-										placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"intent":"action","route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","field:city"],"required_fields":["city","date"]}}]}'
-										value={holdoutInput}
-										onChange={(e) => setHoldoutInput(e.target.value)}
-										rows={8}
-										className="font-mono text-xs"
-									/>
-								) : (
+								<div className="rounded border p-3 space-y-3">
+									<div className="flex flex-wrap items-center justify-between gap-2">
+										<div className="flex items-center gap-2">
+											<Switch checked={useHoldoutSuite} onCheckedChange={setUseHoldoutSuite} />
+											<p className="text-sm font-medium">Använd holdout-suite</p>
+										</div>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => setShowHoldoutJsonInput((prev) => !prev)}
+										>
+											{showHoldoutJsonInput ? "Minimera holdout-fält" : "Visa holdout-fält"}
+										</Button>
+									</div>
 									<p className="text-xs text-muted-foreground">
-										Holdout-fältet är minimerat. Du kan även lägga holdout_tests i
-										huvud-JSON.
+										Holdout-suite används för anti-overfitting: promptförslag optimeras på
+										huvudtesterna men kvaliteten mäts separat på holdout.
 									</p>
+									<p className="text-xs text-muted-foreground">
+										Holdout körs endast när du klickar{" "}
+										<span className="font-medium">Run API Input Eval (dry-run)</span> och visas
+										under <span className="font-medium">Steg 4: Holdout-suite</span>.
+									</p>
+									<div className="flex flex-wrap items-center gap-2">
+										<Input
+											type="file"
+											accept="application/json"
+											onChange={uploadHoldoutFile}
+											className="max-w-sm"
+										/>
+										{selectedHoldoutLibraryPath && (
+											<Badge variant="outline">Holdout-fil: {selectedHoldoutLibraryPath}</Badge>
+										)}
+									</div>
+									{showHoldoutJsonInput ? (
+										<Textarea
+											placeholder='{"tests":[{"id":"h1","question":"...","difficulty":"medel","expected":{"intent":"action","route":"action","sub_route":"travel","agent":"weather","tool":"smhi_weather","category":"weather","plan_requirements":["route:action","agent:weather","field:city"],"required_fields":["city","date"]}}]}'
+											value={holdoutInput}
+											onChange={(e) => setHoldoutInput(e.target.value)}
+											rows={8}
+											className="font-mono text-xs"
+										/>
+									) : (
+										<p className="text-xs text-muted-foreground">
+											Holdout-fältet är minimerat. Du kan även lägga holdout_tests i huvud-JSON.
+										</p>
+									)}
+								</div>
+								{evalInputError && (
+									<Alert variant="destructive">
+										<AlertCircle className="h-4 w-4" />
+										<AlertDescription>{evalInputError}</AlertDescription>
+									</Alert>
 								)}
-							</div>
-							{evalInputError && (
-								<Alert variant="destructive">
-									<AlertCircle className="h-4 w-4" />
-									<AlertDescription>{evalInputError}</AlertDescription>
-								</Alert>
-							)}
-						</CardContent>
-					</Card>
+							</CardContent>
+						</Card>
 					)}
 
 					{showAgentSections && evalJobId && (
@@ -3517,8 +3332,8 @@ export function ToolSettingsPage() {
 											{evalJobStatus?.status ?? "pending"}
 										</Badge>
 										<span>
-											{evalJobStatus?.completed_tests ?? 0}/
-											{evalJobStatus?.total_tests ?? 0} frågor färdiga
+											{evalJobStatus?.completed_tests ?? 0}/{evalJobStatus?.total_tests ?? 0} frågor
+											färdiga
 										</span>
 									</div>
 									<div className="flex items-center gap-2">
@@ -3550,10 +3365,7 @@ export function ToolSettingsPage() {
 								)}
 								<div className="space-y-2">
 									{(evalJobStatus?.case_statuses ?? []).map((caseStatus) => (
-										<div
-											key={caseStatus.test_id}
-											className="rounded border p-2 text-xs space-y-1"
-										>
+										<div key={caseStatus.test_id} className="rounded border p-2 text-xs space-y-1">
 											<div className="flex items-center justify-between gap-2">
 												<p className="font-medium">{caseStatus.test_id}</p>
 												<Badge
@@ -3594,8 +3406,7 @@ export function ToolSettingsPage() {
 											)}
 											{caseStatus.consistency_warnings?.length > 0 && (
 												<p className="text-amber-400">
-													Konsistensvarning:{" "}
-													{caseStatus.consistency_warnings.join(" · ")}
+													Konsistensvarning: {caseStatus.consistency_warnings.join(" · ")}
 												</p>
 											)}
 											{typeof caseStatus.passed === "boolean" && (
@@ -3603,9 +3414,7 @@ export function ToolSettingsPage() {
 													Resultat: {caseStatus.passed ? "Rätt" : "Fel"}
 												</p>
 											)}
-											{caseStatus.error && (
-												<p className="text-red-500">{caseStatus.error}</p>
-											)}
+											{caseStatus.error && <p className="text-red-500">{caseStatus.error}</p>}
 										</div>
 									))}
 								</div>
@@ -3618,8 +3427,7 @@ export function ToolSettingsPage() {
 							<CardHeader>
 								<CardTitle>Steg 3A: API input-status per fråga</CardTitle>
 								<CardDescription>
-									Jobb {apiInputEvalJobId} · status{" "}
-									{apiInputEvalJobStatus?.status ?? "pending"}
+									Jobb {apiInputEvalJobId} · status {apiInputEvalJobStatus?.status ?? "pending"}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-3">
@@ -3714,8 +3522,7 @@ export function ToolSettingsPage() {
 											)}
 											{caseStatus.consistency_warnings?.length > 0 && (
 												<p className="text-amber-400">
-													Konsistensvarning:{" "}
-													{caseStatus.consistency_warnings.join(" · ")}
+													Konsistensvarning: {caseStatus.consistency_warnings.join(" · ")}
 												</p>
 											)}
 											{typeof caseStatus.passed === "boolean" && (
@@ -3723,9 +3530,7 @@ export function ToolSettingsPage() {
 													Resultat: {caseStatus.passed ? "Rätt" : "Fel"}
 												</p>
 											)}
-											{caseStatus.error && (
-												<p className="text-red-500">{caseStatus.error}</p>
-											)}
+											{caseStatus.error && <p className="text-red-500">{caseStatus.error}</p>}
 										</div>
 									))}
 								</div>
@@ -3741,8 +3546,8 @@ export function ToolSettingsPage() {
 										Steg 2B: Agentval Eval Resultat (route + agent + tool + plan)
 									</CardTitle>
 									<CardDescription>
-										Metadata version {evaluationResult.metadata_version_hash} ·
-										search space {evaluationResult.search_space_id}
+										Metadata version {evaluationResult.metadata_version_hash} · search space{" "}
+										{evaluationResult.search_space_id}
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="grid gap-4 md:grid-cols-4">
@@ -3753,15 +3558,11 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Gated success (agent gate)
-										</p>
+										<p className="text-xs text-muted-foreground">Gated success (agent gate)</p>
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.gated_success_rate == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.gated_success_rate * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.gated_success_rate * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3769,9 +3570,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.intent_accuracy == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.intent_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.intent_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3779,9 +3578,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.route_accuracy == null
 												? "-"
-												: `${(evaluationResult.metrics.route_accuracy * 100).toFixed(
-														1
-													)}%`}
+												: `${(evaluationResult.metrics.route_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3789,9 +3586,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.sub_route_accuracy == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.sub_route_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.sub_route_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3799,9 +3594,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.agent_accuracy == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.agent_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.agent_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3809,33 +3602,25 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.plan_accuracy == null
 												? "-"
-												: `${(evaluationResult.metrics.plan_accuracy * 100).toFixed(
-														1
-													)}%`}
+												: `${(evaluationResult.metrics.plan_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Supervisor review score
-										</p>
+										<p className="text-xs text-muted-foreground">Supervisor review score</p>
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.supervisor_review_score == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.supervisor_review_score * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.supervisor_review_score * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Supervisor review pass rate
-										</p>
+										<p className="text-xs text-muted-foreground">Supervisor review pass rate</p>
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.supervisor_review_pass_rate == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.supervisor_review_pass_rate * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.supervisor_review_pass_rate * 100).toFixed(
+														1
+													)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3843,9 +3628,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.tool_accuracy == null
 												? "-"
-												: `${(evaluationResult.metrics.tool_accuracy * 100).toFixed(
-														1
-													)}%`}
+												: `${(evaluationResult.metrics.tool_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3853,9 +3636,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.category_accuracy == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.category_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.category_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3863,9 +3644,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{evaluationResult.metrics.retrieval_recall_at_k == null
 												? "-"
-												: `${(
-														evaluationResult.metrics.retrieval_recall_at_k * 100
-													).toFixed(1)}%`}
+												: `${(evaluationResult.metrics.retrieval_recall_at_k * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -3877,9 +3656,7 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Normaliserade expected (antal)
-										</p>
+										<p className="text-xs text-muted-foreground">Normaliserade expected (antal)</p>
 										<p className="text-2xl font-semibold">
 											{evaluationResult.consistency_summary?.normalized_tests ?? 0}
 										</p>
@@ -3921,16 +3698,14 @@ export function ToolSettingsPage() {
 											embedding: {evaluationResult.retrieval_tuning.embedding_weight}
 										</Badge>
 										<Badge variant="outline">
-											semantic:{" "}
-											{evaluationResult.retrieval_tuning.semantic_embedding_weight ?? "-"}
+											semantic: {evaluationResult.retrieval_tuning.semantic_embedding_weight ?? "-"}
 										</Badge>
 										<Badge variant="outline">
 											structural:{" "}
 											{evaluationResult.retrieval_tuning.structural_embedding_weight ?? "-"}
 										</Badge>
 										<Badge variant="outline">
-											rerank_candidates:{" "}
-											{evaluationResult.retrieval_tuning.rerank_candidates}
+											rerank_candidates: {evaluationResult.retrieval_tuning.rerank_candidates}
 										</Badge>
 									</div>
 
@@ -4013,10 +3788,7 @@ export function ToolSettingsPage() {
 												>
 													Applicera viktförslag i draft
 												</Button>
-												<Button
-													onClick={saveWeightSuggestion}
-													disabled={isSavingRetrievalTuning}
-												>
+												<Button onClick={saveWeightSuggestion} disabled={isSavingRetrievalTuning}>
 													Spara viktförslag
 												</Button>
 											</div>
@@ -4035,212 +3807,186 @@ export function ToolSettingsPage() {
 											result as unknown as Record<string, unknown>
 										);
 										return (
-										<div key={result.test_id} className="rounded border p-3 space-y-2">
-											<div className="flex items-center justify-between gap-2">
-												<div className="flex items-center gap-2">
-													<Badge variant="outline">{result.test_id}</Badge>
-													{result.difficulty && (
-														<Badge variant="secondary">
-															{formatDifficultyLabel(result.difficulty)}
+											<div key={result.test_id} className="rounded border p-3 space-y-2">
+												<div className="flex items-center justify-between gap-2">
+													<div className="flex items-center gap-2">
+														<Badge variant="outline">{result.test_id}</Badge>
+														{result.difficulty && (
+															<Badge variant="secondary">
+																{formatDifficultyLabel(result.difficulty)}
+															</Badge>
+														)}
+														<Badge variant={result.passed ? "default" : "destructive"}>
+															{result.passed ? "PASS" : "FAIL"}
+														</Badge>
+														{result.expected_normalized && (
+															<Badge variant="secondary">Expected normaliserad</Badge>
+														)}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Route: {result.expected_route || "-"}
+														{result.expected_sub_route ? ` / ${result.expected_sub_route}` : ""} →{" "}
+														{result.selected_route || "-"}
+														{result.selected_sub_route ? ` / ${result.selected_sub_route}` : ""}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Intent: {result.expected_intent || "-"} →{" "}
+														{result.selected_intent || "-"}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Agent: {result.expected_agent || "-"} → {result.selected_agent || "-"}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Expected: {result.expected_category || "-"} /{" "}
+														{result.expected_tool || "-"} · Selected:{" "}
+														{result.selected_category || "-"} / {result.selected_tool || "-"}
+													</div>
+												</div>
+												<p className="text-sm">{result.question}</p>
+												{result.consistency_warnings?.length > 0 && (
+													<p className="text-xs text-amber-400">
+														Konsistensvarning: {result.consistency_warnings.join(" · ")}
+													</p>
+												)}
+												{result.agent_selection_analysis && (
+													<p className="text-xs text-muted-foreground">
+														Agentval-analys: {result.agent_selection_analysis}
+													</p>
+												)}
+												{result.planning_analysis && (
+													<p className="text-xs text-muted-foreground">
+														Analys: {result.planning_analysis}
+													</p>
+												)}
+												{result.planning_steps?.length > 0 && (
+													<p className="text-xs text-muted-foreground">
+														Plansteg: {result.planning_steps.join(" → ")}
+													</p>
+												)}
+												<div className="flex flex-wrap gap-2">
+													{result.passed_intent != null && (
+														<Badge variant={result.passed_intent ? "outline" : "destructive"}>
+															intent:{result.expected_intent || "-"}{" "}
+															{result.passed_intent ? "OK" : "MISS"}
 														</Badge>
 													)}
-													<Badge variant={result.passed ? "default" : "destructive"}>
-														{result.passed ? "PASS" : "FAIL"}
-													</Badge>
-													{result.expected_normalized && (
-														<Badge variant="secondary">Expected normaliserad</Badge>
+													{result.passed_route != null && (
+														<Badge variant={result.passed_route ? "outline" : "destructive"}>
+															route:{result.expected_route || "-"}{" "}
+															{result.passed_route ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_sub_route != null && (
+														<Badge variant={result.passed_sub_route ? "outline" : "destructive"}>
+															sub-route:{result.expected_sub_route || "-"}{" "}
+															{result.passed_sub_route ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_agent != null && (
+														<Badge variant={result.passed_agent ? "outline" : "destructive"}>
+															agent:{result.expected_agent || "-"}{" "}
+															{result.passed_agent ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_tool != null && (
+														<Badge variant={result.passed_tool ? "outline" : "destructive"}>
+															tool:{result.expected_tool || "-"}{" "}
+															{result.passed_tool ? "OK" : "MISS"}
+														</Badge>
 													)}
 												</div>
-												<div className="text-xs text-muted-foreground">
-													Route: {result.expected_route || "-"}
-													{result.expected_sub_route
-														? ` / ${result.expected_sub_route}`
-														: ""}{" "}
-													→ {result.selected_route || "-"}
-													{result.selected_sub_route
-														? ` / ${result.selected_sub_route}`
-														: ""}
-												</div>
-												<div className="text-xs text-muted-foreground">
-													Intent: {result.expected_intent || "-"} →{" "}
-													{result.selected_intent || "-"}
-												</div>
-												<div className="text-xs text-muted-foreground">
-													Agent: {result.expected_agent || "-"} →{" "}
-													{result.selected_agent || "-"}
-												</div>
-												<div className="text-xs text-muted-foreground">
-													Expected: {result.expected_category || "-"} /{" "}
-													{result.expected_tool || "-"} · Selected:{" "}
-													{result.selected_category || "-"} /{" "}
-													{result.selected_tool || "-"}
-												</div>
-											</div>
-											<p className="text-sm">{result.question}</p>
-											{result.consistency_warnings?.length > 0 && (
-												<p className="text-xs text-amber-400">
-													Konsistensvarning: {result.consistency_warnings.join(" · ")}
-												</p>
-											)}
-											{result.agent_selection_analysis && (
+												{!result.passed && failureReasons.length > 0 && (
+													<p className="text-xs text-red-400">
+														Fail-orsak: {failureReasons.join(" · ")}
+													</p>
+												)}
+												{typeof result.passed_with_agent_gate === "boolean" && (
+													<p className="text-xs text-muted-foreground">
+														Gated resultat (agent gate):{" "}
+														{result.passed_with_agent_gate ? "PASS" : "FAIL"}
+														{typeof result.agent_gate_score === "number"
+															? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
+															: ""}
+													</p>
+												)}
+												{typeof result.supervisor_review_passed === "boolean" && (
+													<p className="text-xs text-muted-foreground">
+														Supervisor review: {result.supervisor_review_passed ? "PASS" : "FAIL"}
+														{typeof result.supervisor_review_score === "number"
+															? ` (${(result.supervisor_review_score * 100).toFixed(1)}%)`
+															: ""}
+													</p>
+												)}
+												{result.supervisor_review_rationale && (
+													<p className="text-xs text-muted-foreground">
+														Supervisor-granskning: {result.supervisor_review_rationale}
+													</p>
+												)}
+												{result.supervisor_review_issues?.length > 0 && (
+													<p className="text-xs text-amber-600">
+														Supervisor-issues: {result.supervisor_review_issues.join(" · ")}
+													</p>
+												)}
+												{result.supervisor_review_rubric?.length > 0 && (
+													<div className="flex flex-wrap gap-2">
+														{result.supervisor_review_rubric.map((item) => (
+															<Badge
+																key={`${result.test_id}-rubric-${item.key}`}
+																variant={item.passed ? "outline" : "destructive"}
+																title={item.evidence ?? undefined}
+															>
+																{item.label}: {item.passed ? "OK" : "MISS"} · v
+																{item.weight.toFixed(1)}
+															</Badge>
+														))}
+													</div>
+												)}
+												{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
+													<details className="rounded bg-muted/30 p-2">
+														<summary className="cursor-pointer text-xs font-medium">
+															Visa supervisor-spår
+														</summary>
+														<pre className="mt-2 text-[11px] whitespace-pre-wrap break-all text-muted-foreground max-h-48 overflow-y-auto">
+															{JSON.stringify(result.supervisor_trace ?? {}, null, 2)}
+														</pre>
+													</details>
+												)}
+												{result.plan_requirement_checks?.length > 0 && (
+													<div className="flex flex-wrap gap-2">
+														{result.plan_requirement_checks.map((check, idx) => (
+															<Badge
+																key={`${result.test_id}-plan-${idx}`}
+																variant={check.passed ? "outline" : "destructive"}
+															>
+																{check.requirement}: {check.passed ? "OK" : "MISS"}
+															</Badge>
+														))}
+													</div>
+												)}
 												<p className="text-xs text-muted-foreground">
-													Agentval-analys: {result.agent_selection_analysis}
+													Retrieval: {result.retrieval_top_tools.join(", ") || "-"}
 												</p>
-											)}
-											{result.planning_analysis && (
-												<p className="text-xs text-muted-foreground">
-													Analys: {result.planning_analysis}
-												</p>
-											)}
-											{result.planning_steps?.length > 0 && (
-												<p className="text-xs text-muted-foreground">
-													Plansteg: {result.planning_steps.join(" → ")}
-												</p>
-											)}
-											<div className="flex flex-wrap gap-2">
-												{result.passed_intent != null && (
-													<Badge
-														variant={
-															result.passed_intent ? "outline" : "destructive"
-														}
-													>
-														intent:{result.expected_intent || "-"}{" "}
-														{result.passed_intent ? "OK" : "MISS"}
-													</Badge>
-												)}
-												{result.passed_route != null && (
-													<Badge
-														variant={
-															result.passed_route ? "outline" : "destructive"
-														}
-													>
-														route:{result.expected_route || "-"}{" "}
-														{result.passed_route ? "OK" : "MISS"}
-													</Badge>
-												)}
-												{result.passed_sub_route != null && (
-													<Badge
-														variant={
-															result.passed_sub_route ? "outline" : "destructive"
-														}
-													>
-														sub-route:{result.expected_sub_route || "-"}{" "}
-														{result.passed_sub_route ? "OK" : "MISS"}
-													</Badge>
-												)}
-												{result.passed_agent != null && (
-													<Badge
-														variant={
-															result.passed_agent ? "outline" : "destructive"
-														}
-													>
-														agent:{result.expected_agent || "-"}{" "}
-														{result.passed_agent ? "OK" : "MISS"}
-													</Badge>
-												)}
-												{result.passed_tool != null && (
-													<Badge
-														variant={result.passed_tool ? "outline" : "destructive"}
-													>
-														tool:{result.expected_tool || "-"}{" "}
-														{result.passed_tool ? "OK" : "MISS"}
-													</Badge>
+												{result.retrieval_breakdown?.length > 0 && (
+													<div className="rounded bg-muted/40 p-2 space-y-1">
+														<p className="text-xs font-medium">Score breakdown</p>
+														{result.retrieval_breakdown.slice(0, 5).map((entry) => (
+															<div
+																key={`${result.test_id}-${String(entry.tool_id)}`}
+																className="text-[11px] text-muted-foreground"
+															>
+																{String(entry.rank)}. {String(entry.tool_id)} · lexical{" "}
+																{Number(entry.lexical_score ?? 0).toFixed(2)} · embed{" "}
+																{Number(entry.embedding_score_weighted ?? 0).toFixed(2)} · ns{" "}
+																{Number(entry.namespace_bonus ?? 0).toFixed(2)} · pre{" "}
+																{Number(entry.pre_rerank_score ?? 0).toFixed(2)} · rerank{" "}
+																{entry.rerank_score == null
+																	? "-"
+																	: Number(entry.rerank_score).toFixed(2)}
+															</div>
+														))}
+													</div>
 												)}
 											</div>
-											{!result.passed && failureReasons.length > 0 && (
-												<p className="text-xs text-red-400">
-													Fail-orsak: {failureReasons.join(" · ")}
-												</p>
-											)}
-											{typeof result.passed_with_agent_gate === "boolean" && (
-												<p className="text-xs text-muted-foreground">
-													Gated resultat (agent gate):{" "}
-													{result.passed_with_agent_gate ? "PASS" : "FAIL"}
-													{typeof result.agent_gate_score === "number"
-														? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
-														: ""}
-												</p>
-											)}
-											{typeof result.supervisor_review_passed === "boolean" && (
-												<p className="text-xs text-muted-foreground">
-													Supervisor review:{" "}
-													{result.supervisor_review_passed ? "PASS" : "FAIL"}
-													{typeof result.supervisor_review_score === "number"
-														? ` (${(result.supervisor_review_score * 100).toFixed(1)}%)`
-														: ""}
-												</p>
-											)}
-											{result.supervisor_review_rationale && (
-												<p className="text-xs text-muted-foreground">
-													Supervisor-granskning: {result.supervisor_review_rationale}
-												</p>
-											)}
-											{result.supervisor_review_issues?.length > 0 && (
-												<p className="text-xs text-amber-600">
-													Supervisor-issues:{" "}
-													{result.supervisor_review_issues.join(" · ")}
-												</p>
-											)}
-											{result.supervisor_review_rubric?.length > 0 && (
-												<div className="flex flex-wrap gap-2">
-													{result.supervisor_review_rubric.map((item) => (
-														<Badge
-															key={`${result.test_id}-rubric-${item.key}`}
-															variant={item.passed ? "outline" : "destructive"}
-															title={item.evidence ?? undefined}
-														>
-															{item.label}: {item.passed ? "OK" : "MISS"} · v
-															{item.weight.toFixed(1)}
-														</Badge>
-													))}
-												</div>
-											)}
-											{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
-												<details className="rounded bg-muted/30 p-2">
-													<summary className="cursor-pointer text-xs font-medium">
-														Visa supervisor-spår
-													</summary>
-													<pre className="mt-2 text-[11px] whitespace-pre-wrap break-all text-muted-foreground max-h-48 overflow-y-auto">
-														{JSON.stringify(result.supervisor_trace ?? {}, null, 2)}
-													</pre>
-												</details>
-											)}
-											{result.plan_requirement_checks?.length > 0 && (
-												<div className="flex flex-wrap gap-2">
-													{result.plan_requirement_checks.map((check, idx) => (
-														<Badge
-															key={`${result.test_id}-plan-${idx}`}
-															variant={check.passed ? "outline" : "destructive"}
-														>
-															{check.requirement}: {check.passed ? "OK" : "MISS"}
-														</Badge>
-													))}
-												</div>
-											)}
-											<p className="text-xs text-muted-foreground">
-												Retrieval: {result.retrieval_top_tools.join(", ") || "-"}
-											</p>
-											{result.retrieval_breakdown?.length > 0 && (
-												<div className="rounded bg-muted/40 p-2 space-y-1">
-													<p className="text-xs font-medium">Score breakdown</p>
-													{result.retrieval_breakdown.slice(0, 5).map((entry) => (
-														<div
-															key={`${result.test_id}-${String(entry.tool_id)}`}
-															className="text-[11px] text-muted-foreground"
-														>
-															{String(entry.rank)}. {String(entry.tool_id)} · lexical{" "}
-															{Number(entry.lexical_score ?? 0).toFixed(2)} · embed{" "}
-															{Number(entry.embedding_score_weighted ?? 0).toFixed(2)} ·
-															ns {Number(entry.namespace_bonus ?? 0).toFixed(2)} · pre{" "}
-															{Number(entry.pre_rerank_score ?? 0).toFixed(2)} · rerank{" "}
-															{entry.rerank_score == null
-																? "-"
-																: Number(entry.rerank_score).toFixed(2)}
-														</div>
-													))}
-												</div>
-											)}
-										</div>
 										);
 									})}
 								</CardContent>
@@ -4260,9 +4006,7 @@ export function ToolSettingsPage() {
 										</Button>
 										<Button
 											onClick={applySelectedSuggestionsToDraft}
-											disabled={
-												!selectedSuggestionIds.size || isApplyingSuggestions
-											}
+											disabled={!selectedSuggestionIds.size || isApplyingSuggestions}
 										>
 											Applicera valda i draft
 										</Button>
@@ -4278,9 +4022,7 @@ export function ToolSettingsPage() {
 										>
 											Kör om eval
 										</Button>
-										<Badge variant="outline">
-											{selectedSuggestions.length} valda
-										</Badge>
+										<Badge variant="outline">{selectedSuggestions.length} valda</Badge>
 									</div>
 
 									{evaluationResult.suggestions.length === 0 ? (
@@ -4292,10 +4034,7 @@ export function ToolSettingsPage() {
 											{evaluationResult.suggestions.map((suggestion) => {
 												const isSelected = selectedSuggestionIds.has(suggestion.tool_id);
 												return (
-													<div
-														key={suggestion.tool_id}
-														className="rounded border p-3 space-y-2"
-													>
+													<div key={suggestion.tool_id} className="rounded border p-3 space-y-2">
 														<div className="flex items-center justify-between gap-2">
 															<div className="flex items-center gap-2">
 																<input
@@ -4309,18 +4048,13 @@ export function ToolSettingsPage() {
 																</Badge>
 															</div>
 														</div>
-														<p className="text-xs text-muted-foreground">
-															{suggestion.rationale}
-														</p>
+														<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
 														<div className="grid gap-3 md:grid-cols-2">
 															<div className="rounded bg-muted/50 p-2">
 																<p className="text-xs font-medium mb-1">Nuvarande</p>
-																<p className="text-xs">
-																	{suggestion.current_metadata.description}
-																</p>
+																<p className="text-xs">{suggestion.current_metadata.description}</p>
 																<p className="text-[11px] text-muted-foreground mt-2">
-																	Keywords:{" "}
-																	{suggestion.current_metadata.keywords.join(", ") || "-"}
+																	Keywords: {suggestion.current_metadata.keywords.join(", ") || "-"}
 																</p>
 																<div className="mt-2">
 																	<p className="text-[11px] text-muted-foreground mb-1">
@@ -4330,7 +4064,10 @@ export function ToolSettingsPage() {
 																		{suggestion.current_metadata.example_queries
 																			.slice(0, 3)
 																			.map((example, idx) => (
-																				<li key={`${suggestion.tool_id}-current-${idx}`} className="text-[11px]">
+																				<li
+																					key={`${suggestion.tool_id}-current-${idx}`}
+																					className="text-[11px]"
+																				>
 																					{example}
 																				</li>
 																			))}
@@ -4354,7 +4091,10 @@ export function ToolSettingsPage() {
 																		{suggestion.proposed_metadata.example_queries
 																			.slice(0, 3)
 																			.map((example, idx) => (
-																				<li key={`${suggestion.tool_id}-proposed-${idx}`} className="text-[11px]">
+																				<li
+																					key={`${suggestion.tool_id}-proposed-${idx}`}
+																					className="text-[11px]"
+																				>
 																					{example}
 																				</li>
 																			))}
@@ -4374,8 +4114,7 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 2F: Prompt-förslag från Agentval Eval</CardTitle>
 									<CardDescription>
-										Fixar route/sub-route, agentval och plan-kvalitet från starten av
-										pipelinen.
+										Fixar route/sub-route, agentval och plan-kvalitet från starten av pipelinen.
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-4">
@@ -4383,15 +4122,12 @@ export function ToolSettingsPage() {
 										<Button
 											onClick={saveSelectedToolPromptSuggestions}
 											disabled={
-												!selectedToolPromptSuggestionKeys.size ||
-												isSavingToolPromptSuggestions
+												!selectedToolPromptSuggestionKeys.size || isSavingToolPromptSuggestions
 											}
 										>
 											Spara valda promptförslag
 										</Button>
-										<Badge variant="outline">
-											{selectedToolPromptSuggestions.length} valda
-										</Badge>
+										<Badge variant="outline">{selectedToolPromptSuggestions.length} valda</Badge>
 									</div>
 
 									{evaluationResult.prompt_suggestions.length === 0 ? (
@@ -4401,10 +4137,9 @@ export function ToolSettingsPage() {
 									) : (
 										<div className="space-y-3">
 											{evaluationResult.prompt_suggestions.map((suggestion) => {
-												const isSelected =
-													selectedToolPromptSuggestionKeys.has(
-														suggestion.prompt_key
-													);
+												const isSelected = selectedToolPromptSuggestionKeys.has(
+													suggestion.prompt_key
+												);
 												return (
 													<div
 														key={`tool-prompt-${suggestion.prompt_key}`}
@@ -4415,23 +4150,15 @@ export function ToolSettingsPage() {
 																<input
 																	type="checkbox"
 																	checked={isSelected}
-																	onChange={() =>
-																		toggleToolPromptSuggestion(
-																			suggestion.prompt_key
-																		)
-																	}
+																	onChange={() => toggleToolPromptSuggestion(suggestion.prompt_key)}
 																/>
-																<Badge variant="secondary">
-																	{suggestion.prompt_key}
-																</Badge>
+																<Badge variant="secondary">{suggestion.prompt_key}</Badge>
 																<Badge variant="outline">
 																	{suggestion.failed_test_ids.length} fail-case(s)
 																</Badge>
 															</div>
 														</div>
-														<p className="text-xs text-muted-foreground">
-															{suggestion.rationale}
-														</p>
+														<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
 														<div className="grid gap-3 md:grid-cols-2">
 															<div className="rounded bg-muted/50 p-2">
 																<p className="text-xs font-medium mb-1">Nuvarande</p>
@@ -4458,8 +4185,8 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 2G: Intent-förslag (metadata + prompt)</CardTitle>
 									<CardDescription>
-										Förslag för intent-definitioner och intent_resolver-prompt baserat
-										på missad intent-match.
+										Förslag för intent-definitioner och intent_resolver-prompt baserat på missad
+										intent-match.
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-3">
@@ -4479,9 +4206,7 @@ export function ToolSettingsPage() {
 														{suggestion.failed_test_ids.length} fail-case(s)
 													</Badge>
 												</div>
-												<p className="text-xs text-muted-foreground">
-													{suggestion.rationale}
-												</p>
+												<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
 												<div className="grid gap-3 md:grid-cols-2">
 													<div className="rounded bg-muted/50 p-2">
 														<p className="text-xs font-medium mb-1">Nuvarande intent</p>
@@ -4528,8 +4253,8 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 3B: API Input Eval Resultat</CardTitle>
 									<CardDescription>
-										Metadata version {apiInputEvaluationResult.metadata_version_hash} ·
-										search space {apiInputEvaluationResult.search_space_id}
+										Metadata version {apiInputEvaluationResult.metadata_version_hash} · search space{" "}
+										{apiInputEvaluationResult.search_space_id}
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="grid gap-4 md:grid-cols-5">
@@ -4540,15 +4265,13 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Gated success (agent gate)
-										</p>
+										<p className="text-xs text-muted-foreground">Gated success (agent gate)</p>
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.gated_success_rate == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.gated_success_rate * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.gated_success_rate * 100).toFixed(
+														1
+													)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4556,9 +4279,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.intent_accuracy == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.intent_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.intent_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4566,9 +4287,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.route_accuracy == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.route_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.route_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4576,9 +4295,9 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.sub_route_accuracy == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.sub_route_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.sub_route_accuracy * 100).toFixed(
+														1
+													)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4586,9 +4305,7 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.agent_accuracy == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.agent_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.agent_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4596,15 +4313,11 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.plan_accuracy == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.plan_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.plan_accuracy * 100).toFixed(1)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Supervisor review score
-										</p>
+										<p className="text-xs text-muted-foreground">Supervisor review score</p>
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.supervisor_review_score == null
 												? "-"
@@ -4614,16 +4327,12 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Supervisor review pass rate
-										</p>
+										<p className="text-xs text-muted-foreground">Supervisor review pass rate</p>
 										<p className="text-2xl font-semibold">
-											{apiInputEvaluationResult.metrics.supervisor_review_pass_rate ==
-											null
+											{apiInputEvaluationResult.metrics.supervisor_review_pass_rate == null
 												? "-"
 												: `${(
-														apiInputEvaluationResult.metrics
-															.supervisor_review_pass_rate * 100
+														apiInputEvaluationResult.metrics.supervisor_review_pass_rate * 100
 													).toFixed(1)}%`}
 										</p>
 									</div>
@@ -4632,9 +4341,9 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.schema_validity_rate == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.schema_validity_rate * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.schema_validity_rate * 100).toFixed(
+														1
+													)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4642,9 +4351,9 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.required_field_recall == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.required_field_recall * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.required_field_recall * 100).toFixed(
+														1
+													)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4652,9 +4361,9 @@ export function ToolSettingsPage() {
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.metrics.field_value_accuracy == null
 												? "-"
-												: `${(
-														apiInputEvaluationResult.metrics.field_value_accuracy * 100
-													).toFixed(1)}%`}
+												: `${(apiInputEvaluationResult.metrics.field_value_accuracy * 100).toFixed(
+														1
+													)}%`}
 										</p>
 									</div>
 									<div className="rounded border p-3">
@@ -4676,9 +4385,7 @@ export function ToolSettingsPage() {
 										</p>
 									</div>
 									<div className="rounded border p-3">
-										<p className="text-xs text-muted-foreground">
-											Normaliserade expected (antal)
-										</p>
+										<p className="text-xs text-muted-foreground">Normaliserade expected (antal)</p>
 										<p className="text-2xl font-semibold">
 											{apiInputEvaluationResult.consistency_summary?.normalized_tests ?? 0}
 										</p>
@@ -4700,43 +4407,33 @@ export function ToolSettingsPage() {
 									<CardHeader>
 										<CardTitle>Steg 4: Holdout-suite (anti-overfitting)</CardTitle>
 										<CardDescription>
-											Separat mätning på holdout för att verifiera att förbättringar
-											generaliserar.
+											Separat mätning på holdout för att verifiera att förbättringar generaliserar.
 										</CardDescription>
 									</CardHeader>
 									<CardContent className="grid gap-4 md:grid-cols-4">
 										<div className="rounded border p-3">
 											<p className="text-xs text-muted-foreground">Holdout success</p>
 											<p className="text-2xl font-semibold">
-												{(
-													apiInputEvaluationResult.holdout_metrics.success_rate * 100
-												).toFixed(1)}
-												%
+												{(apiInputEvaluationResult.holdout_metrics.success_rate * 100).toFixed(1)}%
 											</p>
 										</div>
 										<div className="rounded border p-3">
 											<p className="text-xs text-muted-foreground">Holdout schema</p>
 											<p className="text-2xl font-semibold">
-												{apiInputEvaluationResult.holdout_metrics.schema_validity_rate ==
-												null
+												{apiInputEvaluationResult.holdout_metrics.schema_validity_rate == null
 													? "-"
 													: `${(
-															apiInputEvaluationResult.holdout_metrics
-																.schema_validity_rate * 100
+															apiInputEvaluationResult.holdout_metrics.schema_validity_rate * 100
 														).toFixed(1)}%`}
 											</p>
 										</div>
 										<div className="rounded border p-3">
-											<p className="text-xs text-muted-foreground">
-												Holdout required recall
-											</p>
+											<p className="text-xs text-muted-foreground">Holdout required recall</p>
 											<p className="text-2xl font-semibold">
-												{apiInputEvaluationResult.holdout_metrics.required_field_recall ==
-												null
+												{apiInputEvaluationResult.holdout_metrics.required_field_recall == null
 													? "-"
 													: `${(
-															apiInputEvaluationResult.holdout_metrics
-																.required_field_recall * 100
+															apiInputEvaluationResult.holdout_metrics.required_field_recall * 100
 														).toFixed(1)}%`}
 											</p>
 										</div>
@@ -4751,10 +4448,7 @@ export function ToolSettingsPage() {
 									<CardContent className="pt-0">
 										<DifficultyBreakdown
 											title="Svårighetsgrad · Holdout"
-											items={
-												apiInputEvaluationResult.holdout_metrics?.difficulty_breakdown ??
-												[]
-											}
+											items={apiInputEvaluationResult.holdout_metrics?.difficulty_breakdown ?? []}
 										/>
 									</CardContent>
 								</Card>
@@ -4765,8 +4459,8 @@ export function ToolSettingsPage() {
 									<CardHeader>
 										<CardTitle>Steg 3B.1: Holdout-resultat per test</CardTitle>
 										<CardDescription>
-											Detaljvy för holdout-suite (körs i samband med API Input Eval när
-											holdout är aktiverad).
+											Detaljvy för holdout-suite (körs i samband med API Input Eval när holdout är
+											aktiverad).
 										</CardDescription>
 									</CardHeader>
 									<CardContent className="space-y-3">
@@ -4786,9 +4480,7 @@ export function ToolSettingsPage() {
 																{formatDifficultyLabel(result.difficulty)}
 															</Badge>
 														)}
-														<Badge
-															variant={result.passed ? "default" : "destructive"}
-														>
+														<Badge variant={result.passed ? "default" : "destructive"}>
 															{result.passed ? "PASS" : "FAIL"}
 														</Badge>
 													</div>
@@ -4813,8 +4505,7 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 3C: API Input resultat per test</CardTitle>
 									<CardDescription>
-										Dry-run: vi validerar modellens föreslagna tool-input utan riktiga
-										API-anrop.
+										Dry-run: vi validerar modellens föreslagna tool-input utan riktiga API-anrop.
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-3">
@@ -4823,263 +4514,229 @@ export function ToolSettingsPage() {
 											result as unknown as Record<string, unknown>
 										);
 										return (
-										<div
-											key={`api-input-result-${result.test_id}`}
-											className="rounded border p-3 space-y-2"
-										>
-											<div className="flex items-center justify-between gap-2">
-												<div className="flex items-center gap-2">
-													<Badge variant="outline">{result.test_id}</Badge>
-													{result.difficulty && (
-														<Badge variant="secondary">
-															{formatDifficultyLabel(result.difficulty)}
+											<div
+												key={`api-input-result-${result.test_id}`}
+												className="rounded border p-3 space-y-2"
+											>
+												<div className="flex items-center justify-between gap-2">
+													<div className="flex items-center gap-2">
+														<Badge variant="outline">{result.test_id}</Badge>
+														{result.difficulty && (
+															<Badge variant="secondary">
+																{formatDifficultyLabel(result.difficulty)}
+															</Badge>
+														)}
+														<Badge variant={result.passed ? "default" : "destructive"}>
+															{result.passed ? "PASS" : "FAIL"}
+														</Badge>
+														{result.expected_normalized && (
+															<Badge variant="secondary">Expected normaliserad</Badge>
+														)}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Route: {result.expected_route || "-"}
+														{result.expected_sub_route ? ` / ${result.expected_sub_route}` : ""} →{" "}
+														{result.selected_route || "-"}
+														{result.selected_sub_route ? ` / ${result.selected_sub_route}` : ""}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Intent: {result.expected_intent || "-"} →{" "}
+														{result.selected_intent || "-"}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Agent: {result.expected_agent || "-"} → {result.selected_agent || "-"}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														Expected: {result.expected_category || "-"} /{" "}
+														{result.expected_tool || "-"} · Selected:{" "}
+														{result.selected_category || "-"} / {result.selected_tool || "-"}
+													</div>
+												</div>
+												<p className="text-sm">{result.question}</p>
+												{result.consistency_warnings?.length > 0 && (
+													<p className="text-xs text-amber-400">
+														Konsistensvarning: {result.consistency_warnings.join(" · ")}
+													</p>
+												)}
+												{result.agent_selection_analysis && (
+													<p className="text-xs text-muted-foreground">
+														Agentval-analys: {result.agent_selection_analysis}
+													</p>
+												)}
+												{result.planning_analysis && (
+													<p className="text-xs text-muted-foreground">
+														Analys: {result.planning_analysis}
+													</p>
+												)}
+												{result.planning_steps?.length > 0 && (
+													<p className="text-xs text-muted-foreground">
+														Plansteg: {result.planning_steps.join(" → ")}
+													</p>
+												)}
+												<div className="flex flex-wrap gap-2">
+													{result.passed_intent != null && (
+														<Badge variant={result.passed_intent ? "outline" : "destructive"}>
+															intent:{result.expected_intent || "-"}{" "}
+															{result.passed_intent ? "OK" : "MISS"}
 														</Badge>
 													)}
-													<Badge variant={result.passed ? "default" : "destructive"}>
-														{result.passed ? "PASS" : "FAIL"}
-													</Badge>
-													{result.expected_normalized && (
-														<Badge variant="secondary">Expected normaliserad</Badge>
+													{result.passed_route != null && (
+														<Badge variant={result.passed_route ? "outline" : "destructive"}>
+															route:{result.expected_route || "-"}{" "}
+															{result.passed_route ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_sub_route != null && (
+														<Badge variant={result.passed_sub_route ? "outline" : "destructive"}>
+															sub-route:{result.expected_sub_route || "-"}{" "}
+															{result.passed_sub_route ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_agent != null && (
+														<Badge variant={result.passed_agent ? "outline" : "destructive"}>
+															agent:{result.expected_agent || "-"}{" "}
+															{result.passed_agent ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_tool != null && (
+														<Badge variant={result.passed_tool ? "outline" : "destructive"}>
+															tool:{result.expected_tool || "-"}{" "}
+															{result.passed_tool ? "OK" : "MISS"}
+														</Badge>
+													)}
+													{result.passed_api_input != null && (
+														<Badge variant={result.passed_api_input ? "outline" : "destructive"}>
+															api-input {result.passed_api_input ? "OK" : "MISS"}
+														</Badge>
 													)}
 												</div>
-												<div className="text-xs text-muted-foreground">
-													Route: {result.expected_route || "-"}
-													{result.expected_sub_route
-														? ` / ${result.expected_sub_route}`
-														: ""}{" "}
-													→ {result.selected_route || "-"}
-													{result.selected_sub_route
-														? ` / ${result.selected_sub_route}`
-														: ""}
-												</div>
-												<div className="text-xs text-muted-foreground">
-													Intent: {result.expected_intent || "-"} →{" "}
-													{result.selected_intent || "-"}
-												</div>
-												<div className="text-xs text-muted-foreground">
-													Agent: {result.expected_agent || "-"} →{" "}
-													{result.selected_agent || "-"}
-												</div>
-												<div className="text-xs text-muted-foreground">
-													Expected: {result.expected_category || "-"} /{" "}
-													{result.expected_tool || "-"} · Selected:{" "}
-													{result.selected_category || "-"} /{" "}
-													{result.selected_tool || "-"}
-												</div>
-											</div>
-											<p className="text-sm">{result.question}</p>
-											{result.consistency_warnings?.length > 0 && (
-												<p className="text-xs text-amber-400">
-													Konsistensvarning: {result.consistency_warnings.join(" · ")}
-												</p>
-											)}
-											{result.agent_selection_analysis && (
-												<p className="text-xs text-muted-foreground">
-													Agentval-analys: {result.agent_selection_analysis}
-												</p>
-											)}
-											{result.planning_analysis && (
-												<p className="text-xs text-muted-foreground">
-													Analys: {result.planning_analysis}
-												</p>
-											)}
-											{result.planning_steps?.length > 0 && (
-												<p className="text-xs text-muted-foreground">
-													Plansteg: {result.planning_steps.join(" → ")}
-												</p>
-											)}
-											<div className="flex flex-wrap gap-2">
-												{result.passed_intent != null && (
-													<Badge
-														variant={
-															result.passed_intent ? "outline" : "destructive"
-														}
-													>
-														intent:{result.expected_intent || "-"}{" "}
-														{result.passed_intent ? "OK" : "MISS"}
-													</Badge>
+												{!result.passed && failureReasons.length > 0 && (
+													<p className="text-xs text-red-400">
+														Fail-orsak: {failureReasons.join(" · ")}
+													</p>
 												)}
-												{result.passed_route != null && (
-													<Badge
-														variant={
-															result.passed_route ? "outline" : "destructive"
-														}
-													>
-														route:{result.expected_route || "-"}{" "}
-														{result.passed_route ? "OK" : "MISS"}
-													</Badge>
+												{typeof result.passed_with_agent_gate === "boolean" && (
+													<p className="text-xs text-muted-foreground">
+														Gated resultat (agent gate):{" "}
+														{result.passed_with_agent_gate ? "PASS" : "FAIL"}
+														{typeof result.agent_gate_score === "number"
+															? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
+															: ""}
+													</p>
 												)}
-												{result.passed_sub_route != null && (
-													<Badge
-														variant={
-															result.passed_sub_route ? "outline" : "destructive"
-														}
-													>
-														sub-route:{result.expected_sub_route || "-"}{" "}
-														{result.passed_sub_route ? "OK" : "MISS"}
-													</Badge>
+												{typeof result.supervisor_review_passed === "boolean" && (
+													<p className="text-xs text-muted-foreground">
+														Supervisor review: {result.supervisor_review_passed ? "PASS" : "FAIL"}
+														{typeof result.supervisor_review_score === "number"
+															? ` (${(result.supervisor_review_score * 100).toFixed(1)}%)`
+															: ""}
+													</p>
 												)}
-												{result.passed_agent != null && (
-													<Badge
-														variant={
-															result.passed_agent ? "outline" : "destructive"
-														}
-													>
-														agent:{result.expected_agent || "-"}{" "}
-														{result.passed_agent ? "OK" : "MISS"}
-													</Badge>
+												{result.supervisor_review_rationale && (
+													<p className="text-xs text-muted-foreground">
+														Supervisor-granskning: {result.supervisor_review_rationale}
+													</p>
 												)}
-												{result.passed_tool != null && (
-													<Badge
-														variant={result.passed_tool ? "outline" : "destructive"}
-													>
-														tool:{result.expected_tool || "-"}{" "}
-														{result.passed_tool ? "OK" : "MISS"}
-													</Badge>
+												{result.supervisor_review_issues?.length > 0 && (
+													<p className="text-xs text-amber-600">
+														Supervisor-issues: {result.supervisor_review_issues.join(" · ")}
+													</p>
 												)}
-												{result.passed_api_input != null && (
-													<Badge
-														variant={
-															result.passed_api_input ? "outline" : "destructive"
-														}
-													>
-														api-input {result.passed_api_input ? "OK" : "MISS"}
-													</Badge>
+												{result.supervisor_review_rubric?.length > 0 && (
+													<div className="flex flex-wrap gap-2">
+														{result.supervisor_review_rubric.map((item) => (
+															<Badge
+																key={`${result.test_id}-api-rubric-${item.key}`}
+																variant={item.passed ? "outline" : "destructive"}
+																title={item.evidence ?? undefined}
+															>
+																{item.label}: {item.passed ? "OK" : "MISS"} · v
+																{item.weight.toFixed(1)}
+															</Badge>
+														))}
+													</div>
 												)}
-											</div>
-											{!result.passed && failureReasons.length > 0 && (
-												<p className="text-xs text-red-400">
-													Fail-orsak: {failureReasons.join(" · ")}
-												</p>
-											)}
-											{typeof result.passed_with_agent_gate === "boolean" && (
-												<p className="text-xs text-muted-foreground">
-													Gated resultat (agent gate):{" "}
-													{result.passed_with_agent_gate ? "PASS" : "FAIL"}
-													{typeof result.agent_gate_score === "number"
-														? ` (${(result.agent_gate_score * 100).toFixed(1)}%)`
-														: ""}
-												</p>
-											)}
-											{typeof result.supervisor_review_passed === "boolean" && (
-												<p className="text-xs text-muted-foreground">
-													Supervisor review:{" "}
-													{result.supervisor_review_passed ? "PASS" : "FAIL"}
-													{typeof result.supervisor_review_score === "number"
-														? ` (${(result.supervisor_review_score * 100).toFixed(1)}%)`
-														: ""}
-												</p>
-											)}
-											{result.supervisor_review_rationale && (
-												<p className="text-xs text-muted-foreground">
-													Supervisor-granskning: {result.supervisor_review_rationale}
-												</p>
-											)}
-											{result.supervisor_review_issues?.length > 0 && (
-												<p className="text-xs text-amber-600">
-													Supervisor-issues:{" "}
-													{result.supervisor_review_issues.join(" · ")}
-												</p>
-											)}
-											{result.supervisor_review_rubric?.length > 0 && (
-												<div className="flex flex-wrap gap-2">
-													{result.supervisor_review_rubric.map((item) => (
-														<Badge
-															key={`${result.test_id}-api-rubric-${item.key}`}
-															variant={item.passed ? "outline" : "destructive"}
-															title={item.evidence ?? undefined}
-														>
-															{item.label}: {item.passed ? "OK" : "MISS"} · v
-															{item.weight.toFixed(1)}
-														</Badge>
-													))}
-												</div>
-											)}
-											{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
-												<details className="rounded bg-muted/30 p-2">
-													<summary className="cursor-pointer text-xs font-medium">
-														Visa supervisor-spår
-													</summary>
-													<pre className="mt-2 text-[11px] whitespace-pre-wrap break-all text-muted-foreground max-h-48 overflow-y-auto">
-														{JSON.stringify(result.supervisor_trace ?? {}, null, 2)}
-													</pre>
-												</details>
-											)}
-											{result.plan_requirement_checks?.length > 0 && (
-												<div className="flex flex-wrap gap-2">
-													{result.plan_requirement_checks.map((check, idx) => (
-														<Badge
-															key={`${result.test_id}-api-plan-${idx}`}
-															variant={check.passed ? "outline" : "destructive"}
-														>
-															{check.requirement}: {check.passed ? "OK" : "MISS"}
-														</Badge>
-													))}
-												</div>
-											)}
-											<div className="grid gap-3 md:grid-cols-2">
-												<div className="rounded bg-muted/40 p-2 space-y-1">
-													<p className="text-xs font-medium">Proposed arguments</p>
-													<pre className="text-[11px] whitespace-pre-wrap break-all text-muted-foreground">
-														{JSON.stringify(result.proposed_arguments ?? {}, null, 2)}
-													</pre>
-												</div>
-												<div className="rounded bg-muted/40 p-2 space-y-1">
-													<p className="text-xs font-medium">Validering</p>
-													<p className="text-[11px] text-muted-foreground">
-														Schema-valid:{" "}
-														{result.schema_valid == null
-															? "-"
-															: result.schema_valid
-																? "Ja"
+												{Object.keys(result.supervisor_trace ?? {}).length > 0 && (
+													<details className="rounded bg-muted/30 p-2">
+														<summary className="cursor-pointer text-xs font-medium">
+															Visa supervisor-spår
+														</summary>
+														<pre className="mt-2 text-[11px] whitespace-pre-wrap break-all text-muted-foreground max-h-48 overflow-y-auto">
+															{JSON.stringify(result.supervisor_trace ?? {}, null, 2)}
+														</pre>
+													</details>
+												)}
+												{result.plan_requirement_checks?.length > 0 && (
+													<div className="flex flex-wrap gap-2">
+														{result.plan_requirement_checks.map((check, idx) => (
+															<Badge
+																key={`${result.test_id}-api-plan-${idx}`}
+																variant={check.passed ? "outline" : "destructive"}
+															>
+																{check.requirement}: {check.passed ? "OK" : "MISS"}
+															</Badge>
+														))}
+													</div>
+												)}
+												<div className="grid gap-3 md:grid-cols-2">
+													<div className="rounded bg-muted/40 p-2 space-y-1">
+														<p className="text-xs font-medium">Proposed arguments</p>
+														<pre className="text-[11px] whitespace-pre-wrap break-all text-muted-foreground">
+															{JSON.stringify(result.proposed_arguments ?? {}, null, 2)}
+														</pre>
+													</div>
+													<div className="rounded bg-muted/40 p-2 space-y-1">
+														<p className="text-xs font-medium">Validering</p>
+														<p className="text-[11px] text-muted-foreground">
+															Schema-valid:{" "}
+															{result.schema_valid == null
+																? "-"
+																: result.schema_valid
+																	? "Ja"
+																	: "Nej"}
+														</p>
+														<p className="text-[11px] text-muted-foreground">
+															Missing required: {result.missing_required_fields.join(", ") || "-"}
+														</p>
+														<p className="text-[11px] text-muted-foreground">
+															Unexpected fields: {result.unexpected_fields.join(", ") || "-"}
+														</p>
+														<p className="text-[11px] text-muted-foreground">
+															Klargörande:{" "}
+															{result.needs_clarification
+																? result.clarification_question || "Ja"
 																: "Nej"}
-													</p>
-													<p className="text-[11px] text-muted-foreground">
-														Missing required:{" "}
-														{result.missing_required_fields.join(", ") || "-"}
-													</p>
-													<p className="text-[11px] text-muted-foreground">
-														Unexpected fields:{" "}
-														{result.unexpected_fields.join(", ") || "-"}
-													</p>
-													<p className="text-[11px] text-muted-foreground">
-														Klargörande:{" "}
-														{result.needs_clarification
-															? result.clarification_question || "Ja"
-															: "Nej"}
-													</p>
+														</p>
+													</div>
 												</div>
+												{result.field_checks?.length > 0 && (
+													<div className="rounded bg-muted/30 p-2 space-y-1">
+														<p className="text-xs font-medium">Field checks</p>
+														{result.field_checks.map((check, idx) => (
+															<p
+																key={`${result.test_id}-field-check-${idx}`}
+																className="text-[11px] text-muted-foreground"
+															>
+																{check.field}: expected {JSON.stringify(check.expected)} · actual{" "}
+																{JSON.stringify(check.actual)} · {check.passed ? "PASS" : "FAIL"}
+															</p>
+														))}
+													</div>
+												)}
+												{result.schema_errors?.length > 0 && (
+													<div className="rounded bg-red-50 p-2 space-y-1">
+														<p className="text-xs font-medium text-red-700">Schema errors</p>
+														{result.schema_errors.map((error, idx) => (
+															<p
+																key={`${result.test_id}-schema-error-${idx}`}
+																className="text-[11px] text-red-700"
+															>
+																{error}
+															</p>
+														))}
+													</div>
+												)}
 											</div>
-											{result.field_checks?.length > 0 && (
-												<div className="rounded bg-muted/30 p-2 space-y-1">
-													<p className="text-xs font-medium">Field checks</p>
-													{result.field_checks.map((check, idx) => (
-														<p
-															key={`${result.test_id}-field-check-${idx}`}
-															className="text-[11px] text-muted-foreground"
-														>
-															{check.field}: expected{" "}
-															{JSON.stringify(check.expected)} · actual{" "}
-															{JSON.stringify(check.actual)} ·{" "}
-															{check.passed ? "PASS" : "FAIL"}
-														</p>
-													))}
-												</div>
-											)}
-											{result.schema_errors?.length > 0 && (
-												<div className="rounded bg-red-50 p-2 space-y-1">
-													<p className="text-xs font-medium text-red-700">Schema errors</p>
-													{result.schema_errors.map((error, idx) => (
-														<p
-															key={`${result.test_id}-schema-error-${idx}`}
-															className="text-[11px] text-red-700"
-														>
-															{error}
-														</p>
-													))}
-												</div>
-											)}
-										</div>
 										);
 									})}
 								</CardContent>
@@ -5097,9 +4754,7 @@ export function ToolSettingsPage() {
 									<div className="flex flex-wrap items-center gap-2">
 										<Button
 											onClick={saveSelectedPromptSuggestions}
-											disabled={
-												!selectedPromptSuggestionKeys.size || isSavingPromptSuggestions
-											}
+											disabled={!selectedPromptSuggestionKeys.size || isSavingPromptSuggestions}
 										>
 											Spara valda promptförslag
 										</Button>
@@ -5110,9 +4765,7 @@ export function ToolSettingsPage() {
 										>
 											Kör om API input eval
 										</Button>
-										<Badge variant="outline">
-											{selectedPromptSuggestions.length} valda
-										</Badge>
+										<Badge variant="outline">{selectedPromptSuggestions.length} valda</Badge>
 									</div>
 
 									{apiInputEvaluationResult.prompt_suggestions.length === 0 ? (
@@ -5122,9 +4775,7 @@ export function ToolSettingsPage() {
 									) : (
 										<div className="space-y-3">
 											{apiInputEvaluationResult.prompt_suggestions.map((suggestion) => {
-												const isSelected = selectedPromptSuggestionKeys.has(
-													suggestion.prompt_key
-												);
+												const isSelected = selectedPromptSuggestionKeys.has(suggestion.prompt_key);
 												return (
 													<div
 														key={`prompt-suggestion-${suggestion.prompt_key}`}
@@ -5135,21 +4786,15 @@ export function ToolSettingsPage() {
 																<input
 																	type="checkbox"
 																	checked={isSelected}
-																	onChange={() =>
-																		togglePromptSuggestion(suggestion.prompt_key)
-																	}
+																	onChange={() => togglePromptSuggestion(suggestion.prompt_key)}
 																/>
-																<Badge variant="secondary">
-																	{suggestion.prompt_key}
-																</Badge>
+																<Badge variant="secondary">{suggestion.prompt_key}</Badge>
 																<Badge variant="outline">
 																	{suggestion.failed_test_ids.length} fail-case(s)
 																</Badge>
 															</div>
 														</div>
-														<p className="text-xs text-muted-foreground">
-															{suggestion.rationale}
-														</p>
+														<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
 														<div className="grid gap-3 md:grid-cols-2">
 															<div className="rounded bg-muted/50 p-2">
 																<p className="text-xs font-medium mb-1">Nuvarande prompt</p>
@@ -5181,8 +4826,7 @@ export function ToolSettingsPage() {
 								<CardHeader>
 									<CardTitle>Steg 3E: Intent-förslag (metadata + prompt)</CardTitle>
 									<CardDescription>
-										Intentförslag från API Input-körningen för att minska fel tidigt i
-										pipelinen.
+										Intentförslag från API Input-körningen för att minska fel tidigt i pipelinen.
 									</CardDescription>
 								</CardHeader>
 								<CardContent className="space-y-3">
@@ -5202,9 +4846,7 @@ export function ToolSettingsPage() {
 														{suggestion.failed_test_ids.length} fail-case(s)
 													</Badge>
 												</div>
-												<p className="text-xs text-muted-foreground">
-													{suggestion.rationale}
-												</p>
+												<p className="text-xs text-muted-foreground">{suggestion.rationale}</p>
 												<div className="grid gap-3 md:grid-cols-2">
 													<div className="rounded bg-muted/50 p-2">
 														<p className="text-xs font-medium mb-1">Nuvarande intent</p>
@@ -5230,9 +4872,7 @@ export function ToolSettingsPage() {
 															</pre>
 														</div>
 														<div className="rounded bg-muted/50 p-2">
-															<p className="text-xs font-medium mb-1">
-																Föreslagen prompt
-															</p>
+															<p className="text-xs font-medium mb-1">Föreslagen prompt</p>
 															<pre className="text-[11px] whitespace-pre-wrap break-words">
 																{suggestion.proposed_prompt ?? "-"}
 															</pre>

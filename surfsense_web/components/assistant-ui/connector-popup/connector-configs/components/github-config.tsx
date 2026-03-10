@@ -117,7 +117,7 @@ export const GithubConfig: FC<GithubConfigProps> = ({
 					<div className="space-y-2">
 						<Label className="flex items-center gap-2 text-xs sm:text-sm">
 							<KeyRound className="h-4 w-4" />
-						GitHub personlig åtkomsttoken (valfritt)
+							GitHub personlig åtkomsttoken (valfritt)
 						</Label>
 						<Input
 							type="password"
@@ -127,7 +127,7 @@ export const GithubConfig: FC<GithubConfigProps> = ({
 							className="border-slate-400/20 focus-visible:border-slate-400/40"
 						/>
 						<p className="text-[10px] sm:text-xs text-muted-foreground">
-						Uppdatera din GitHub PAT vid behov.
+							Uppdatera din GitHub PAT vid behov.
 						</p>
 					</div>
 

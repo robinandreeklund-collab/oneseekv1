@@ -75,7 +75,9 @@ function LibrisErrorState({ error }: { error: string }) {
 					<AlertCircleIcon className="size-6 text-destructive" />
 				</div>
 				<div className="flex-1 min-w-0">
-					<p className="font-medium text-destructive text-sm">Det gick inte att läsa in Libris-resultat</p>
+					<p className="font-medium text-destructive text-sm">
+						Det gick inte att läsa in Libris-resultat
+					</p>
 					<p className="text-muted-foreground text-xs mt-1">{error}</p>
 				</div>
 			</div>
@@ -120,7 +122,9 @@ function LibrisResultCard({ result }: { result: z.infer<typeof LibrisResultItemS
 							<Button
 								variant="ghost"
 								size="icon"
-								onClick={() => window.open(result.libris_url || "", "_blank", "noopener,noreferrer")}
+								onClick={() =>
+									window.open(result.libris_url || "", "_blank", "noopener,noreferrer")
+								}
 								aria-label="Öppna i Libris"
 							>
 								<ExternalLinkIcon className="size-4" />
@@ -128,9 +132,7 @@ function LibrisResultCard({ result }: { result: z.infer<typeof LibrisResultItemS
 						)}
 					</div>
 					{authors.length > 0 && (
-						<p className="text-xs text-muted-foreground">
-							{authors.join(", ")}
-						</p>
+						<p className="text-xs text-muted-foreground">{authors.join(", ")}</p>
 					)}
 					<div className="mt-1 text-xs text-muted-foreground">
 						{result.year && <span>{result.year}</span>}
@@ -138,9 +140,7 @@ function LibrisResultCard({ result }: { result: z.infer<typeof LibrisResultItemS
 						{result.isbn && <span> · ISBN {result.isbn}</span>}
 					</div>
 					{result.summary && (
-						<p className="mt-2 text-xs text-muted-foreground">
-							{truncate(result.summary, 160)}
-						</p>
+						<p className="mt-2 text-xs text-muted-foreground">{truncate(result.summary, 160)}</p>
 					)}
 					{subjects.length > 0 && (
 						<div className="mt-2 flex flex-wrap gap-1">
@@ -198,7 +198,8 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 			return <LibrisErrorState error={result.error || "Libris-sökning misslyckades"} />;
 		}
 
-		const results = result.mode === "record" ? (result.record ? [result.record] : []) : result.results || [];
+		const results =
+			result.mode === "record" ? (result.record ? [result.record] : []) : result.results || [];
 		return (
 			<Card className="my-4 w-full">
 				<CardContent className="p-4">
@@ -227,4 +228,3 @@ export const LibrisSearchToolUI = makeAssistantToolUI<LibrisSearchArgs, LibrisSe
 		);
 	},
 });
-

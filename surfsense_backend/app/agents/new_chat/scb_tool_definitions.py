@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.utils.text import normalize_text as _normalize_text
+from app.utils.text import (
+    normalize_text as _normalize_text,
+    score_text as _score_text,
+)
 
 
 @dataclass(frozen=True)
@@ -1002,6 +1005,13 @@ SCB_NORMALIZED_TABLE_CODES: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 
+_TOOL_STOP_TOKENS: frozenset[str] = frozenset({
+    "i", "ar", "at", "av", "en", "et", "er", "de", "di",
+    "hur", "ser", "vad", "och", "for", "med", "den", "det",
+    "som", "att", "till", "per", "pa", "om", "ut", "in",
+})
+
+
 def _score_tool(definition: ScbToolDefinition, query_norm: str, tokens: set[str]) -> int:
     """Score a tool definition against a query using pre-computed indices."""
     score = 0
@@ -1014,18 +1024,32 @@ def _score_tool(definition: ScbToolDefinition, query_norm: str, tokens: set[str]
         score += 5
 
     for kw_norm in SCB_KEYWORD_INDEX.get(tool_id, []):
-        if kw_norm in query_norm:
-            score += 3
+        if not kw_norm:
+            continue
+        if len(kw_norm) < 3:
+            # Very short keywords (e.g. "el"): require exact token match
+            # to avoid false positives ("el" matching "dagligvaruhandeln").
+            if kw_norm in tokens:
+                score += 3
+        else:
+            if kw_norm in query_norm:
+                score += 3
 
     for code_norm in SCB_NORMALIZED_TABLE_CODES.get(tool_id, []):
         if code_norm in query_norm:
             score += 6
 
-    for token in tokens:
-        if token and token in desc_norm:
-            score += 1
+    # Description matching — use compound-aware score_text which handles
+    # Swedish compound words and filters stop words automatically.
+    meaningful_tokens = {t for t in tokens if t and t not in _TOOL_STOP_TOKENS}
+    score += _score_text(meaningful_tokens, desc_norm)
 
     return score
+
+
+_BASE_PATH_DEPTH: dict[str, int] = {
+    d.tool_id: d.base_path.count("/") for d in SCB_TOOL_DEFINITIONS
+}
 
 
 def retrieve_scb_tools(query: str, limit: int = 2) -> list[str]:
@@ -1036,7 +1060,12 @@ def retrieve_scb_tools(query: str, limit: int = 2) -> list[str]:
         (definition.tool_id, _score_tool(definition, query_norm, tokens))
         for definition in SCB_TOOL_DEFINITIONS
     ]
-    scored.sort(key=lambda item: item[1], reverse=True)
+    # Sort by score descending, then by base_path specificity descending
+    # (deeper paths = more specific tools win ties).
+    scored.sort(
+        key=lambda item: (item[1], _BASE_PATH_DEPTH.get(item[0], 0)),
+        reverse=True,
+    )
     if scored and scored[0][1] == 0:
         return [definition.tool_id for definition in SCB_TOOL_DEFINITIONS[:limit]]
     return [tool_id for tool_id, _ in scored[:limit]]

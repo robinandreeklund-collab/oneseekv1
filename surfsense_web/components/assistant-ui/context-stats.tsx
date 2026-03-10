@@ -90,14 +90,10 @@ export const ContextStatsDisplay: FC<{
 								<Badge variant="secondary">Bas {formatNumber(stats.baseTokens)} tok</Badge>
 							)}
 							{stats.contextTokens > 0 && (
-								<Badge variant="secondary">
-									Kontext {formatNumber(stats.contextTokens)} tok
-								</Badge>
+								<Badge variant="secondary">Kontext {formatNumber(stats.contextTokens)} tok</Badge>
 							)}
 							{stats.toolTokens > 0 && (
-								<Badge variant="secondary">
-									Verktyg {formatNumber(stats.toolTokens)} tok
-								</Badge>
+								<Badge variant="secondary">Verktyg {formatNumber(stats.toolTokens)} tok</Badge>
 							)}
 						</div>
 

@@ -179,11 +179,7 @@ export function useDebateAudio(enabled: boolean) {
 					float32[i] = int16[i] / 32768;
 				}
 
-				const audioBuffer = ctx.createBuffer(
-					PCM_CHANNELS,
-					float32.length,
-					PCM_SAMPLE_RATE,
-				);
+				const audioBuffer = ctx.createBuffer(PCM_CHANNELS, float32.length, PCM_SAMPLE_RATE);
 				audioBuffer.getChannelData(0).set(float32);
 				return audioBuffer;
 			} catch (err) {
@@ -191,7 +187,7 @@ export function useDebateAudio(enabled: boolean) {
 				return null;
 			}
 		},
-		[ensureAudioContext],
+		[ensureAudioContext]
 	);
 
 	// ── Queue a chunk for playback ─────────────────────────────────
@@ -202,7 +198,7 @@ export function useDebateAudio(enabled: boolean) {
 			totalChunksRef.current += 1;
 			if (totalChunksRef.current <= 3) {
 				console.log(
-					`[useDebateAudio] chunk #${totalChunksRef.current} from ${speaker} r${round}, b64 length=${b64.length}`,
+					`[useDebateAudio] chunk #${totalChunksRef.current} from ${speaker} r${round}, b64 length=${b64.length}`
 				);
 			}
 
@@ -232,7 +228,7 @@ export function useDebateAudio(enabled: boolean) {
 				playNext();
 			}
 		},
-		[enabled, decodePcmChunk, playNext],
+		[enabled, decodePcmChunk, playNext]
 	);
 
 	// ── Voice error handler ───────────────────────────────────────
@@ -276,13 +272,10 @@ export function useDebateAudio(enabled: boolean) {
 	}, []);
 
 	// ── Speaker change handler ─────────────────────────────────────
-	const onSpeakerChange = useCallback(
-		(speaker: string) => {
-			console.log("[useDebateAudio] speaker change:", speaker);
-			setVoiceState((prev) => ({ ...prev, currentSpeaker: speaker }));
-		},
-		[],
-	);
+	const onSpeakerChange = useCallback((speaker: string) => {
+		console.log("[useDebateAudio] speaker change:", speaker);
+		setVoiceState((prev) => ({ ...prev, currentSpeaker: speaker }));
+	}, []);
 
 	// ── Playback controls ──────────────────────────────────────────
 	const togglePlayPause = useCallback(() => {
@@ -372,7 +365,7 @@ export function useDebateAudio(enabled: boolean) {
 			console.log(
 				"[useDebateAudio] MP3 export: %d PCM bytes → %d MP3 parts",
 				totalLength,
-				mp3Parts.length,
+				mp3Parts.length
 			);
 
 			return new Blob(mp3Parts, { type: "audio/mpeg" });
@@ -418,7 +411,7 @@ function buildWavHeader(
 	dataLength: number,
 	sampleRate: number,
 	bitDepth: number,
-	channels: number,
+	channels: number
 ): ArrayBuffer {
 	const byteRate = (sampleRate * channels * bitDepth) / 8;
 	const blockAlign = (channels * bitDepth) / 8;

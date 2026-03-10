@@ -1,19 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+	type DomainMetadata,
 	nexusApiService,
 	type ZoneConfigResponse,
-	type DomainMetadata,
 } from "@/lib/apis/nexus-api.service";
 
 function MetricBar({
@@ -109,33 +103,18 @@ export function ZoneHealthCard() {
 			<CardContent>
 				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 					{zones.map((zone) => (
-						<div
-							key={zone.zone}
-							className="rounded-lg border p-4 space-y-3"
-						>
+						<div key={zone.zone} className="rounded-lg border p-4 space-y-3">
 							<div className="flex items-center justify-between">
-								<h4 className="font-medium">
-									{domainLabels[zone.zone] || zone.zone}
-								</h4>
+								<h4 className="font-medium">{domainLabels[zone.zone] || zone.zone}</h4>
 								<Badge variant="outline" className="text-xs font-mono">
 									{zone.prefix_token.trim()}
 								</Badge>
 							</div>
-							<p className="text-xs text-muted-foreground">
-								{domainDescriptions[zone.zone] || ""}
-							</p>
+							<p className="text-xs text-muted-foreground">{domainDescriptions[zone.zone] || ""}</p>
 
 							<div className="space-y-2">
-								<MetricBar
-									label="Band-0 rate"
-									value={zone.band0_rate}
-									target={0.8}
-								/>
-								<MetricBar
-									label="Silhouette"
-									value={zone.silhouette_score}
-									target={0.6}
-								/>
+								<MetricBar label="Band-0 rate" value={zone.band0_rate} target={0.8} />
+								<MetricBar label="Silhouette" value={zone.silhouette_score} target={0.6} />
 								<MetricBar
 									label="ECE"
 									value={zone.ece_score != null ? 1 - zone.ece_score : null}

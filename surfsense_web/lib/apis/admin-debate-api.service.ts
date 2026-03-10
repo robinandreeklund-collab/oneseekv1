@@ -40,26 +40,23 @@ class AdminDebateApiService {
 	getVoiceSettings = async (): Promise<DebateVoiceSettingsResponse> => {
 		return baseApiService.get(
 			"/api/v1/admin/debate/voice-settings",
-			debateVoiceSettingsResponseSchema,
+			debateVoiceSettingsResponseSchema
 		);
 	};
 
 	updateVoiceSettings = async (
-		settings: DebateVoiceSettings,
+		settings: DebateVoiceSettings
 	): Promise<DebateVoiceSettingsResponse> => {
 		return baseApiService.put(
 			"/api/v1/admin/debate/voice-settings",
 			debateVoiceSettingsResponseSchema,
-			{ body: settings },
+			{ body: settings }
 		);
 	};
 
 	// OPT-13: Fetch canonical voice maps from backend
 	getVoiceDefaults = async (): Promise<VoiceDefaults> => {
-		return baseApiService.get(
-			"/api/v1/admin/debate/voice-defaults",
-			voiceDefaultsSchema,
-		);
+		return baseApiService.get("/api/v1/admin/debate/voice-defaults", voiceDefaultsSchema);
 	};
 }
 

@@ -214,7 +214,9 @@ def normalize_intent_definition_payload(
     route_value = _normalize_text(payload.get("route")).lower()
     # Accept old English route names transparently
     route_value = _COMPAT_ROUTE_MAP.get(route_value, route_value)
-    if route_value not in _ROUTE_VALUES:
+    # Allow domain-id routes (e.g. 'väder-och-klimat') to pass through;
+    # only reset truly empty values to the kunskap fallback.
+    if not route_value:
         route_value = Route.KUNSKAP.value
     label = (
         _normalize_optional_text(payload.get("label"))
@@ -266,7 +268,8 @@ def get_default_intent_definitions() -> dict[str, dict[str, Any]]:
                     fallback_route = _COMPAT_ROUTE_MAP.get(fallback_route) or Route.KUNSKAP.value
                 payload = {
                     "intent_id": domain_id,
-                    "route": fallback_route,
+                    "route": domain_id,
+                    "fallback_route": fallback_route,
                     "label": domain.get("label", domain_id),
                     "description": domain.get("description", ""),
                     "keywords": domain.get("keywords", []),
@@ -380,7 +383,8 @@ def domains_to_intent_definitions(
         definitions.append(
             {
                 "intent_id": domain_id,
-                "route": route.value,
+                "route": domain_id,
+                "fallback_route": route.value,
                 "label": label,
                 "description": description,
                 "keywords": keywords,

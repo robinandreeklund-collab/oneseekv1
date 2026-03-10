@@ -207,6 +207,10 @@ def normalize_tool_retrieval_tuning(payload: dict[str, Any] | None) -> dict[str,
             min_value=1,
             max_value=1000,
         ),
+        "llm_gate_mode": _as_bool(
+            source.get("llm_gate_mode"),
+            default=bool(DEFAULT_TOOL_RETRIEVAL_TUNING.get("llm_gate_mode", False)),
+        ),
     }
 
 

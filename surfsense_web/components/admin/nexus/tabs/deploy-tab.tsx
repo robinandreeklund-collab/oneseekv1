@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
 	AlertCircle,
 	ArrowRight,
@@ -14,6 +13,8 @@ import {
 	Shield,
 	XCircle,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -29,11 +30,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-	nexusApiService,
 	type GateStatusResponse,
+	nexusApiService,
 	type PlatformToolResponse,
 } from "@/lib/apis/nexus-api.service";
-import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
 const STAGE_LABELS: Record<string, string> = {
 	review: "REVIEW",
@@ -49,21 +49,33 @@ const STAGE_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "
 	rolled_back: "destructive",
 };
 
-const GATE_REQUIREMENTS: Record<number, { requirement: string; thresholdExplanation: string; howToPass: string }> = {
+const GATE_REQUIREMENTS: Record<
+	number,
+	{ requirement: string; thresholdExplanation: string; howToPass: string }
+> = {
 	1: {
-		requirement: "Separation-gate: Verktygets kod och konfiguration måste vara korrekt separerade från andra verktyg. Inga hårda beroenden till andra moduler.",
-		thresholdExplanation: "Poängen mäter graden av kodmässig separation. Värden över tröskeln indikerar tillräcklig isolation.",
-		howToPass: "Se till att verktyget har egen konfiguration, inga cirkulära beroenden, och att det kan laddas oberoende av andra verktyg.",
+		requirement:
+			"Separation-gate: Verktygets kod och konfiguration måste vara korrekt separerade från andra verktyg. Inga hårda beroenden till andra moduler.",
+		thresholdExplanation:
+			"Poängen mäter graden av kodmässig separation. Värden över tröskeln indikerar tillräcklig isolation.",
+		howToPass:
+			"Se till att verktyget har egen konfiguration, inga cirkulära beroenden, och att det kan laddas oberoende av andra verktyg.",
 	},
 	2: {
-		requirement: "Eval-gate: Verktyget måste klara automatiserade utvärderingstester med tillräckligt högt resultat.",
-		thresholdExplanation: "Poängen baseras på hur många eval-testfall verktyget klarar. Tröskeln anger minimikravet för godkänt.",
-		howToPass: "Kör eval-sviten och åtgärda eventuella felaktiga svar. Kontrollera att verktygets output matchar förväntade resultat.",
+		requirement:
+			"Eval-gate: Verktyget måste klara automatiserade utvärderingstester med tillräckligt högt resultat.",
+		thresholdExplanation:
+			"Poängen baseras på hur många eval-testfall verktyget klarar. Tröskeln anger minimikravet för godkänt.",
+		howToPass:
+			"Kör eval-sviten och åtgärda eventuella felaktiga svar. Kontrollera att verktygets output matchar förväntade resultat.",
 	},
 	3: {
-		requirement: "LLM-judge-gate: En LLM-baserad bedömare utvärderar verktygets svar kvalitativt — relevans, korrekthet och användbarhet.",
-		thresholdExplanation: "LLM-bedömaren ger ett kvalitetspoäng. Tröskeln anger den lägsta acceptabla kvalitetsnivån.",
-		howToPass: "Förbättra verktygets prompter och svarsformat. Se till att svaren är tydliga, korrekta och relevanta för användarens fråga.",
+		requirement:
+			"LLM-judge-gate: En LLM-baserad bedömare utvärderar verktygets svar kvalitativt — relevans, korrekthet och användbarhet.",
+		thresholdExplanation:
+			"LLM-bedömaren ger ett kvalitetspoäng. Tröskeln anger den lägsta acceptabla kvalitetsnivån.",
+		howToPass:
+			"Förbättra verktygets prompter och svarsformat. Se till att svaren är tydliga, korrekta och relevanta för användarens fråga.",
 	},
 };
 
@@ -181,8 +193,8 @@ export function DeployTab() {
 						className="rounded-md border bg-background px-3 py-2 text-sm"
 					>
 						<option value="">
-							Alla kategorier (
-							{platformTools.filter((t) => t.category !== "external_model").length})
+							Alla kategorier ({platformTools.filter((t) => t.category !== "external_model").length}
+							)
 						</option>
 						{categories
 							.filter((c) => c !== "external_model")
@@ -316,9 +328,9 @@ export function DeployTab() {
 											<AlertDialogTitle>Är du säker?</AlertDialogTitle>
 											<AlertDialogDescription>
 												Du håller på att rulla tillbaka verktyget{" "}
-												<span className="font-mono font-semibold">{gateStatus.tool_id}</span>.
-												Detta kommer att flytta verktyget till ROLLED BACK-stadiet och det
-												kommer inte längre vara tillgängligt i sin nuvarande fas.
+												<span className="font-mono font-semibold">{gateStatus.tool_id}</span>. Detta
+												kommer att flytta verktyget till ROLLED BACK-stadiet och det kommer inte
+												längre vara tillgängligt i sin nuvarande fas.
 											</AlertDialogDescription>
 										</AlertDialogHeader>
 										<AlertDialogFooter>
@@ -365,14 +377,10 @@ export function DeployTab() {
 										</div>
 									</button>
 									{gate.score !== null && gate.score !== undefined && (
-										<p className="text-2xl font-bold font-mono">
-											{gate.score.toFixed(3)}
-										</p>
+										<p className="text-2xl font-bold font-mono">{gate.score.toFixed(3)}</p>
 									)}
 									{gate.threshold !== null && gate.threshold !== undefined && (
-										<p className="text-xs text-muted-foreground">
-											Tröskel: {gate.threshold}
-										</p>
+										<p className="text-xs text-muted-foreground">Tröskel: {gate.threshold}</p>
 									)}
 									<p className="text-xs text-muted-foreground mt-1">{gate.details}</p>
 
@@ -381,14 +389,10 @@ export function DeployTab() {
 										<div className="mt-3 pt-3 border-t space-y-2">
 											<div>
 												<p className="text-xs font-semibold text-foreground">Krav</p>
-												<p className="text-xs text-muted-foreground">
-													{gateInfo.requirement}
-												</p>
+												<p className="text-xs text-muted-foreground">{gateInfo.requirement}</p>
 											</div>
 											<div>
-												<p className="text-xs font-semibold text-foreground">
-													Tröskelförklaring
-												</p>
+												<p className="text-xs font-semibold text-foreground">Tröskelförklaring</p>
 												<p className="text-xs text-muted-foreground">
 													{gateInfo.thresholdExplanation}
 												</p>
@@ -397,9 +401,7 @@ export function DeployTab() {
 												<p className="text-xs font-semibold text-foreground">
 													Vad krävs för att passera
 												</p>
-												<p className="text-xs text-muted-foreground">
-													{gateInfo.howToPass}
-												</p>
+												<p className="text-xs text-muted-foreground">{gateInfo.howToPass}</p>
 											</div>
 										</div>
 									)}
@@ -422,8 +424,6 @@ function RecommendationBadge({ recommendation }: { recommendation: string }) {
 	const color = colors[recommendation] || "bg-gray-100 text-gray-700";
 
 	return (
-		<span className={`text-xs px-2 py-0.5 rounded font-medium ${color}`}>
-			{recommendation}
-		</span>
+		<span className={`text-xs px-2 py-0.5 rounded font-medium ${color}`}>{recommendation}</span>
 	);
 }

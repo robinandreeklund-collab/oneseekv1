@@ -273,6 +273,56 @@ def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
     return names
 
 
+def _all_tool_data_empty(messages: list[Any] | None) -> bool:
+    """Return True when every ToolMessage with JSON content had empty ``data``.
+
+    This catches the scenario where external APIs (SCB, Riksbank, etc.)
+    return ``{"status": "success", "data": {}}`` — the call itself succeeded
+    but no actual data was found.  When *all* tool outputs are data-empty
+    the worker LLM has nothing to ground its answer on, so the contract
+    should NOT be marked as ``success``/``actionable``.
+
+    Returns False (safe default) when there are no tool messages or when at
+    least one tool returned non-empty data.
+    """
+    import json as _json
+
+    data_tool_count = 0
+    empty_count = 0
+    for msg in messages or []:
+        if not isinstance(msg, ToolMessage):
+            continue
+        raw = str(getattr(msg, "content", "") or "").strip()
+        if not raw or raw.startswith("[") or len(raw) < 10:
+            continue
+        # Skip meta-tools (retrieve_tools, reflect_on_progress, etc.)
+        tool_name = str(getattr(msg, "name", "") or "").strip().lower()
+        if tool_name in {
+            "retrieve_tools",
+            "retrieve_tools_noop",
+            "reflect_on_progress",
+            "call_agent",
+            "call_agents_parallel",
+        }:
+            continue
+        try:
+            parsed = _json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        # Only check data-bearing tool results (must have "data" key)
+        if "data" not in parsed:
+            continue
+        data_tool_count += 1
+        data_field = parsed["data"]
+        if isinstance(data_field, dict) and not data_field:
+            empty_count += 1
+        elif isinstance(data_field, list) and not data_field:
+            empty_count += 1
+    return data_tool_count > 0 and empty_count == data_tool_count
+
+
 # ── Tool-call coercion ────────────────────────────────────────────────
 
 # Kept at module level so supervisor_agent.py can reference them.

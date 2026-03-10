@@ -1,16 +1,5 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
 	AlertCircle,
 	Bot,
@@ -22,17 +11,28 @@ import {
 	Sparkles,
 	X,
 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-	nexusApiService,
-	type ToolSuggestionResponse,
-	type OptimizerResultResponse,
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import {
+	type DomainMetadata,
 	type IntentLayerItemSuggestion,
 	type IntentLayerResultResponse,
+	nexusApiService,
+	type OptimizerResultResponse,
 	type PlatformToolResponse,
-	type DomainMetadata,
+	type ToolSuggestionResponse,
 } from "@/lib/apis/nexus-api.service";
-import { useCategoryLabels } from "@/components/admin/nexus/shared/use-category-labels";
 
 type FilterMode = "namespace" | "category" | "intent-layer" | "domain-agents";
 
@@ -153,9 +153,7 @@ function SuggestionCard({
 
 			{/* Reasoning */}
 			{suggestion.reasoning && (
-				<p className="text-xs text-muted-foreground mt-2 italic">
-					{suggestion.reasoning}
-				</p>
+				<p className="text-xs text-muted-foreground mt-2 italic">{suggestion.reasoning}</p>
 			)}
 
 			{/* Expanded diff view */}
@@ -274,9 +272,7 @@ function IntentLayerSuggestionCard({
 			</div>
 
 			{suggestion.reasoning && (
-				<p className="text-xs text-muted-foreground mt-2 italic">
-					{suggestion.reasoning}
-				</p>
+				<p className="text-xs text-muted-foreground mt-2 italic">{suggestion.reasoning}</p>
 			)}
 
 			{expanded && (
@@ -348,7 +344,7 @@ export function OptimizerTab() {
 	// already the agent-aligned grouping level (e.g. "tools/statistics/scb/ekonomi"),
 	// so we use the full namespace as the prefix to preserve sub-domain granularity.
 	const namespaces = Array.from(
-		new Set(platformTools.map((t) => t.namespace).filter(Boolean)),
+		new Set(platformTools.map((t) => t.namespace).filter(Boolean))
 	).sort();
 
 	// Load platform tools + categories + domains on mount
@@ -517,7 +513,7 @@ export function OptimizerTab() {
 				setApplyResult(
 					filterMode === "domain-agents"
 						? `Tillämpat ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu optimerade agentdefinitioner.`
-						: `Tillämpat ${res.applied_domains} domäner och ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu de uppdaterade definitionerna.`,
+						: `Tillämpat ${res.applied_domains} domäner och ${res.applied_agents} agenter.${res.skipped > 0 ? ` ${res.skipped} hoppade över.` : ""} NEXUS använder nu de uppdaterade definitionerna.`
 				);
 			} catch (err) {
 				setApplyResult(`Fel: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -549,7 +545,7 @@ export function OptimizerTab() {
 		try {
 			const res = await nexusApiService.optimizerApply(approved);
 			setApplyResult(
-				`Tillämpat ${res.applied} verktyg. ${res.skipped > 0 ? `${res.skipped} hoppade över.` : ""} NEXUS använder nu de nya metadata-overrides.`,
+				`Tillämpat ${res.applied} verktyg. ${res.skipped > 0 ? `${res.skipped} hoppade över.` : ""} NEXUS använder nu de nya metadata-overrides.`
 			);
 		} catch (err) {
 			setApplyResult(`Fel: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -580,10 +576,9 @@ export function OptimizerTab() {
 			<Alert>
 				<Sparkles className="h-4 w-4" />
 				<AlertDescription>
-					Använd AI (Claude Sonnet) för att optimera metadata. Välj
-					namespace/kategori för verktyg, &quot;Intent-lager&quot; för alla domäner
-					och agenter, eller &quot;Domän-agenter&quot; för att optimera agenter
-					inom en specifik domän. Godkända förslag sparas som DB-overrides.
+					Använd AI (Claude Sonnet) för att optimera metadata. Välj namespace/kategori för verktyg,
+					&quot;Intent-lager&quot; för alla domäner och agenter, eller &quot;Domän-agenter&quot; för
+					att optimera agenter inom en specifik domän. Godkända förslag sparas som DB-overrides.
 				</AlertDescription>
 			</Alert>
 
@@ -632,19 +627,15 @@ export function OptimizerTab() {
 							<div className="flex-1 max-w-sm">
 								{filterMode === "intent-layer" ? (
 									<p className="text-sm text-muted-foreground py-2">
-										Optimerar hela intent-lagret: alla domäner och agenter
-										skickas till LLM för batch-optimering av keywords,
-										descriptions och excludes.
+										Optimerar hela intent-lagret: alla domäner och agenter skickas till LLM för
+										batch-optimering av keywords, descriptions och excludes.
 									</p>
 								) : filterMode === "domain-agents" ? (
 									<>
 										<label className="text-sm text-muted-foreground mb-1.5 block">
 											Välj domän att optimera agenter för
 										</label>
-										<Select
-											value={selectedDomain}
-											onValueChange={setSelectedDomain}
-										>
+										<Select value={selectedDomain} onValueChange={setSelectedDomain}>
 											<SelectTrigger>
 												<SelectValue placeholder="Välj domän..." />
 											</SelectTrigger>
@@ -664,23 +655,16 @@ export function OptimizerTab() {
 									</div>
 								) : filterMode === "namespace" ? (
 									<>
-										<label className="text-sm text-muted-foreground mb-1.5 block">
-											Namespace
-										</label>
-										<Select
-											value={selectedNamespace}
-											onValueChange={setSelectedNamespace}
-										>
+										<label className="text-sm text-muted-foreground mb-1.5 block">Namespace</label>
+										<Select value={selectedNamespace} onValueChange={setSelectedNamespace}>
 											<SelectTrigger>
 												<SelectValue placeholder="Välj namespace..." />
 											</SelectTrigger>
 											<SelectContent>
 												{namespaces.map((ns) => {
-													const exact = platformTools.filter(
-														(t) => t.namespace === ns,
-													).length;
+													const exact = platformTools.filter((t) => t.namespace === ns).length;
 													const total = platformTools.filter((t) =>
-														t.namespace.startsWith(ns),
+														t.namespace.startsWith(ns)
 													).length;
 													const label =
 														exact < total
@@ -697,21 +681,14 @@ export function OptimizerTab() {
 									</>
 								) : (
 									<>
-										<label className="text-sm text-muted-foreground mb-1.5 block">
-											Kategori
-										</label>
-										<Select
-											value={selectedCategory}
-											onValueChange={setSelectedCategory}
-										>
+										<label className="text-sm text-muted-foreground mb-1.5 block">Kategori</label>
+										<Select value={selectedCategory} onValueChange={setSelectedCategory}>
 											<SelectTrigger>
 												<SelectValue placeholder="Välj kategori..." />
 											</SelectTrigger>
 											<SelectContent>
 												{categories.map((cat) => {
-													const count = platformTools.filter(
-														(t) => t.category === cat,
-													).length;
+													const count = platformTools.filter((t) => t.category === cat).length;
 													return (
 														<SelectItem key={cat} value={cat}>
 															{CATEGORY_LABELS[cat] || cat} ({count} verktyg)
@@ -724,10 +701,7 @@ export function OptimizerTab() {
 								)}
 							</div>
 
-							<Button
-								onClick={handleGenerate}
-								disabled={!canGenerate || generating}
-							>
+							<Button onClick={handleGenerate} disabled={!canGenerate || generating}>
 								{generating ? (
 									<>
 										<Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -753,9 +727,7 @@ export function OptimizerTab() {
 						</div>
 
 						{activeModelUsed && (
-							<p className="text-xs text-muted-foreground">
-								Modell: {activeModelUsed}
-							</p>
+							<p className="text-xs text-muted-foreground">Modell: {activeModelUsed}</p>
 						)}
 					</div>
 				</CardContent>
@@ -779,19 +751,14 @@ export function OptimizerTab() {
 								{isIntentLike ? "objekt" : "verktyg"})
 							</CardTitle>
 							<p className="text-xs text-muted-foreground mt-1">
-								{approvedCount} godkända · {rejectedCount} avvisade · {pendingCount}{" "}
-								väntande
+								{approvedCount} godkända · {rejectedCount} avvisade · {pendingCount} väntande
 							</p>
 						</div>
 						<div className="flex items-center gap-2">
 							<Button variant="outline" size="sm" onClick={handleApproveAll}>
 								Godkänn alla
 							</Button>
-							<Button
-								size="sm"
-								onClick={handleApply}
-								disabled={applying || approvedCount === 0}
-							>
+							<Button size="sm" onClick={handleApply} disabled={applying || approvedCount === 0}>
 								{applying ? (
 									<>
 										<Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />

@@ -1,12 +1,9 @@
-import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { Bot } from "lucide-react";
+import { memo } from "react";
 import type { FlowAgentNode } from "@/contracts/types/admin-flow-graph.types";
 
-export const AgentGraphNode = memo(function AgentGraphNode({
-	data,
-	selected,
-}: NodeProps) {
+export const AgentGraphNode = memo(function AgentGraphNode({ data, selected }: NodeProps) {
 	const agent = data as unknown as FlowAgentNode;
 	return (
 		<div

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
-import httpx
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.store.memory import InMemoryStore
@@ -19,15 +19,18 @@ from app.agents.new_chat.scb_tool_definitions import (
     aretrieve_scb_tools,
     retrieve_scb_tools,
 )
-from app.agents.new_chat.tools.knowledge_base import format_documents_for_context
-from app.services.connector_service import ConnectorService
+from app.agents.new_chat.tools.scb_llm_tools import _format_table_inspection
+from app.services.connector_service import ConnectorService  # noqa: F401 — used by callers
 from app.services.scb_service import SCB_BASE_URL, ScbService
+
+logger = logging.getLogger(__name__)
 
 # Re-export for backward compatibility (bigtool_store.py imports these)
 __all__ = [
     "SCB_TOOL_DEFINITIONS",
     "ScbToolDefinition",
     "aretrieve_scb_tools",
+    "build_scb_tool",
     "build_scb_tool_registry",
     "build_scb_tool_store",
     "create_statistics_agent",
@@ -46,7 +49,15 @@ __all__ = [
 
 def _build_tool_description(definition: ScbToolDefinition) -> str:
     examples = "\n".join(f"- {example}" for example in definition.example_queries)
-    sections = [definition.description]
+    sections = [
+        definition.description,
+        (
+            "HYBRID FLOW: This tool searches tables and returns their variable "
+            "structure so you can build a precise selection. After calling this, "
+            "use scb_validate_selection to validate your selection, then "
+            "scb_fetch_validated to fetch the data."
+        ),
+    ]
     if definition.table_codes:
         sections.append(f"Vanliga tabellkoder: {', '.join(definition.table_codes)}.")
     if definition.typical_filters:
@@ -60,145 +71,159 @@ def _build_tool_description(definition: ScbToolDefinition) -> str:
 def _build_scb_tool(
     definition: ScbToolDefinition,
     *,
-    scb_service: ScbService,
-    connector_service: ConnectorService,
-    search_space_id: int,
-    user_id: str | None,
-    thread_id: int | None,
+    scb_service: ScbService | None = None,
+    connector_service: ConnectorService | None = None,
+    search_space_id: int = 0,
+    user_id: str | None = None,
+    thread_id: int | None = None,
 ):
+    """Build a domain-scoped SCB tool using the hybrid LLM flow.
+
+    Instead of blindly fetching data via heuristic payloads, each domain tool
+    now returns the table variable structure (inspection) so the LLM can
+    reason about what to select. The LLM then uses scb_validate_selection
+    and scb_fetch_validated to complete the query.
+
+    This is the hybrid approach: domain tools provide scoped search + inspect,
+    the 3 LLM tools handle validation and fetching.
+    """
+    service = scb_service or ScbService()
     description = _build_tool_description(definition)
 
     async def _scb_tool(
         question: str,
         max_tables: int = 80,
-        max_cells: int = 150_000,
-        max_batches: int = 6,
-    ) -> str:  # KQ-4: explicit return type annotation
+    ) -> str:
         query = (question or "").strip()
         if not query:
             return json.dumps(
-                {"error": "Missing question for SCB query."}, ensure_ascii=True
+                {"error": "Missing question for SCB query."}, ensure_ascii=False
             )
 
         try:
-            query_hint = " ".join(
+            # Build scoring hint from domain keywords and table codes.
+            scoring_hint = " ".join(
                 [
                     definition.name,
                     *definition.keywords,
                     *definition.table_codes,
-                    *definition.typical_filters,
                 ]
             ).strip()
-            enriched_query = f"{query} {query_hint}".strip()
-            table, candidates = await scb_service.find_best_table_candidates(
+
+            # Search within the domain's base_path
+            table, candidates = await service.find_best_table_candidates(
                 definition.base_path,
-                enriched_query,
+                query,
+                scoring_hint=scoring_hint,
                 max_tables=max_tables,
-            )
-            if not table:
-                return json.dumps(
-                    {"error": "No matching SCB table found."}, ensure_ascii=True
-                )
-            metadata = await scb_service.get_table_metadata(table.path)
-            payloads, selection_summary, warnings, batch_summaries = (
-                scb_service.build_query_payloads(
-                    metadata,
-                    query,
-                    max_cells=max_cells,
-                    max_batches=max_batches,
-                )
-            )
-            if not payloads:
-                return json.dumps(
-                    {"error": "No valid SCB query payloads could be built."},
-                    ensure_ascii=True,
-                )
-
-            raw_results = await asyncio.gather(
-                *(scb_service.query_table(table.path, p) for p in payloads)
-            )
-            data_batches: list[dict[str, Any]] = []
-            for index, (data, _payload) in enumerate(
-                zip(raw_results, payloads, strict=False), start=1
-            ):
-                entry: dict[str, Any] = {"batch": index, "data": data}
-                if index - 1 < len(batch_summaries):
-                    entry["selection"] = batch_summaries[index - 1]
-                data_batches.append(entry)
-        except (httpx.HTTPError, UnicodeDecodeError, ValueError) as exc:
-            return json.dumps(
-                {"error": f"SCB request failed: {exc!s}"}, ensure_ascii=True
+                metadata_limit=5,
             )
 
-        source_url = f"{scb_service.base_url}{table.path.lstrip('/')}"
-        tool_output = {
-            "source": "SCB PxWeb",
-            "table": {
-                "id": table.id,
-                "title": table.title,
-                "path": table.path,
-                "updated": table.updated,
-                "source_url": source_url,
-            },
-            "selection": selection_summary,
-            "query": payloads,
-            "data": data_batches,
-            "warnings": warnings,
-        }
-        if candidates:
-            tool_output["candidates"] = [
-                {
-                    "id": candidate.id,
-                    "title": candidate.title,
-                    "path": candidate.path,
-                    "updated": candidate.updated,
-                }
-                for candidate in candidates
-            ]
+            # Also try v2 full-text search for broader coverage
+            try:
+                search_tables = await service.search_tables(query, limit=10)
+            except Exception:
+                search_tables = []
 
-        document = await connector_service.ingest_tool_output(
-            tool_name=definition.tool_id,
-            tool_output=tool_output,
-            title=f"{definition.name}: {table.title}",
-            metadata={
-                "source": "SCB",
-                "scb_base_path": definition.base_path,
-                "scb_table_path": table.path,
-                "scb_table_id": table.id,
-                "scb_table_title": table.title,
-                "scb_source_url": source_url,
-            },
-            user_id=user_id,
-            origin_search_space_id=search_space_id,
-            thread_id=thread_id,
-        )
+            # Merge results — domain-scoped first, then search results
+            all_tables = []
+            seen_ids: set[str] = set()
+            if table:
+                all_tables.append(table)
+                seen_ids.add(table.id)
+            for c in candidates or []:
+                if c.id not in seen_ids:
+                    all_tables.append(c)
+                    seen_ids.add(c.id)
+            for t in search_tables:
+                if t.id not in seen_ids:
+                    all_tables.append(t)
+                    seen_ids.add(t.id)
 
-        formatted_docs = ""
-        if document:
-            serialized = connector_service.serialize_external_document(
-                document, score=1.0
+            if not all_tables:
+                return json.dumps({
+                    "error": f"No matching SCB table found for '{query}' "
+                             f"in domain {definition.base_path}.",
+                    "suggestions": [
+                        "Try broader Swedish search terms",
+                        "Try scb_search_and_inspect for unrestricted search",
+                    ],
+                }, ensure_ascii=False)
+
+            # Inspect top candidates — fetch metadata in parallel
+            top_tables = all_tables[:5]
+
+            async def _safe_meta(t):
+                try:
+                    path = getattr(t, "path", None) or t.id
+                    return await service.get_table_metadata(path)
+                except Exception:
+                    return {}
+
+            metadatas = await asyncio.gather(
+                *(_safe_meta(t) for t in top_tables)
             )
-            formatted_docs = format_documents_for_context([serialized])
 
-        response_payload = {
-            "query": query,
-            "table": tool_output["table"],
-            "selection": selection_summary,
-            "warnings": warnings,
-            "results": formatted_docs,
-            "batches": len(data_batches),
-        }
-        if candidates:
-            response_payload["candidates"] = tool_output["candidates"]
-        if not formatted_docs:
-            response_payload["data"] = data_batches
-        return json.dumps(response_payload, ensure_ascii=True)
+            inspections = []
+            for tbl, metadata in zip(top_tables, metadatas, strict=False):
+                if metadata and metadata.get("variables"):
+                    inspections.append(
+                        _format_table_inspection(
+                            tbl.id,
+                            getattr(tbl, "title", tbl.id),
+                            metadata,
+                        )
+                    )
+
+            if not inspections:
+                return json.dumps({
+                    "tables_found": len(all_tables),
+                    "error": "Found tables but could not fetch metadata.",
+                    "table_ids": [t.id for t in all_tables[:10]],
+                    "suggestions": [
+                        "Try inspecting a specific table: "
+                        "scb_search_and_inspect(table_id='...')",
+                    ],
+                }, ensure_ascii=False)
+
+            return json.dumps({
+                "domain": definition.name,
+                "base_path": definition.base_path,
+                "query": query,
+                "tables_inspected": len(inspections),
+                "total_tables_found": len(all_tables),
+                "tables": inspections,
+                "next_step": (
+                    "Choose the best table above. Build a selection dict "
+                    "mapping each variable code to the value codes you want. "
+                    "Then call scb_validate_selection(table_id='...', "
+                    "selection={...}) to validate, and finally "
+                    "scb_fetch_validated(table_id='...', selection={...}) "
+                    "to fetch the data."
+                ),
+            }, ensure_ascii=False)
+
+        except Exception as exc:
+            logger.exception(
+                "%s failed for query '%s': %s",
+                definition.tool_id, query, exc,
+            )
+            return json.dumps({
+                "error": f"SCB search failed: {exc!s}",
+                "suggestions": [
+                    "Try scb_search_and_inspect for unrestricted search",
+                ],
+            }, ensure_ascii=False)
 
     return tool(
         definition.tool_id,
         description=description,
         parse_docstring=False,
     )(_scb_tool)
+
+
+# Public alias for the tool factory (used by tools/registry.py)
+build_scb_tool = _build_scb_tool
 
 
 # ---------------------------------------------------------------------------
@@ -208,10 +233,10 @@ def _build_scb_tool(
 
 def build_scb_tool_registry(
     *,
-    connector_service: ConnectorService,
-    search_space_id: int,
-    user_id: str | None,
-    thread_id: int | None,
+    connector_service: ConnectorService | None = None,
+    search_space_id: int = 0,
+    user_id: str | None = None,
+    thread_id: int | None = None,
     scb_service: ScbService | None = None,
 ) -> dict[str, Any]:
     service = scb_service or ScbService()

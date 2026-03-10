@@ -22,9 +22,7 @@ const PHASES: Phase[] = [
 		labelKey: "phase_intent",
 		color: "#8b5cf6",
 		glowColor: "rgba(139,92,246,0.3)",
-		nodes: [
-			{ labelKey: "gn_resolve_intent", descKey: "gn_resolve_intent_d" },
-		],
+		nodes: [{ labelKey: "gn_resolve_intent", descKey: "gn_resolve_intent_d" }],
 	},
 	{
 		id: "memory",
@@ -100,9 +98,7 @@ const PHASES: Phase[] = [
 		labelKey: "phase_response",
 		color: "#ec4899",
 		glowColor: "rgba(236,72,153,0.3)",
-		nodes: [
-			{ labelKey: "gn_response_layer", descKey: "gn_response_layer_d" },
-		],
+		nodes: [{ labelKey: "gn_response_layer", descKey: "gn_response_layer_d" }],
 	},
 ];
 
@@ -158,7 +154,13 @@ function PhaseRow({
 						}}
 						animate={
 							isCurrent
-								? { boxShadow: [`0 0 0px ${phase.color}00`, `0 0 12px ${phase.glowColor}`, `0 0 0px ${phase.color}00`] }
+								? {
+										boxShadow: [
+											`0 0 0px ${phase.color}00`,
+											`0 0 12px ${phase.glowColor}`,
+											`0 0 0px ${phase.color}00`,
+										],
+									}
 								: { boxShadow: "none" }
 						}
 						transition={isCurrent ? { duration: 2, repeat: Number.POSITIVE_INFINITY } : {}}
@@ -211,9 +213,13 @@ function PhaseRow({
 											? "border-neutral-200/60 dark:border-neutral-700/60 hover:border-neutral-300 dark:hover:border-neutral-600 bg-white/80 dark:bg-neutral-900/80 shadow-sm shadow-neutral-200/50 dark:shadow-none"
 											: "border-neutral-200/40 dark:border-neutral-800/40 bg-neutral-50/50 dark:bg-neutral-900/30",
 										isExpanded && "ring-1",
-										node.isHitl && "border-dashed",
+										node.isHitl && "border-dashed"
 									)}
-									style={isExpanded ? { ringColor: phase.color, borderColor: `${phase.color}60` } : undefined}
+									style={
+										isExpanded
+											? { ringColor: phase.color, borderColor: `${phase.color}60` }
+											: undefined
+									}
 									initial={{ opacity: 0, y: 8 }}
 									animate={isActive ? { opacity: 1, y: 0 } : { opacity: 0.3, y: 0 }}
 									transition={{ duration: 0.3, delay: index * 0.08 + ni * 0.05 + 0.15 }}
@@ -224,12 +230,16 @@ function PhaseRow({
 											{/* Status dot */}
 											<span
 												className="w-1.5 h-1.5 rounded-full shrink-0"
-												style={{ background: isActive ? phase.color : "var(--pipeline-inactive, #d4d4d4)" }}
+												style={{
+													background: isActive ? phase.color : "var(--pipeline-inactive, #d4d4d4)",
+												}}
 											/>
 											<span
 												className={cn(
 													"text-xs font-medium whitespace-nowrap",
-													isActive ? "text-neutral-800 dark:text-neutral-200" : "text-neutral-400 dark:text-neutral-600",
+													isActive
+														? "text-neutral-800 dark:text-neutral-200"
+														: "text-neutral-400 dark:text-neutral-600"
 												)}
 											>
 												{t(node.labelKey)}
@@ -248,8 +258,10 @@ function PhaseRow({
 											<svg
 												className={cn(
 													"w-3 h-3 transition-transform duration-200 ml-auto shrink-0",
-													isActive ? "text-neutral-400 dark:text-neutral-500" : "text-neutral-300 dark:text-neutral-700",
-													isExpanded && "rotate-180",
+													isActive
+														? "text-neutral-400 dark:text-neutral-500"
+														: "text-neutral-300 dark:text-neutral-700",
+													isExpanded && "rotate-180"
 												)}
 												fill="none"
 												viewBox="0 0 24 24"
@@ -297,7 +309,8 @@ function ProgressSignal({ activePhase, total }: { activePhase: number; total: nu
 			<motion.div
 				className="absolute inset-y-0 left-0 rounded-full"
 				style={{
-					background: "linear-gradient(90deg, #8b5cf6, #3b82f6, #14b8a6, #f59e0b, #f97316, #f43f5e, #d946ef, #ec4899)",
+					background:
+						"linear-gradient(90deg, #8b5cf6, #3b82f6, #14b8a6, #f59e0b, #f97316, #f43f5e, #d946ef, #ec4899)",
 				}}
 				initial={{ width: "0%" }}
 				animate={{ width: `${progress * 100}%` }}
@@ -354,7 +367,10 @@ export function AgentPipeline() {
 	};
 
 	return (
-		<section ref={containerRef} className="relative py-16 md:py-24 overflow-hidden border-t border-neutral-100 dark:border-neutral-800/50 [--pipeline-inactive:#d4d4d4] dark:[--pipeline-inactive:#404040] [--pipeline-inactive-text:#a3a3a3] dark:[--pipeline-inactive-text:#525252] [--pipeline-node-inactive:#404040] dark:[--pipeline-node-inactive:#404040]">
+		<section
+			ref={containerRef}
+			className="relative py-16 md:py-24 overflow-hidden border-t border-neutral-100 dark:border-neutral-800/50 [--pipeline-inactive:#d4d4d4] dark:[--pipeline-inactive:#404040] [--pipeline-inactive-text:#a3a3a3] dark:[--pipeline-inactive-text:#525252] [--pipeline-node-inactive:#404040] dark:[--pipeline-node-inactive:#404040]"
+		>
 			{/* Background */}
 			<div className="absolute inset-0 -z-10">
 				{/* Ambient glow */}
@@ -399,7 +415,7 @@ export function AgentPipeline() {
 								onClick={() => setActivePhase(i)}
 								className={cn(
 									"text-[9px] font-medium transition-colors duration-300 cursor-pointer hover:opacity-80",
-									i <= activePhase ? "opacity-100" : "opacity-30",
+									i <= activePhase ? "opacity-100" : "opacity-30"
 								)}
 								style={{ color: phase.color }}
 							>

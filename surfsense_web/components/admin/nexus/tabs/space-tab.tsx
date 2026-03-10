@@ -1,18 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Filter, Loader2, Orbit, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ConfusionMatrix } from "@/components/admin/nexus/shared/confusion-matrix";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+	type HubnessReport,
 	nexusApiService,
 	type SpaceHealthReport,
 	type SpaceSnapshot,
 	type SpaceSnapshotPoint,
-	type HubnessReport,
 } from "@/lib/apis/nexus-api.service";
-import { ConfusionMatrix } from "@/components/admin/nexus/shared/confusion-matrix";
 
 export function SpaceTab() {
 	const [health, setHealth] = useState<SpaceHealthReport | null>(null);
@@ -25,10 +25,7 @@ export function SpaceTab() {
 
 	const loadData = useCallback(() => {
 		setLoading(true);
-		Promise.all([
-			nexusApiService.getSpaceHealth(),
-			nexusApiService.getSpaceSnapshot(),
-		])
+		Promise.all([nexusApiService.getSpaceHealth(), nexusApiService.getSpaceSnapshot()])
 			.then(([h, s]) => {
 				setHealth(h);
 				setSnapshot(s);
@@ -143,7 +140,7 @@ export function SpaceTab() {
 					<MetricCard
 						label="Separation"
 						value={health.global_silhouette}
-						target={0.60}
+						target={0.6}
 						format="score"
 					/>
 					<MetricCard
@@ -155,15 +152,11 @@ export function SpaceTab() {
 					<MetricCard
 						label="Confusion Risk"
 						value={health.confusion_risk}
-						target={0.20}
+						target={0.2}
 						format="score"
 						invert
 					/>
-					<MetricCard
-						label="Totala verktyg"
-						value={health.total_tools}
-						format="count"
-					/>
+					<MetricCard label="Totala verktyg" value={health.total_tools} format="count" />
 					<MetricCard
 						label="Confusion-par"
 						value={health.top_confusion_pairs.length}
@@ -196,7 +189,13 @@ export function SpaceTab() {
 									<option value="all">Alla namespaces</option>
 									{namespaces.map((ns) => (
 										<option key={ns} value={ns}>
-											{ns} ({snapshot.points.filter((p) => (p.namespace as string | undefined)?.startsWith(ns)).length})
+											{ns} (
+											{
+												snapshot.points.filter((p) =>
+													(p.namespace as string | undefined)?.startsWith(ns)
+												).length
+											}
+											)
 										</option>
 									))}
 								</select>
@@ -345,27 +344,29 @@ function UMAPCanvas({
 				})}
 
 				{/* Hover tooltip */}
-				{hoveredTool && (() => {
-					const p = points.find((pt) => pt.tool_id === hoveredTool);
-					if (!p) return null;
-					const x = ((p.x - minX) / rangeX) * 88 + 6;
-					const y = ((p.y - minY) / rangeY) * 88 + 6;
-					return (
-						<div
-							className="absolute z-30 pointer-events-none bg-popover text-popover-foreground shadow-md rounded-md px-2.5 py-1.5 text-xs border"
-							style={{
-								left: `${x}%`,
-								top: `${Math.max(y - 5, 2)}%`,
-								transform: "translate(-50%, -100%)",
-							}}
-						>
-							<p className="font-mono font-medium">{p.tool_id}</p>
-							<p className="text-muted-foreground">
-								{p.zone}{p.namespace ? ` — ${p.namespace}` : ""}
-							</p>
-						</div>
-					);
-				})()}
+				{hoveredTool &&
+					(() => {
+						const p = points.find((pt) => pt.tool_id === hoveredTool);
+						if (!p) return null;
+						const x = ((p.x - minX) / rangeX) * 88 + 6;
+						const y = ((p.y - minY) / rangeY) * 88 + 6;
+						return (
+							<div
+								className="absolute z-30 pointer-events-none bg-popover text-popover-foreground shadow-md rounded-md px-2.5 py-1.5 text-xs border"
+								style={{
+									left: `${x}%`,
+									top: `${Math.max(y - 5, 2)}%`,
+									transform: "translate(-50%, -100%)",
+								}}
+							>
+								<p className="font-mono font-medium">{p.tool_id}</p>
+								<p className="text-muted-foreground">
+									{p.zone}
+									{p.namespace ? ` — ${p.namespace}` : ""}
+								</p>
+							</div>
+						);
+					})()}
 			</div>
 
 			{/* Zone legend */}
@@ -409,11 +410,7 @@ function MetricCard({
 	const display =
 		value === null ? "—" : format === "score" ? (value * 100).toFixed(1) + "%" : String(value);
 
-	const isGood = target
-		? invert
-			? (value ?? 0) <= target
-			: (value ?? 0) >= target
-		: true;
+	const isGood = target ? (invert ? (value ?? 0) <= target : (value ?? 0) >= target) : true;
 
 	return (
 		<div className="rounded-lg border bg-card p-3">
@@ -422,9 +419,7 @@ function MetricCard({
 				{display}
 			</p>
 			{target != null && format === "score" && (
-				<p className="text-xs text-muted-foreground mt-0.5">
-					Mal: {(target * 100).toFixed(0)}%
-				</p>
+				<p className="text-xs text-muted-foreground mt-0.5">Mal: {(target * 100).toFixed(0)}%</p>
 			)}
 		</div>
 	);
@@ -449,9 +444,7 @@ function HubnessPanel({ alerts }: { alerts: HubnessReport[] }) {
 						<div key={a.tool_id} className="flex items-center justify-between py-2.5">
 							<span className="font-mono text-sm">{a.tool_id}</span>
 							<div className="flex items-center gap-4 text-sm">
-								<span className="text-muted-foreground">
-									{a.times_as_nearest_neighbor}x NN
-								</span>
+								<span className="text-muted-foreground">{a.times_as_nearest_neighbor}x NN</span>
 								<span className="text-orange-600 font-mono">
 									{(a.hubness_score * 100).toFixed(1)}%
 								</span>

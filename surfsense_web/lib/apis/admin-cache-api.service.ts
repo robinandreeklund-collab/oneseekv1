@@ -4,8 +4,8 @@ import {
 	adminCacheStateResponse,
 	adminCacheToggleRequest,
 } from "@/contracts/types/admin-cache.types";
-import { ValidationError } from "@/lib/error";
 import { baseApiService } from "@/lib/apis/base-api.service";
+import { ValidationError } from "@/lib/error";
 
 class AdminCacheApiService {
 	getCacheState = async () => {

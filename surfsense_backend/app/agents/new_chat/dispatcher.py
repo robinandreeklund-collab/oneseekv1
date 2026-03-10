@@ -113,6 +113,7 @@ async def dispatch_route(
     conversation_history: list[dict[str, str]] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
     registry: Any | None = None,
+    llm_gate_mode: bool = False,
 ) -> Route:
     route, _meta = await dispatch_route_with_trace(
         user_query,
@@ -123,6 +124,7 @@ async def dispatch_route(
         conversation_history=conversation_history,
         intent_definitions=intent_definitions,
         registry=registry,
+        llm_gate_mode=llm_gate_mode,
     )
     return route
 
@@ -137,6 +139,7 @@ async def dispatch_route_with_trace(
     conversation_history: list[dict[str, str]] | None = None,
     intent_definitions: list[dict[str, Any]] | None = None,
     registry: Any | None = None,
+    llm_gate_mode: bool = False,
 ) -> tuple[Route, dict[str, Any]]:
     text = (user_query or "").strip()
     if not text:
@@ -235,6 +238,21 @@ async def dispatch_route_with_trace(
         if candidate_route:
             return candidate_route
         return route
+
+    # ── LLM Gate Mode: skip ALL retrieval/embedding scoring ──
+    # When LLM gate is active the intent node inside the graph will do
+    # authoritative domain routing via a pure LLM call.  The dispatcher
+    # only needs to provide a lightweight base-route hint from the intent
+    # definitions — NO embedding scoring, NO reranker, NO confidence bands.
+    if llm_gate_mode:
+        # In LLM gate mode the intent node makes the authoritative domain
+        # decision via a pure LLM call.  The dispatcher just returns a
+        # neutral base route — no domain-specific hint, since we haven't
+        # actually analysed the query yet at this stage.
+        return Route.KUNSKAP, {
+            "source": "llm_gate",
+            "reason": "llm_gate_deferred",
+        }
 
     retrieval_decision = resolve_route_from_intents(
         query=text,

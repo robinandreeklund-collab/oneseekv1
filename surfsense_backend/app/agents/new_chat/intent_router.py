@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from app.agents.new_chat.routing import Route
+from app.agents.new_chat.routing import Route, domain_to_route
 from app.services.reranker_service import RerankerService
 
 logger = logging.getLogger(__name__)
@@ -85,9 +85,11 @@ def _score_intent(
         + (description_hits * 0.6)
         + priority_bonus
     )
+    fallback_route = str(definition.get("fallback_route") or "").strip().lower()
     return {
         "intent_id": intent_id,
         "route": route,
+        "fallback_route": fallback_route,
         "label": label,
         "description": description,
         "keywords": keywords,
@@ -252,7 +254,26 @@ def resolve_route_from_intents(
     try:
         selected_route = Route(route_value)
     except Exception:
-        return None
+        # Domain-specific routes (e.g. "trafik-och-transport") are not valid
+        # Route enum values.  Try in order:
+        #   1) The explicit fallback_route field (set by domains_to_intent_definitions)
+        #   2) domain_to_route() which maps any domain-id to a base Route
+        selected_route = None
+        fallback_value = str(top.get("fallback_route") or "").strip().lower()
+        if fallback_value:
+            try:
+                selected_route = Route(fallback_value)
+            except Exception:
+                pass
+        if selected_route is None:
+            try:
+                selected_route = domain_to_route(
+                    str(top.get("intent_id") or route_value)
+                )
+            except Exception:
+                pass
+        if selected_route is None:
+            return None
     confidence = _compute_confidence(scored)
     top_intent = str(top.get("intent_id") or selected_route.value)
     reason = f"intent_retrieval:{top_intent}"

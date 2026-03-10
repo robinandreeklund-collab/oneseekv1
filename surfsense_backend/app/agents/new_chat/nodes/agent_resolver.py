@@ -74,6 +74,63 @@ def build_agent_resolver_node(
         live_enabled = bool(live_cfg.get("enabled", False))
         phase_index = int(live_cfg.get("phase_index") or 0)
         shortlist_k = max(2, min(int(live_cfg.get("agent_top_k") or 3), 8))
+        llm_gate_mode = bool(live_cfg.get("llm_gate_mode", False))
+
+        # ── LLM Gate Mode: bypass embedding/reranker, use pure LLM ──
+        if llm_gate_mode:
+            from ..llm_gate import llm_gate_select_agent
+
+            # Build full candidate list from all agent definitions
+            all_candidates = [agent_payload_fn(a) for a in agent_definitions]
+            if route_allowed:
+                domain_candidates = [
+                    c for c in all_candidates
+                    if str(c.get("name") or "").strip() in route_allowed
+                ]
+                if domain_candidates:
+                    all_candidates = domain_candidates
+
+            chosen_domain = str(intent_data.get("intent_id") or route_hint or "").strip()
+            gate_result = await llm_gate_select_agent(
+                query=latest_user_query,
+                chosen_domain=chosen_domain,
+                candidates=all_candidates,
+                llm=llm,
+            )
+            chosen_name = str(gate_result.get("chosen") or "").strip()
+            matched = next(
+                (c for c in all_candidates if str(c.get("name") or "").strip() == chosen_name),
+                None,
+            )
+            if matched:
+                selected_payload = [matched]
+            elif all_candidates:
+                selected_payload = all_candidates[:1]
+            else:
+                selected_payload = []
+
+            if not selected_payload and default_for_route in agent_by_name:
+                selected_payload = [agent_payload_fn(agent_by_name[default_for_route])]
+
+            trace = dict(state.get("live_routing_trace") or {})
+            trace["agent"] = {
+                "mode": "llm_gate",
+                "phase": str(live_cfg.get("phase") or "shadow"),
+                "selected": selected_payload[0].get("name") if selected_payload else None,
+                "reasoning": str(gate_result.get("reasoning") or ""),
+                "candidates_shown": len(all_candidates),
+            }
+            logger.info(
+                "llm-gate agent-selection domain=%s chosen=%s candidates=%d",
+                chosen_domain,
+                chosen_name,
+                len(all_candidates),
+            )
+            return {
+                "selected_agents": selected_payload[:1],
+                "live_routing_trace": trace,
+                "orchestration_phase": "plan",
+            }
 
         # Fix B: Multi-domain retrieval — run retrieval per sub_intent and merge candidates
         if route_hint == "mixed" and sub_intents and smart_retrieve_agents_with_scores_fn is not None:

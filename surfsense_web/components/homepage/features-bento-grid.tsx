@@ -487,11 +487,6 @@ const AnnotationIllustration = ({
 
 const AudioCommentIllustration = ({ altText }: { altText: string }) => (
 	<div className="relative flex w-full h-full min-h-[6rem] overflow-hidden rounded-xl">
-		<Image
-			src="/homepage/comments-audio.webp"
-			alt={altText}
-			fill
-			className="object-cover"
-		/>
+		<Image src="/homepage/comments-audio.webp" alt={altText} fill className="object-cover" />
 	</div>
 );

@@ -294,8 +294,8 @@ export const SearxngConfig: FC<SearxngConfigProps> = ({
 								className="border-slate-400/20 focus-visible:border-slate-400/40"
 							/>
 							<p className="text-[10px] sm:text-xs text-muted-foreground">
-								Ange 0, 1 eller 2 för att justera SafeSearch-filtrering. Lämna tomt för att
-								använda instansens standard.
+								Ange 0, 1 eller 2 för att justera SafeSearch-filtrering. Lämna tomt för att använda
+								instansens standard.
 							</p>
 						</div>
 					</div>

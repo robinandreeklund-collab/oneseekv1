@@ -24,6 +24,10 @@ _NO_DATA_MARKERS = (
     "finns inte",
     "saknas",
     "kunde inte",
+    "returnerade ingen data",
+    "returnerade tom data",
+    "data saknas",
+    "ingen data",
 )
 _GUARD_STYLE_MARKERS = (
     "planeringsloop",

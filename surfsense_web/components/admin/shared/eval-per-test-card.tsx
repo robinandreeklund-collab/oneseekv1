@@ -4,7 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 function formatDifficultyLabel(value: string | null | undefined) {
-	const normalized = String(value ?? "").trim().toLowerCase();
+	const normalized = String(value ?? "")
+		.trim()
+		.toLowerCase();
 	if (!normalized) return "Okänd";
 	if (normalized === "lätt" || normalized === "latt" || normalized === "easy") return "Lätt";
 	if (normalized === "medel" || normalized === "medium") return "Medel";
@@ -21,8 +23,7 @@ function buildFailureReasons(result: Record<string, unknown>): string[] {
 	if (result.passed_plan === false) reasons.push("Plankrav ej uppfyllda");
 	if (result.passed_tool === false) reasons.push("Tool mismatch");
 	if (result.passed_api_input === false) reasons.push("API-input mismatch");
-	if (result.supervisor_review_passed === false)
-		reasons.push("Supervisor-spår behöver förbättras");
+	if (result.supervisor_review_passed === false) reasons.push("Supervisor-spår behöver förbättras");
 	return reasons;
 }
 
@@ -129,7 +130,8 @@ export function EvalPerTestCard({ title, results, showApiInputFields }: EvalPerT
 									<div className="rounded bg-muted/40 p-2 space-y-1">
 										<p className="text-xs font-medium">Validering</p>
 										<p className="text-[11px] text-muted-foreground">
-											Schema-valid: {result.schema_valid == null ? "-" : result.schema_valid ? "Ja" : "Nej"}
+											Schema-valid:{" "}
+											{result.schema_valid == null ? "-" : result.schema_valid ? "Ja" : "Nej"}
 										</p>
 										<p className="text-[11px] text-muted-foreground">
 											Missing required: {(result.missing_required_fields ?? []).join(", ") || "-"}

@@ -281,6 +281,7 @@ from app.agents.new_chat.supervisor_helpers import (  # noqa: E402
     _should_finalize_from_contract,
     _summarize_tool_payload,
     _tool_names_from_messages,
+    _all_tool_data_empty,
 )
 
 
@@ -621,6 +622,49 @@ async def create_supervisor_agent(
         ),
         include_think_instructions=False,
     )
+    # Prompt-key → prompt string lookup.  Falls back to knowledge_prompt
+    # for unknown keys so new agents always get a usable prompt.
+    _prompt_key_map: dict[str, str] = {
+        "knowledge_prompt": knowledge_prompt,
+        "action_prompt": action_prompt,
+        "weather_prompt": action_prompt,
+        "statistics_prompt": statistics_prompt,
+        "synthesis_prompt": (
+            synthesis_prompt or statistics_prompt or knowledge_prompt
+        ),
+        "bolag_prompt": bolag_prompt or knowledge_prompt,
+        "trafik_prompt": trafik_prompt or action_prompt,
+        "trafikanalys_prompt": (
+            trafik_prompt or statistics_prompt or action_prompt
+        ),
+        "media_prompt": media_prompt or action_prompt,
+        "browser_prompt": browser_prompt or knowledge_prompt,
+        "code_prompt": code_prompt or knowledge_prompt,
+        "kartor_prompt": kartor_prompt or action_prompt,
+        "riksdagen_prompt": riksdagen_prompt or knowledge_prompt,
+        "riksdagen_dokument_prompt": (
+            riksdagen_dokument_prompt
+            or riksdagen_prompt
+            or knowledge_prompt
+        ),
+        "riksdagen_debatt_prompt": (
+            riksdagen_debatt_prompt
+            or riksdagen_prompt
+            or knowledge_prompt
+        ),
+        "riksdagen_ledamoter_prompt": (
+            riksdagen_ledamoter_prompt
+            or riksdagen_prompt
+            or knowledge_prompt
+        ),
+        "marketplace_prompt": marketplace_prompt or action_prompt,
+        "elpris_prompt": statistics_prompt or action_prompt,
+        "riksbank_prompt": statistics_prompt or knowledge_prompt,
+        "skolverket_prompt": statistics_prompt or knowledge_prompt,
+    }
+
+    # Minimal static fallback — rebuilt dynamically from GraphRegistry
+    # after it loads (see below after ``graph_registry = ...``).
     worker_configs: dict[str, WorkerConfig] = {
         "kunskap": WorkerConfig(
             name="kunskap-worker",
@@ -631,278 +675,11 @@ async def create_supervisor_agent(
                 ("tools", "general"),
             ],
         ),
-        "åtgärd": WorkerConfig(
-            name="åtgärd-worker",
-            primary_namespaces=[("tools", "action")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "statistics"),
-                ("tools", "kartor"),
-                ("tools", "general"),
-            ],
-        ),
-        "väder": WorkerConfig(
-            name="väder-worker",
-            primary_namespaces=[("tools", "weather")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "kartor": WorkerConfig(
-            name="kartor-worker",
-            primary_namespaces=[("tools", "kartor")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "media": WorkerConfig(
-            name="media-worker",
-            primary_namespaces=[("tools", "action", "media")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "statistics"),
-                ("tools", "kartor"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-ekonomi": WorkerConfig(
-            name="statistik-ekonomi-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "ekonomi"),
-                ("tools", "statistics", "kolada", "ekonomi"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-befolkning": WorkerConfig(
-            name="statistik-befolkning-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "befolkning"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-arbetsmarknad": WorkerConfig(
-            name="statistik-arbetsmarknad-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "arbetsmarknad"),
-                ("tools", "statistics", "kolada", "arbetsmarknad"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-utbildning": WorkerConfig(
-            name="statistik-utbildning-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "utbildning"),
-                ("tools", "statistics", "kolada", "utbildning"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-halsa": WorkerConfig(
-            name="statistik-halsa-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "halsa"),
-                ("tools", "statistics", "kolada", "halsa"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-miljo": WorkerConfig(
-            name="statistik-miljo-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "miljo"),
-                ("tools", "statistics", "kolada", "miljo"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-fastighet": WorkerConfig(
-            name="statistik-fastighet-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "fastighet"),
-                ("tools", "statistics", "kolada", "fastighet"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-naringsliv": WorkerConfig(
-            name="statistik-naringsliv-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "naringsliv"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "statistik-samhalle": WorkerConfig(
-            name="statistik-samhalle-worker",
-            primary_namespaces=[
-                ("tools", "statistics", "scb", "samhalle"),
-                ("tools", "statistics", "kolada", "samhalle"),
-            ],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "webb": WorkerConfig(
-            name="webb-worker",
-            primary_namespaces=[("tools", "knowledge", "web")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "action"),
-                ("tools", "statistics"),
-                ("tools", "general"),
-            ],
-        ),
-        "kod": WorkerConfig(
-            name="kod-worker",
-            primary_namespaces=[("tools", "code")],
-            fallback_namespaces=[
-                ("tools", "general"),
-                ("tools", "knowledge"),
-                ("tools", "action"),
-                ("tools", "statistics"),
-            ],
-        ),
-        "bolag": WorkerConfig(
-            name="bolag-worker",
-            primary_namespaces=[("tools", "bolag")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "general"),
-            ],
-        ),
-        "trafik": WorkerConfig(
-            name="trafik-worker",
-            primary_namespaces=[("tools", "trafik")],
-            fallback_namespaces=[
-                ("tools", "action"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "riksdagen-dokument": WorkerConfig(
-            name="riksdagen-dokument-worker",
-            primary_namespaces=[("tools", "politik", "dokument"), ("tools", "politik", "status")],
-            fallback_namespaces=[
-                ("tools", "politik"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "riksdagen-debatt": WorkerConfig(
-            name="riksdagen-debatt-worker",
-            primary_namespaces=[("tools", "politik", "anforanden"), ("tools", "politik", "voteringar")],
-            fallback_namespaces=[
-                ("tools", "politik"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "riksdagen-ledamoter": WorkerConfig(
-            name="riksdagen-ledamoter-worker",
-            primary_namespaces=[("tools", "politik", "ledamoter"), ("tools", "politik", "kalender")],
-            fallback_namespaces=[
-                ("tools", "politik"),
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "marknad": WorkerConfig(
-            name="marknad-worker",
-            primary_namespaces=[("tools", "marketplace")],
-            fallback_namespaces=[
-                ("tools", "knowledge"),
-                ("tools", "general"),
-            ],
-        ),
-        "syntes": WorkerConfig(
-            name="syntes-worker",
-            primary_namespaces=[("tools", "knowledge")],
-            fallback_namespaces=[
-                ("tools", "statistics"),
-                ("tools", "action"),
-                ("tools", "general"),
-            ],
-        ),
     }
+    worker_prompts: dict[str, str] = {"kunskap": knowledge_prompt}
 
-    worker_prompts: dict[str, str] = {
-        "kunskap": knowledge_prompt,
-        "åtgärd": action_prompt,
-        "väder": action_prompt,
-        "kartor": action_prompt,
-        "media": media_prompt or action_prompt,
-        "statistik-ekonomi": statistics_prompt,
-        "statistik-befolkning": statistics_prompt,
-        "statistik-arbetsmarknad": statistics_prompt,
-        "statistik-utbildning": statistics_prompt,
-        "statistik-halsa": statistics_prompt,
-        "statistik-miljo": statistics_prompt,
-        "statistik-fastighet": statistics_prompt,
-        "statistik-naringsliv": statistics_prompt,
-        "statistik-samhalle": statistics_prompt,
-        "webb": browser_prompt or knowledge_prompt,
-        "kod": code_prompt or knowledge_prompt,
-        "bolag": bolag_prompt or knowledge_prompt,
-        "trafik": trafik_prompt or action_prompt,
-        "kartor": kartor_prompt or action_prompt,
-        "riksdagen-dokument": riksdagen_dokument_prompt or riksdagen_prompt or knowledge_prompt,
-        "riksdagen-debatt": riksdagen_debatt_prompt or riksdagen_prompt or knowledge_prompt,
-        "riksdagen-ledamoter": riksdagen_ledamoter_prompt or riksdagen_prompt or knowledge_prompt,
-        "marknad": marketplace_prompt or action_prompt,
-        "syntes": synthesis_prompt or statistics_prompt or knowledge_prompt,
-    }
-
-    # Create/get process-level shared worker pool for this runtime signature.
-    worker_pool = await get_or_create_shared_worker_pool(
-        configs=worker_configs,
-        llm=llm,
-        dependencies=dependencies,
-        checkpointer=checkpointer,
-    )
+    # NOTE: worker pool creation is deferred until after dynamic configs
+    # are built from GraphRegistry (see below after registry install).
 
     agent_definitions = [
         AgentDefinition(
@@ -1546,6 +1323,80 @@ async def create_supervisor_agent(
 
     # ── GraphRegistry (Sprint 5: domain-scoped agent/tool resolution) ──
     graph_registry = dependencies.get("graph_registry")
+    # Default to static set; overridden by registry-built set below
+    specialized_agents: set[str] = _SPECIALIZED_AGENTS
+
+    # ── Dynamic worker pool from GraphRegistry ─────────────────────────
+    # Build one WorkerConfig per agent from the DB-backed registry.
+    # Any agent added via the admin panel is immediately available.
+    if graph_registry is not None and graph_registry.agent_index:
+        _dyn_configs: dict[str, WorkerConfig] = {}
+        _dyn_prompts: dict[str, str] = {}
+        for _aid, _adata in graph_registry.agent_index.items():
+            if not _adata.get("enabled", True):
+                continue
+            _raw_pri = _adata.get("primary_namespaces") or []
+            _raw_fb = _adata.get("fallback_namespaces") or []
+            _pri_ns = [
+                tuple(ns) for ns in _raw_pri
+                if isinstance(ns, (list, tuple)) and ns
+            ]
+            _fb_ns = [
+                tuple(ns) for ns in _raw_fb
+                if isinstance(ns, (list, tuple)) and ns
+            ]
+            if not _pri_ns and not _fb_ns:
+                _fb_ns = [("tools", "knowledge"), ("tools", "general")]
+            _wc = _adata.get("worker_config") or {}
+            _dyn_configs[_aid] = WorkerConfig(
+                name=f"{_aid}-worker",
+                primary_namespaces=_pri_ns,
+                fallback_namespaces=_fb_ns,
+                tool_limit=int(_wc.get("tool_limit", 3)),
+            )
+            _pk = str(
+                _adata.get("prompt_key") or "knowledge_prompt"
+            ).strip()
+            _dyn_prompts[_aid] = _prompt_key_map.get(
+                _pk, knowledge_prompt
+            )
+        if _dyn_configs:
+            worker_configs = _dyn_configs
+            worker_prompts = _dyn_prompts
+
+    # ── Install registry-aware dynamic structures ────────────────────
+    # Rebuild hardcoded constants from the live registry so that agents/tools
+    # added via admin panel are immediately available without code changes.
+    if graph_registry is not None and graph_registry.agent_index:
+        from app.agents.new_chat.supervisor_constants import (
+            build_alias_map_from_registry,
+            build_route_defaults_from_registry,
+            build_specialized_agents_from_registry,
+            build_token_rules_from_registry,
+            build_tool_profiles_from_registry,
+        )
+        from app.agents.new_chat.supervisor_routing import (
+            set_registry_alias_map,
+            set_registry_route_defaults,
+            set_registry_token_rules,
+            set_registry_tool_profiles,
+        )
+
+        _dyn_specialized = build_specialized_agents_from_registry(graph_registry)
+        _dyn_alias_map = build_alias_map_from_registry(graph_registry)
+        _dyn_route_defaults = build_route_defaults_from_registry(graph_registry)
+        _dyn_token_rules = build_token_rules_from_registry(graph_registry)
+        _dyn_tool_profiles = build_tool_profiles_from_registry(graph_registry)
+
+        # Override module-level specialized agents set for this graph instance
+        specialized_agents = _dyn_specialized
+
+        # Install into routing module globals
+        set_registry_alias_map(_dyn_alias_map)
+        set_registry_route_defaults(_dyn_route_defaults)
+        set_registry_token_rules(_dyn_token_rules)
+        if _dyn_tool_profiles:
+            set_registry_tool_profiles(_dyn_tool_profiles)
 
     db_session = dependencies.get("db_session")
     if isinstance(db_session, AsyncSession):
@@ -1612,6 +1463,19 @@ async def create_supervisor_agent(
                     )
                 agent_definitions = merged_agent_definitions
     agent_by_name = {definition.name: definition for definition in agent_definitions}
+
+    # Create/get process-level shared worker pool AFTER dynamic configs are
+    # built from GraphRegistry.  This ensures all DB-defined agents have a
+    # WorkerConfig entry so LazyWorkerPool.get(agent_name) never returns None.
+    # llm_gate_mode is set later (after live_routing_config is built), but
+    # LazyWorkerPool initializes workers lazily, so we can patch it after.
+    worker_pool = await get_or_create_shared_worker_pool(
+        configs=worker_configs,
+        llm=llm,
+        dependencies=dependencies,
+        checkpointer=checkpointer,
+    )
+
     connector_service = dependencies.get("connector_service")
     search_space_id = dependencies.get("search_space_id")
     user_id = dependencies.get("user_id")
@@ -1718,7 +1582,12 @@ async def create_supervisor_agent(
             persisted_tuning.get("adaptive_threshold_delta") or 0.08
         ),
         "adaptive_min_samples": int(persisted_tuning.get("adaptive_min_samples") or 8),
+        "llm_gate_mode": bool(persisted_tuning.get("llm_gate_mode", False)),
     }
+
+    # Propagate llm_gate_mode to the worker pool so workers skip vector
+    # retrieval and only use pre-resolved tools from the LLM gate pipeline.
+    worker_pool._llm_gate_mode = bool(live_routing_config.get("llm_gate_mode", False))
 
     subagent_enabled = _coerce_bool(
         runtime_hitl_cfg.get("subagent_enabled"),
@@ -2435,6 +2304,26 @@ async def create_supervisor_agent(
             used_tools=used_tool_names,
             final_requested=False,
         )
+        # Guard: downgrade if all data tools returned empty data
+        if (
+            _all_tool_data_empty(messages_out)
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            result_contract.update(
+                {
+                    "status": "partial",
+                    "actionable": False,
+                    "retry_recommended": True,
+                    "confidence": min(
+                        float(result_contract.get("confidence") or 0.35),
+                        0.35,
+                    ),
+                    "reason": (
+                        "Alla verktyg returnerade tom data. "
+                        "Svaret kan inte verifieras."
+                    ),
+                }
+            )
         status = str(result_contract.get("status") or "").strip().lower()
         speculative_status = status if status in {"success", "partial"} else "failed"
         if speculative_status in {"success", "partial"} and response_text:
@@ -2513,16 +2402,33 @@ async def create_supervisor_agent(
         if normalized_route in {"jämförelse", "compare", "mixed"}:
             return resolved
 
-        # Previously, hardcoded heuristic overrides forced weather/traffic/
-        # marketplace/map/filesystem queries back to "kunskap" or "skapande",
-        # undoing the dynamic domain-level resolution from the registry.
-        # Now we trust the DB-driven intent resolution.  The agent-level
-        # routing (_route_default_agent_for_intent) still picks the correct
-        # specialist agent (väder, trafik, marknad, kod, kartor) based on
-        # query content, so the right tools are invoked regardless.
-        #
-        # Only filesystem/sandbox override is kept because it crosses the
-        # route boundary (kunskap → skapande) which affects tool availability.
+        # Dynamic domain→agent route override from GraphRegistry.
+        # When intent resolution identifies a specialized domain, the
+        # fallback_route is "kunskap" for legacy compat.  We override
+        # the route to the first agent in that domain so the agent
+        # resolver picks the correct specialist agent.
+        intent_id = str(resolved.get("intent_id") or "").strip().lower()
+        if (
+            intent_id
+            and normalized_route in {"kunskap", "knowledge"}
+            and graph_registry is not None
+            and graph_registry.agents_by_domain
+        ):
+            domain_agents = graph_registry.agents_by_domain.get(intent_id) or []
+            if domain_agents:
+                # Use the first enabled agent in the domain as the route
+                first_agent = next(
+                    (
+                        str(a.get("agent_id") or "").strip()
+                        for a in domain_agents
+                        if a.get("enabled", True)
+                        and str(a.get("agent_id") or "").strip()
+                    ),
+                    "",
+                )
+                if first_agent:
+                    resolved["route"] = first_agent
+
         if sandbox_enabled and _has_filesystem_intent(query):
             override_route = "skapande"
             override_reason = "Heuristisk override: filsystem/sandbox-fraga ska routas till skapande/code."
@@ -2719,7 +2625,7 @@ async def create_supervisor_agent(
             # Specialized agents (statistik, marknad, etc.) must NEVER be
             # remapped by selected_agents_lock — they own domain-specific
             # tools that other agents cannot substitute.
-            if requested_raw in _SPECIALIZED_AGENTS:
+            if requested_raw in specialized_agents:
                 return requested_raw, None
             if selected_agent_set and requested_raw not in selected_agent_set:
                 fallback = _selected_fallback(
@@ -4180,6 +4086,35 @@ async def create_supervisor_agent(
                     ),
                 }
             )
+        # Guard: if every data-bearing tool returned empty data ({}/[]),
+        # the worker LLM has nothing to ground its answer on — downgrade
+        # the contract to prevent hallucinated numbers from being finalized.
+        if (
+            not filesystem_sandbox_task
+            and _all_tool_data_empty(messages_out)
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            result_contract.update(
+                {
+                    "status": "partial",
+                    "actionable": False,
+                    "retry_recommended": True,
+                    "confidence": min(
+                        float(result_contract.get("confidence") or 0.35),
+                        0.35,
+                    ),
+                    "reason": (
+                        "Alla verktyg returnerade tom data. "
+                        "Svaret kan inte verifieras och bor inte finaliseras."
+                    ),
+                }
+            )
+            logger.warning(
+                "LLM gate guard: all tool data empty for agent=%s tools=%s — "
+                "downgrading contract to partial",
+                name,
+                ",".join(used_tool_names[:4]),
+            )
         if _live_phase_enabled(live_routing_config, "shadow"):
             logger.info(
                 "live-routing tool-outcome phase=%s agent=%s mode=%s predicted_top1=%s margin=%s worker_top1=%s used_count=%s",
@@ -5037,6 +4972,56 @@ async def create_supervisor_agent(
     _ns_tool_index = live_tool_index
     _ns_tuning = persisted_tuning
 
+    def _llm_gate_tool_candidates_for_agent(agent_name: str) -> list[dict[str, Any]]:
+        """Return all tools in an agent's namespace as dicts for LLM gate selection.
+
+        Resolution order:
+        1. graph_registry.tools_by_agent (DB-driven, authoritative)
+        2. AGENT_NAMESPACE_MAP + tool_index namespace matching (hardcoded fallback)
+        3. Empty list (never return ALL tools for unknown agents)
+        """
+        from app.agents.new_chat.bigtool_store import AGENT_NAMESPACE_MAP, _match_namespace
+
+        _agent_key = str(agent_name or "").strip().lower()
+
+        # Path 1: DB-driven registry (authoritative)
+        if graph_registry is not None:
+            registry_tools = graph_registry.tools_by_agent.get(_agent_key) or []
+            if registry_tools:
+                return [
+                    {
+                        "tool_id": str(t.get("tool_id") or "").strip(),
+                        "name": str(t.get("name") or t.get("tool_id") or "").strip(),
+                        "description": str(t.get("description") or "").strip(),
+                        "keywords": list(t.get("keywords") or []),
+                    }
+                    for t in registry_tools
+                    if str(t.get("tool_id") or "").strip()
+                ]
+
+        # Path 2: Hardcoded namespace map
+        prefixes = AGENT_NAMESPACE_MAP.get(_agent_key, [])
+        if not prefixes:
+            # No namespace mapping AND no registry entry — return empty
+            # rather than exposing ALL tools (which causes wrong tool selection).
+            logger.warning(
+                "LLM gate: no tool candidates for agent %r (not in registry or namespace map)",
+                _agent_key,
+            )
+            return []
+        results: list[dict[str, Any]] = []
+        for entry in _ns_tool_index:
+            for prefix in prefixes:
+                if _match_namespace(entry.namespace, prefix):
+                    results.append({
+                        "tool_id": entry.tool_id,
+                        "name": entry.name,
+                        "description": entry.description,
+                        "keywords": list(entry.keywords or []),
+                    })
+                    break
+        return results
+
     tool_resolver_node = build_tool_resolver_node(
         tool_resolver_prompt_template=tool_resolver_prompt_template,
         latest_user_query_fn=_latest_user_query,
@@ -5064,6 +5049,11 @@ async def create_supervisor_agent(
             if _ns_tool_index
             else None
         ),
+        llm_gate_tool_candidates_fn=(
+            _llm_gate_tool_candidates_for_agent if _ns_tool_index else None
+        ),
+        live_routing_config=live_routing_config,
+        llm=llm,
     )
     execution_router_node = build_execution_router_node(
         latest_user_query_fn=_latest_user_query,

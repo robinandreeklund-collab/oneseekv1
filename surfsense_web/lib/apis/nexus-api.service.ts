@@ -11,10 +11,7 @@ const getBackendUrl = (): string => {
 	return process.env.NEXT_PUBLIC_FASTAPI_BACKEND_URL || "http://localhost:8000";
 };
 
-async function fetchNexus<T>(
-	path: string,
-	options: RequestInit = {},
-): Promise<T> {
+async function fetchNexus<T>(path: string, options: RequestInit = {}): Promise<T> {
 	const url = `${getBackendUrl()}/api/v1/nexus${path}`;
 	const token = getBearerToken();
 
@@ -690,7 +687,10 @@ class NexusApiService {
 			body: JSON.stringify({ query }),
 		});
 
-	routeQuery = (query: string, options?: { llm_judge?: boolean; llm_gate?: boolean; live?: boolean }) =>
+	routeQuery = (
+		query: string,
+		options?: { llm_judge?: boolean; llm_gate?: boolean; live?: boolean }
+	) =>
 		fetchNexus<RoutingDecision>("/routing/route", {
 			method: "POST",
 			body: JSON.stringify({
@@ -713,13 +713,12 @@ class NexusApiService {
 
 	getHubness = () => fetchNexus<HubnessReport[]>("/space/hubness");
 
-	getZoneMetrics = (zone: string) =>
-		fetchNexus<ZoneConfigResponse>(`/zones/${zone}/metrics`);
+	getZoneMetrics = (zone: string) => fetchNexus<ZoneConfigResponse>(`/zones/${zone}/metrics`);
 
 	// Platform Tools
 	getPlatformTools = (category?: string) =>
 		fetchNexus<{ tools: PlatformToolResponse[]; categories: string[] }>(
-			`/tools${category ? `?category=${category}` : ""}`,
+			`/tools${category ? `?category=${category}` : ""}`
 		);
 
 	// Synth Forge (Sprint 3)
@@ -730,20 +729,16 @@ class NexusApiService {
 		});
 
 	getForgeCases = (toolId?: string) =>
-		fetchNexus<SyntheticCaseResponse[]>(
-			`/forge/cases${toolId ? `?tool_id=${toolId}` : ""}`,
-		);
+		fetchNexus<SyntheticCaseResponse[]>(`/forge/cases${toolId ? `?tool_id=${toolId}` : ""}`);
 
 	// Auto Loop (Sprint 3)
-	startLoop = (
-		request?: {
-			category?: string;
-			tool_ids?: string[];
-			namespace?: string;
-			batch_size?: number;
-			max_iterations?: number;
-		},
-	) =>
+	startLoop = (request?: {
+		category?: string;
+		tool_ids?: string[];
+		namespace?: string;
+		batch_size?: number;
+		max_iterations?: number;
+	}) =>
 		fetchNexus<Record<string, string>>("/loop/start", {
 			method: "POST",
 			body: JSON.stringify(request || {}),
@@ -761,7 +756,7 @@ class NexusApiService {
 			batch_size?: number;
 			max_iterations?: number;
 		},
-		onEvent?: (event: LoopStreamEvent) => void,
+		onEvent?: (event: LoopStreamEvent) => void
 	): Promise<void> => {
 		const url = `${getBackendUrl()}/api/v1/nexus/loop/start-stream`;
 		const token = getBearerToken();
@@ -817,15 +812,12 @@ class NexusApiService {
 		});
 
 	// Eval Ledger (Sprint 3)
-	getLedgerMetrics = () =>
-		fetchNexus<PipelineMetricsSummary>("/ledger/metrics");
+	getLedgerMetrics = () => fetchNexus<PipelineMetricsSummary>("/ledger/metrics");
 
-	getLedgerTrend = (days = 30) =>
-		fetchNexus<Record<string, unknown>>(`/ledger/trend?days=${days}`);
+	getLedgerTrend = (days = 30) => fetchNexus<Record<string, unknown>>(`/ledger/trend?days=${days}`);
 
 	// Dark Matter (Sprint 3)
-	getDarkMatterClusters = () =>
-		fetchNexus<DarkMatterCluster[]>("/dark-matter/clusters");
+	getDarkMatterClusters = () => fetchNexus<DarkMatterCluster[]>("/dark-matter/clusters");
 
 	// Routing Events (Sprint 3)
 	getRoutingEvents = (limit = 50) =>
@@ -833,7 +825,7 @@ class NexusApiService {
 
 	getBandDistribution = () =>
 		fetchNexus<{ distribution: number[]; total: number; percentages: number[] }>(
-			"/routing/band-distribution",
+			"/routing/band-distribution"
 		);
 
 	logFeedback = (eventId: string, feedback: { implicit?: string; explicit?: number }) =>
@@ -843,8 +835,7 @@ class NexusApiService {
 		});
 
 	// Deploy Control (Sprint 4)
-	getDeployGates = (toolId: string) =>
-		fetchNexus<GateStatusResponse>(`/deploy/gates/${toolId}`);
+	getDeployGates = (toolId: string) => fetchNexus<GateStatusResponse>(`/deploy/gates/${toolId}`);
 
 	promoteTool = (toolId: string) =>
 		fetchNexus<PromotionResultResponse>(`/deploy/promote/${toolId}`, {
@@ -857,8 +848,7 @@ class NexusApiService {
 		});
 
 	// Calibration (Sprint 4)
-	getCalibrationParams = () =>
-		fetchNexus<CalibrationParamsResponse[]>("/calibration/params");
+	getCalibrationParams = () => fetchNexus<CalibrationParamsResponse[]>("/calibration/params");
 
 	fitCalibration = (options?: { zone?: string; category?: string }) =>
 		fetchNexus<Record<string, string>>("/calibration/fit", {
@@ -866,28 +856,23 @@ class NexusApiService {
 			body: JSON.stringify(options ?? {}),
 		});
 
-	getCalibrationECE = () =>
-		fetchNexus<ECEReportResponse>("/calibration/ece");
+	getCalibrationECE = () => fetchNexus<ECEReportResponse>("/calibration/ece");
 
 	// Overview Metrics
-	getOverviewMetrics = () =>
-		fetchNexus<OverviewMetricsResponse>("/overview/metrics");
+	getOverviewMetrics = () => fetchNexus<OverviewMetricsResponse>("/overview/metrics");
 
 	// Forge: Delete case
 	deleteForgeCase = (caseId: string) =>
 		fetchNexus<{ status: string }>(`/forge/cases/${caseId}`, { method: "DELETE" });
 
 	// Loop: Run detail
-	getLoopRunDetail = (runId: string) =>
-		fetchNexus<LoopRunDetail>(`/loop/runs/${runId}`);
+	getLoopRunDetail = (runId: string) => fetchNexus<LoopRunDetail>(`/loop/runs/${runId}`);
 
 	// Ledger: Trend
-	getLedgerTrendTyped = (days = 30) =>
-		fetchNexus<MetricsTrend>(`/ledger/trend?days=${days}`);
+	getLedgerTrendTyped = (days = 30) => fetchNexus<MetricsTrend>(`/ledger/trend?days=${days}`);
 
 	// Concurrency Settings
-	getConcurrencySettings = () =>
-		fetchNexus<ConcurrencySettingsResponse>("/settings/concurrency");
+	getConcurrencySettings = () => fetchNexus<ConcurrencySettingsResponse>("/settings/concurrency");
 
 	updateConcurrency = (maxConcurrency: number) =>
 		fetchNexus<ConcurrencyUpdateResponse>("/settings/concurrency", {
@@ -896,8 +881,7 @@ class NexusApiService {
 		});
 
 	// Live Routing Config
-	getLiveRoutingConfig = () =>
-		fetchNexus<LiveRoutingConfigResponse>("/tools/live-routing");
+	getLiveRoutingConfig = () => fetchNexus<LiveRoutingConfigResponse>("/tools/live-routing");
 
 	// Reset all NEXUS dev data
 	resetAll = () =>
@@ -906,8 +890,7 @@ class NexusApiService {
 		});
 
 	// Shadow Observer
-	getShadowReport = () =>
-		fetchNexus<ShadowReportResponse>("/shadow/report");
+	getShadowReport = () => fetchNexus<ShadowReportResponse>("/shadow/report");
 
 	// Dark Matter: Review cluster
 	reviewDarkMatter = (clusterId: number, newToolCandidate?: string) =>
@@ -917,8 +900,7 @@ class NexusApiService {
 		});
 
 	// Metadata Optimizer
-	getOptimizerCategories = () =>
-		fetchNexus<{ categories: string[] }>("/optimizer/categories");
+	getOptimizerCategories = () => fetchNexus<{ categories: string[] }>("/optimizer/categories");
 
 	optimizerGenerate = (request: {
 		category?: string;
@@ -963,14 +945,11 @@ class NexusApiService {
 		});
 
 	// Dynamic domain/agent metadata
-	getDomainMetadata = () =>
-		fetchNexus<{ domains: DomainMetadata[] }>("/config/domains");
+	getDomainMetadata = () => fetchNexus<{ domains: DomainMetadata[] }>("/config/domains");
 
-	getAgentMetadata = () =>
-		fetchNexus<{ agents: AgentMetadataResponse[] }>("/config/agents");
+	getAgentMetadata = () => fetchNexus<{ agents: AgentMetadataResponse[] }>("/config/agents");
 
-	getCategoryMetadata = () =>
-		fetchNexus<{ categories: CategoryMetadata[] }>("/config/categories");
+	getCategoryMetadata = () => fetchNexus<{ categories: CategoryMetadata[] }>("/config/categories");
 }
 
 export const nexusApiService = new NexusApiService();

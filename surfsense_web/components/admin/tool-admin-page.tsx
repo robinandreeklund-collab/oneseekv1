@@ -13,26 +13,25 @@
  * - tool-lifecycle-page.tsx (427 lines — merged into OverviewTab)
  */
 
-import { Suspense, lazy, useState } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const MetadataTab = lazy(() =>
 	import("@/components/admin/tabs/metadata-tab").then((m) => ({
 		default: m.MetadataTab,
-	})),
+	}))
 );
 const CalibrationTab = lazy(() =>
 	import("@/components/admin/tabs/calibration-tab").then((m) => ({
 		default: m.CalibrationTab,
-	})),
+	}))
 );
 const OverviewTab = lazy(() =>
 	import("@/components/admin/tabs/overview-tab").then((m) => ({
 		default: m.OverviewTab,
-	})),
+	}))
 );
 
 function TabFallback() {
@@ -49,9 +48,7 @@ export function ToolAdminPage() {
 	return (
 		<div className="space-y-6">
 			<div>
-				<h1 className="text-3xl font-bold tracking-tight">
-					Verktygsadministration
-				</h1>
+				<h1 className="text-3xl font-bold tracking-tight">Verktygsadministration</h1>
 				<p className="text-muted-foreground mt-1">
 					Metadata, kalibrering och lifecycle för alla verktyg.
 				</p>
@@ -60,9 +57,9 @@ export function ToolAdminPage() {
 			<Alert>
 				<AlertCircle className="h-4 w-4" />
 				<AlertDescription>
-					<strong>Metadata</strong> styr verklig tool_retrieval.{" "}
-					<strong>Kalibrering</strong> kör audit, eval och optimering i dry-run.{" "}
-					<strong>Överblick</strong> visar status, trender och lifecycle.
+					<strong>Metadata</strong> styr verklig tool_retrieval. <strong>Kalibrering</strong> kör
+					audit, eval och optimering i dry-run. <strong>Överblick</strong> visar status, trender och
+					lifecycle.
 				</AlertDescription>
 			</Alert>
 
@@ -70,9 +67,7 @@ export function ToolAdminPage() {
 				<TabsList>
 					<TabsTrigger value="metadata">Metadata</TabsTrigger>
 					<TabsTrigger value="calibration">Kalibrering</TabsTrigger>
-					<TabsTrigger value="overview">
-						Överblick &amp; Lifecycle
-					</TabsTrigger>
+					<TabsTrigger value="overview">Överblick &amp; Lifecycle</TabsTrigger>
 				</TabsList>
 
 				<TabsContent value="metadata" className="mt-6">

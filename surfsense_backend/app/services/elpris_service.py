@@ -65,6 +65,11 @@ class ElprisService:
             maxsize=500, ttl=ELPRIS_CACHE_TTL_HISTORY,
         )
 
+        from app.services.cache_control import register_service_cache
+
+        register_service_cache(self._today_cache)
+        register_service_cache(self._history_cache)
+
     # -- Lifecycle -----------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:

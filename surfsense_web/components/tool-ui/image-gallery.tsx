@@ -67,10 +67,7 @@ function GalleryLoadingState({ count }: { count: number }) {
 	);
 }
 
-export const DisplayImageGalleryToolUI = makeAssistantToolUI<
-	ImageGalleryArgs,
-	ImageGalleryResult
->({
+export const DisplayImageGalleryToolUI = makeAssistantToolUI<ImageGalleryArgs, ImageGalleryResult>({
 	toolName: "display_image_gallery",
 	render: function DisplayImageGalleryUI({ args, result, status }) {
 		const fallbackImages = args?.images ?? [];

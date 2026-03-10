@@ -29,11 +29,8 @@ export function DashboardBreadcrumb() {
 	// Extract search space ID and chat ID from pathname
 	const segments = pathname.split("/").filter(Boolean);
 	const searchSpaceId = segments[0] === "dashboard" && segments[1] ? segments[1] : null;
-	const chatIdFromPath =
-		segments[2] === "new-chat" && segments[3] ? Number(segments[3]) : null;
-	const chatIdFromQuery = searchParams.get("chat_id")
-		? Number(searchParams.get("chat_id"))
-		: null;
+	const chatIdFromPath = segments[2] === "new-chat" && segments[3] ? Number(segments[3]) : null;
+	const chatIdFromQuery = searchParams.get("chat_id") ? Number(searchParams.get("chat_id")) : null;
 	const chatId = Number.isNaN(chatIdFromPath || chatIdFromQuery)
 		? null
 		: chatIdFromPath || chatIdFromQuery;

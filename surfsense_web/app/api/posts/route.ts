@@ -1,6 +1,6 @@
+import { desc, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
 import { db } from "@/app/db";
 import { postsTable } from "@/app/db/schema";
 
@@ -35,10 +35,7 @@ export async function GET(request: NextRequest) {
 		return NextResponse.json({ success: true, data: filtered });
 	} catch (error) {
 		console.error("Error fetching posts:", error);
-		return NextResponse.json(
-			{ success: false, message: "Failed to fetch posts" },
-			{ status: 500 }
-		);
+		return NextResponse.json({ success: false, message: "Failed to fetch posts" }, { status: 500 });
 	}
 }
 
@@ -74,9 +71,6 @@ export async function POST(request: NextRequest) {
 			);
 		}
 		console.error("Error creating post:", error);
-		return NextResponse.json(
-			{ success: false, message: "Kunde inte skapa post" },
-			{ status: 500 }
-		);
+		return NextResponse.json({ success: false, message: "Kunde inte skapa post" }, { status: 500 });
 	}
 }

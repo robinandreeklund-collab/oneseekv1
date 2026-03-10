@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-	nexusApiService,
-	type ConfusionPair,
-} from "@/lib/apis/nexus-api.service";
+import { type ConfusionPair, nexusApiService } from "@/lib/apis/nexus-api.service";
 
 export function ConfusionMatrix() {
 	const [pairs, setPairs] = useState<ConfusionPair[]>([]);
@@ -86,13 +83,9 @@ function SimilarityBadge({ value }: { value: number }) {
 	const color =
 		value >= 0.95
 			? "text-red-700 bg-red-100"
-			: value >= 0.90
+			: value >= 0.9
 				? "text-orange-700 bg-orange-100"
 				: "text-yellow-700 bg-yellow-100";
 
-	return (
-		<span className={`text-xs font-mono px-2 py-0.5 rounded ${color}`}>
-			{pct}%
-		</span>
-	);
+	return <span className={`text-xs font-mono px-2 py-0.5 rounded ${color}`}>{pct}%</span>;
 }

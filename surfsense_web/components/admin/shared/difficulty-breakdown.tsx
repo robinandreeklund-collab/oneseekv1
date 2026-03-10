@@ -3,7 +3,9 @@
 import { Badge } from "@/components/ui/badge";
 
 function formatDifficultyLabel(value: string | null | undefined) {
-	const normalized = String(value ?? "").trim().toLowerCase();
+	const normalized = String(value ?? "")
+		.trim()
+		.toLowerCase();
 	if (!normalized) return "Okänd";
 	if (normalized === "lätt" || normalized === "latt" || normalized === "easy") return "Lätt";
 	if (normalized === "medel" || normalized === "medium") return "Medel";

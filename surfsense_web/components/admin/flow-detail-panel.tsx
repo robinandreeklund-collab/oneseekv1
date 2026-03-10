@@ -1,47 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-	X,
-	Zap,
+	Activity,
+	Ban,
 	Bot,
-	Wrench,
-	Tag,
-	FileText,
-	Hash,
-	Save,
-	Trash2,
-	Loader2,
 	ChevronDown,
 	ChevronRight,
-	History,
-	RotateCcw,
-	MessageSquare,
-	Link,
+	FileText,
 	FolderOpen,
-	Target,
-	Activity,
-	ShieldOff,
+	Hash,
+	History,
+	Link,
+	Loader2,
 	MapPin,
-	Ban,
+	MessageSquare,
+	RotateCcw,
+	Save,
+	ShieldOff,
+	Tag,
+	Target,
+	Trash2,
+	Wrench,
+	X,
+	Zap,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { toast } from "sonner";
+import { Textarea } from "@/components/ui/textarea";
 import type {
-	FlowIntentNode,
 	FlowAgentNode,
+	FlowIntentNode,
 	FlowToolNode,
 	PipelineNode,
 } from "@/contracts/types/admin-flow-graph.types";
-import type { AgentPromptItem, AgentPromptHistoryItem } from "@/contracts/types/agent-prompts.types";
-import type { MetadataCatalogResponse, ToolMetadataItem } from "@/contracts/types/admin-tool-settings.types";
+import type {
+	MetadataCatalogResponse,
+	ToolMetadataItem,
+} from "@/contracts/types/admin-tool-settings.types";
+import type {
+	AgentPromptHistoryItem,
+	AgentPromptItem,
+} from "@/contracts/types/agent-prompts.types";
 import { adminFlowGraphApiService } from "@/lib/apis/admin-flow-graph-api.service";
 import { adminPromptsApiService } from "@/lib/apis/admin-prompts-api.service";
 import { adminToolSettingsApiService } from "@/lib/apis/admin-tool-settings-api.service";
@@ -67,13 +73,7 @@ interface FlowDetailPanelProps {
 
 // ── Shared prompt editor component ─────────────────────────────────
 
-function InlinePromptEditor({
-	promptKey,
-	onSaved,
-}: {
-	promptKey: string;
-	onSaved?: () => void;
-}) {
+function InlinePromptEditor({ promptKey, onSaved }: { promptKey: string; onSaved?: () => void }) {
 	const [loading, setLoading] = useState(true);
 	const [promptItem, setPromptItem] = useState<AgentPromptItem | null>(null);
 	const [overrideValue, setOverrideValue] = useState("");
@@ -86,16 +86,21 @@ function InlinePromptEditor({
 	useEffect(() => {
 		let cancelled = false;
 		setLoading(true);
-		adminPromptsApiService.getAgentPrompts().then((data) => {
-			if (cancelled) return;
-			const item = data.items.find((i) => i.key === promptKey);
-			setPromptItem(item ?? null);
-			setOverrideValue(item?.override_prompt ?? "");
-			setLoading(false);
-		}).catch(() => {
-			if (!cancelled) setLoading(false);
-		});
-		return () => { cancelled = true; };
+		adminPromptsApiService
+			.getAgentPrompts()
+			.then((data) => {
+				if (cancelled) return;
+				const item = data.items.find((i) => i.key === promptKey);
+				setPromptItem(item ?? null);
+				setOverrideValue(item?.override_prompt ?? "");
+				setLoading(false);
+			})
+			.catch(() => {
+				if (!cancelled) setLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, [promptKey]);
 
 	const loadHistory = useCallback(async () => {
@@ -160,12 +165,18 @@ function InlinePromptEditor({
 				<div className="flex items-center gap-2">
 					<Label className="text-xs font-semibold">Prompt</Label>
 					{isActive && (
-						<Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-emerald-500/15 text-emerald-700">
+						<Badge
+							variant="secondary"
+							className="text-[10px] px-1.5 py-0 bg-emerald-500/15 text-emerald-700"
+						>
 							Override aktiv
 						</Badge>
 					)}
 					{isDirty && (
-						<Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-700">
+						<Badge
+							variant="secondary"
+							className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-700"
+						>
 							Osparad
 						</Badge>
 					)}
@@ -182,11 +193,26 @@ function InlinePromptEditor({
 			/>
 
 			<div className="flex items-center gap-2">
-				<Button size="sm" className="h-7 text-xs" onClick={handleSave} disabled={saving || !isDirty}>
-					{saving ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Save className="h-3 w-3 mr-1.5" />}
+				<Button
+					size="sm"
+					className="h-7 text-xs"
+					onClick={handleSave}
+					disabled={saving || !isDirty}
+				>
+					{saving ? (
+						<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+					) : (
+						<Save className="h-3 w-3 mr-1.5" />
+					)}
 					Spara
 				</Button>
-				<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleReset} disabled={saving}>
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-7 text-xs"
+					onClick={handleReset}
+					disabled={saving}
+				>
 					<RotateCcw className="h-3 w-3 mr-1.5" /> Återställ
 				</Button>
 			</div>
@@ -224,19 +250,26 @@ function InlinePromptEditor({
 			{showHistory && history.length > 0 && (
 				<div className="space-y-2 max-h-[300px] overflow-y-auto">
 					{history.map((entry, i) => (
-						<div key={`${entry.updated_at}-${i}`} className="rounded-md border bg-muted/30 p-2 text-[11px]">
+						<div
+							key={`${entry.updated_at}-${i}`}
+							className="rounded-md border bg-muted/30 p-2 text-[11px]"
+						>
 							<p className="text-muted-foreground">
 								{new Date(entry.updated_at).toLocaleString("sv-SE")}
 							</p>
 							{entry.previous_prompt && (
 								<div className="mt-1">
 									<span className="text-muted-foreground">Före: </span>
-									<span className="text-rose-600 line-through">{entry.previous_prompt?.substring(0, 80)}...</span>
+									<span className="text-rose-600 line-through">
+										{entry.previous_prompt?.substring(0, 80)}...
+									</span>
 								</div>
 							)}
 							<div className="mt-1">
 								<span className="text-muted-foreground">Efter: </span>
-								<span className="text-emerald-600">{(entry.new_prompt || "(tömd)").substring(0, 80)}...</span>
+								<span className="text-emerald-600">
+									{(entry.new_prompt || "(tömd)").substring(0, 80)}...
+								</span>
 							</div>
 						</div>
 					))}
@@ -282,14 +315,20 @@ function IntentDetail({
 				intent_id: intent.intent_id,
 				label,
 				description,
-				keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				keywords: keywords
+					.split(",")
+					.map((k) => k.trim())
+					.filter(Boolean),
 				priority: parseInt(priority, 10) || 500,
 				enabled,
 				main_identifier: mainIdentifier.trim(),
 				core_activity: coreActivity.trim(),
 				unique_scope: uniqueScope.trim(),
 				geographic_scope: geographicScope.trim(),
-				excludes: excludes.split(",").map((e) => e.trim()).filter(Boolean),
+				excludes: excludes
+					.split(",")
+					.map((e) => e.trim())
+					.filter(Boolean),
 			});
 			toast.success("Intent sparad");
 			setEditing(false);
@@ -299,7 +338,20 @@ function IntentDetail({
 		} finally {
 			setSaving(false);
 		}
-	}, [intent.intent_id, label, description, keywords, priority, enabled, mainIdentifier, coreActivity, uniqueScope, geographicScope, excludes, onDataChanged]);
+	}, [
+		intent.intent_id,
+		label,
+		description,
+		keywords,
+		priority,
+		enabled,
+		mainIdentifier,
+		coreActivity,
+		uniqueScope,
+		geographicScope,
+		excludes,
+		onDataChanged,
+	]);
 
 	const handleDelete = useCallback(async () => {
 		setDeleting(true);
@@ -338,7 +390,9 @@ function IntentDetail({
 				</div>
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Route</span>
-					<Badge variant="secondary" className="text-xs">{intent.route}</Badge>
+					<Badge variant="secondary" className="text-xs">
+						{intent.route}
+					</Badge>
 				</div>
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Kopplade agenter</span>
@@ -379,7 +433,11 @@ function IntentDetail({
 				<div className="space-y-3">
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Label</Label>
-						<Input value={label} onChange={(e) => setLabel(e.target.value)} className="text-xs h-8" />
+						<Input
+							value={label}
+							onChange={(e) => setLabel(e.target.value)}
+							className="text-xs h-8"
+						/>
 					</div>
 
 					{/* Main Identifier */}
@@ -393,7 +451,9 @@ function IntentDetail({
 							className="text-xs h-8"
 							placeholder="Vad intenten fundamentalt är, t.ex. 'Kunskapsintent'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad intenten fundamentalt är/representerar</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad intenten fundamentalt är/representerar
+						</p>
 					</div>
 
 					{/* Core Activity */}
@@ -407,7 +467,9 @@ function IntentDetail({
 							className="text-xs h-8"
 							placeholder="Identifierar frågor som kräver informationssökning"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad intenten gör / dess huvudsakliga funktion</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad intenten gör / dess huvudsakliga funktion
+						</p>
 					</div>
 
 					<div className="space-y-1">
@@ -420,7 +482,9 @@ function IntentDetail({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="text-[11px] text-muted-foreground">Nyckelord (komma-separerade)</Label>
+						<Label className="text-[11px] text-muted-foreground">
+							Nyckelord (komma-separerade)
+						</Label>
 						<Textarea
 							value={keywords}
 							onChange={(e) => setKeywords(e.target.value)}
@@ -439,7 +503,9 @@ function IntentDetail({
 							className="text-xs h-8"
 							placeholder="Vad som unikt avgränsar denna intent från andra"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad som skiljer denna intent från liknande</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad som skiljer denna intent från liknande
+						</p>
 					</div>
 
 					{/* Geographic Scope */}
@@ -453,7 +519,9 @@ function IntentDetail({
 							className="text-xs h-8"
 							placeholder="t.ex. 'Sverige', 'Norrköping kommun', 'Norden'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Geografiskt omfång / tillämpningsområde</p>
+						<p className="text-[10px] text-muted-foreground">
+							Geografiskt omfång / tillämpningsområde
+						</p>
 					</div>
 
 					{/* Excludes */}
@@ -489,7 +557,11 @@ function IntentDetail({
 						</div>
 					</div>
 					<Button size="sm" className="h-7 text-xs w-full" onClick={handleSave} disabled={saving}>
-						{saving ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Save className="h-3 w-3 mr-1.5" />}
+						{saving ? (
+							<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+						) : (
+							<Save className="h-3 w-3 mr-1.5" />
+						)}
 						Spara intent
 					</Button>
 				</div>
@@ -519,7 +591,9 @@ function IntentDetail({
 						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
 							<FileText className="h-3 w-3" /> Beskrivning
 						</Label>
-						<p className="text-xs text-muted-foreground whitespace-pre-wrap">{intent.description || "Ingen beskrivning"}</p>
+						<p className="text-xs text-muted-foreground whitespace-pre-wrap">
+							{intent.description || "Ingen beskrivning"}
+						</p>
 					</div>
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -527,7 +601,9 @@ function IntentDetail({
 						</Label>
 						<div className="flex flex-wrap gap-1">
 							{intent.keywords.map((kw) => (
-								<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
+								<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">
+									{kw}
+								</Badge>
 							))}
 						</div>
 					</div>
@@ -560,7 +636,11 @@ function IntentDetail({
 							</Label>
 							<div className="flex flex-wrap gap-1">
 								{intent.excludes.map((ex) => (
-									<Badge key={ex} variant="outline" className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive">
+									<Badge
+										key={ex}
+										variant="outline"
+										className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive"
+									>
 										{ex}
 									</Badge>
 								))}
@@ -606,7 +686,11 @@ function IntentDetail({
 							onClick={handleDelete}
 							disabled={deleting}
 						>
-							{deleting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1.5" />}
+							{deleting ? (
+								<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+							) : (
+								<Trash2 className="h-3 w-3 mr-1.5" />
+							)}
 							Ja, ta bort
 						</Button>
 						<Button
@@ -672,9 +756,7 @@ function AgentDetail({
 	}, [agent.agent_id, onDataChanged]);
 
 	const handleToggleRoute = useCallback((route: string, checked: boolean) => {
-		setSelectedRoutes((prev) =>
-			checked ? [...prev, route] : prev.filter((r) => r !== route)
-		);
+		setSelectedRoutes((prev) => (checked ? [...prev, route] : prev.filter((r) => r !== route)));
 	}, []);
 
 	const handleSave = useCallback(async () => {
@@ -684,15 +766,24 @@ function AgentDetail({
 				agent_id: agent.agent_id,
 				label,
 				description,
-				keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+				keywords: keywords
+					.split(",")
+					.map((k) => k.trim())
+					.filter(Boolean),
 				prompt_key: promptKey || undefined,
-				namespace: namespace.split("/").map((s) => s.trim()).filter(Boolean),
+				namespace: namespace
+					.split("/")
+					.map((s) => s.trim())
+					.filter(Boolean),
 				routes: selectedRoutes,
 				main_identifier: mainIdentifier.trim(),
 				core_activity: coreActivity.trim(),
 				unique_scope: uniqueScope.trim(),
 				geographic_scope: geographicScope.trim(),
-				excludes: excludes.split(",").map((e) => e.trim()).filter(Boolean),
+				excludes: excludes
+					.split(",")
+					.map((e) => e.trim())
+					.filter(Boolean),
 			});
 			toast.success("Agent sparad");
 			setEditing(false);
@@ -702,7 +793,21 @@ function AgentDetail({
 		} finally {
 			setSaving(false);
 		}
-	}, [agent.agent_id, label, description, keywords, promptKey, namespace, selectedRoutes, mainIdentifier, coreActivity, uniqueScope, geographicScope, excludes, onDataChanged]);
+	}, [
+		agent.agent_id,
+		label,
+		description,
+		keywords,
+		promptKey,
+		namespace,
+		selectedRoutes,
+		mainIdentifier,
+		coreActivity,
+		uniqueScope,
+		geographicScope,
+		excludes,
+		onDataChanged,
+	]);
 
 	const handleDelete = useCallback(async () => {
 		setDeleting(true);
@@ -719,9 +824,7 @@ function AgentDetail({
 	}, [agent.agent_id, onDataChanged]);
 
 	// Determine the prompt key for this agent
-	const agentPromptKey = agent.prompt_key
-		? `agent.${agent.prompt_key}.system`
-		: null;
+	const agentPromptKey = agent.prompt_key ? `agent.${agent.prompt_key}.system` : null;
 
 	return (
 		<div className="space-y-4">
@@ -788,7 +891,11 @@ function AgentDetail({
 				<div className="space-y-3">
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Label</Label>
-						<Input value={label} onChange={(e) => setLabel(e.target.value)} className="text-xs h-8" />
+						<Input
+							value={label}
+							onChange={(e) => setLabel(e.target.value)}
+							className="text-xs h-8"
+						/>
 					</div>
 
 					{/* Main Identifier */}
@@ -802,7 +909,9 @@ function AgentDetail({
 							className="text-xs h-8"
 							placeholder="Vad agenten fundamentalt är, t.ex. 'Väderagent'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad agenten fundamentalt är/representerar</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad agenten fundamentalt är/representerar
+						</p>
 					</div>
 
 					{/* Core Activity */}
@@ -816,7 +925,9 @@ function AgentDetail({
 							className="text-xs h-8"
 							placeholder="Hämtar väderprognoser och vägväderdata"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad agenten gör / dess huvudsakliga funktion</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad agenten gör / dess huvudsakliga funktion
+						</p>
 					</div>
 
 					<div className="space-y-1">
@@ -829,7 +940,9 @@ function AgentDetail({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="text-[11px] text-muted-foreground">Nyckelord (komma-separerade)</Label>
+						<Label className="text-[11px] text-muted-foreground">
+							Nyckelord (komma-separerade)
+						</Label>
 						<Textarea
 							value={keywords}
 							onChange={(e) => setKeywords(e.target.value)}
@@ -848,7 +961,9 @@ function AgentDetail({
 							className="text-xs h-8"
 							placeholder="Vad som unikt avgränsar denna agent från andra"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad som skiljer denna agent från liknande</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad som skiljer denna agent från liknande
+						</p>
 					</div>
 
 					{/* Geographic Scope */}
@@ -862,7 +977,9 @@ function AgentDetail({
 							className="text-xs h-8"
 							placeholder="t.ex. 'Sverige', 'Norrköping kommun', 'Norden'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Geografiskt omfång / tillämpningsområde</p>
+						<p className="text-[10px] text-muted-foreground">
+							Geografiskt omfång / tillämpningsområde
+						</p>
 					</div>
 
 					{/* Excludes */}
@@ -881,11 +998,21 @@ function AgentDetail({
 
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Prompt-nyckel</Label>
-						<Input value={promptKey} onChange={(e) => setPromptKey(e.target.value)} className="text-xs h-8" placeholder="t.ex. weather, code, knowledge" />
+						<Input
+							value={promptKey}
+							onChange={(e) => setPromptKey(e.target.value)}
+							className="text-xs h-8"
+							placeholder="t.ex. weather, code, knowledge"
+						/>
 					</div>
 					<div className="space-y-1">
 						<Label className="text-[11px] text-muted-foreground">Namespace (sökväg med /)</Label>
-						<Input value={namespace} onChange={(e) => setNamespace(e.target.value)} className="text-xs h-8" placeholder="agents/weather" />
+						<Input
+							value={namespace}
+							onChange={(e) => setNamespace(e.target.value)}
+							className="text-xs h-8"
+							placeholder="agents/weather"
+						/>
 					</div>
 					{/* Routes */}
 					<div className="space-y-1">
@@ -900,15 +1027,23 @@ function AgentDetail({
 											handleToggleRoute(intent.intent_id, checked === true)
 										}
 									/>
-									<label htmlFor={`agent-route-${intent.intent_id}`} className="text-xs cursor-pointer">
-										{intent.label} <span className="text-muted-foreground font-mono">({intent.intent_id})</span>
+									<label
+										htmlFor={`agent-route-${intent.intent_id}`}
+										className="text-xs cursor-pointer"
+									>
+										{intent.label}{" "}
+										<span className="text-muted-foreground font-mono">({intent.intent_id})</span>
 									</label>
 								</div>
 							))}
 						</div>
 					</div>
 					<Button size="sm" className="h-7 text-xs w-full" onClick={handleSave} disabled={saving}>
-						{saving ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Save className="h-3 w-3 mr-1.5" />}
+						{saving ? (
+							<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+						) : (
+							<Save className="h-3 w-3 mr-1.5" />
+						)}
 						Spara agent
 					</Button>
 				</div>
@@ -942,7 +1077,9 @@ function AgentDetail({
 						<div className="flex flex-wrap gap-1">
 							{(agent.routes ?? []).length > 0 ? (
 								(agent.routes ?? []).map((r) => (
-									<Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">{r}</Badge>
+									<Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">
+										{r}
+									</Badge>
 								))
 							) : (
 								<span className="text-xs text-muted-foreground">Inga intents</span>
@@ -969,7 +1106,9 @@ function AgentDetail({
 						</Label>
 						<div className="flex flex-wrap gap-1">
 							{agent.keywords.map((kw) => (
-								<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
+								<Badge key={kw} variant="outline" className="text-[10px] px-1.5 py-0">
+									{kw}
+								</Badge>
 							))}
 						</div>
 					</div>
@@ -1002,7 +1141,11 @@ function AgentDetail({
 							</Label>
 							<div className="flex flex-wrap gap-1">
 								{agent.excludes.map((ex) => (
-									<Badge key={ex} variant="outline" className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive">
+									<Badge
+										key={ex}
+										variant="outline"
+										className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive"
+									>
 										{ex}
 									</Badge>
 								))}
@@ -1030,7 +1173,11 @@ function AgentDetail({
 				onClick={handleResetToSeed}
 				disabled={resetting}
 			>
-				{resetting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RotateCcw className="h-3 w-3 mr-1.5" />}
+				{resetting ? (
+					<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+				) : (
+					<RotateCcw className="h-3 w-3 mr-1.5" />
+				)}
 				Återställ seed-data
 			</Button>
 
@@ -1057,7 +1204,11 @@ function AgentDetail({
 							onClick={handleDelete}
 							disabled={deleting}
 						>
-							{deleting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1.5" />}
+							{deleting ? (
+								<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+							) : (
+								<Trash2 className="h-3 w-3 mr-1.5" />
+							)}
 							Ja, ta bort
 						</Button>
 						<Button
@@ -1102,7 +1253,9 @@ function ToolDetail({
 	const [name, setName] = useState(catalogTool?.name ?? tool.label);
 	const [description, setDescription] = useState(catalogTool?.description ?? "");
 	const [keywords, setKeywords] = useState((catalogTool?.keywords ?? []).join(", "));
-	const [exampleQueries, setExampleQueries] = useState((catalogTool?.example_queries ?? []).join("\n"));
+	const [exampleQueries, setExampleQueries] = useState(
+		(catalogTool?.example_queries ?? []).join("\n")
+	);
 	const [category, setCategory] = useState(catalogTool?.category ?? tool.agent_id);
 	const [basePath, setBasePath] = useState(catalogTool?.base_path ?? "");
 	const [mainIdentifier, setMainIdentifier] = useState(catalogTool?.main_identifier ?? "");
@@ -1137,22 +1290,33 @@ function ToolDetail({
 			if (catalogData) {
 				await adminToolSettingsApiService.updateMetadataCatalog(
 					{
-						tools: [{
-							tool_id: tool.tool_id,
-							name: name.trim(),
-							description: description.trim(),
-							keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
-							example_queries: exampleQueries.split("\n").map((q) => q.trim()).filter(Boolean),
-							category: category.trim(),
-							base_path: basePath.trim() || null,
-							main_identifier: mainIdentifier.trim(),
-							core_activity: coreActivity.trim(),
-							unique_scope: uniqueScope.trim(),
-							geographic_scope: geographicScope.trim(),
-							excludes: excludes.split(",").map((e) => e.trim()).filter(Boolean),
-						}],
+						tools: [
+							{
+								tool_id: tool.tool_id,
+								name: name.trim(),
+								description: description.trim(),
+								keywords: keywords
+									.split(",")
+									.map((k) => k.trim())
+									.filter(Boolean),
+								example_queries: exampleQueries
+									.split("\n")
+									.map((q) => q.trim())
+									.filter(Boolean),
+								category: category.trim(),
+								base_path: basePath.trim() || null,
+								main_identifier: mainIdentifier.trim(),
+								core_activity: coreActivity.trim(),
+								unique_scope: uniqueScope.trim(),
+								geographic_scope: geographicScope.trim(),
+								excludes: excludes
+									.split(",")
+									.map((e) => e.trim())
+									.filter(Boolean),
+							},
+						],
 					},
-					catalogData.search_space_id,
+					catalogData.search_space_id
 				);
 			}
 
@@ -1160,18 +1324,20 @@ function ToolDetail({
 			if (selectedAgentId !== tool.agent_id) {
 				// Remove from old agent
 				if (tool.agent_id) {
-					const sourceTools = (catalogData?.agents ?? [])
-						.find((a) => a.agent_id === tool.agent_id)
-						?.flow_tools?.filter((t) => t.tool_id !== tool.tool_id)
-						.map((t) => ({ tool_id: t.tool_id, label: t.label })) ?? [];
+					const sourceTools =
+						(catalogData?.agents ?? [])
+							.find((a) => a.agent_id === tool.agent_id)
+							?.flow_tools?.filter((t) => t.tool_id !== tool.tool_id)
+							.map((t) => ({ tool_id: t.tool_id, label: t.label })) ?? [];
 					await adminFlowGraphApiService.updateAgentTools(tool.agent_id, sourceTools);
 				}
 
 				// Add to new agent
 				if (selectedAgentId) {
-					const targetFlowTools = (catalogData?.agents ?? [])
-						.find((a) => a.agent_id === selectedAgentId)
-						?.flow_tools?.map((t) => ({ tool_id: t.tool_id, label: t.label })) ?? [];
+					const targetFlowTools =
+						(catalogData?.agents ?? [])
+							.find((a) => a.agent_id === selectedAgentId)
+							?.flow_tools?.map((t) => ({ tool_id: t.tool_id, label: t.label })) ?? [];
 					targetFlowTools.push({ tool_id: tool.tool_id, label: name.trim() || tool.label });
 					await adminFlowGraphApiService.updateAgentTools(selectedAgentId, targetFlowTools);
 				}
@@ -1244,18 +1410,25 @@ function ToolDetail({
 				</div>
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Agent</span>
-					<Badge variant="secondary" className="text-xs">{tool.agent_id || "Ej tilldelad"}</Badge>
+					<Badge variant="secondary" className="text-xs">
+						{tool.agent_id || "Ej tilldelad"}
+					</Badge>
 				</div>
 				{catalogTool?.category && (
 					<div className="flex items-center justify-between">
 						<span className="text-xs text-muted-foreground">Kategori</span>
-						<Badge variant="outline" className="text-xs">{catalogTool.category}</Badge>
+						<Badge variant="outline" className="text-xs">
+							{catalogTool.category}
+						</Badge>
 					</div>
 				)}
 				{catalogTool?.has_override && (
 					<div className="flex items-center justify-between">
 						<span className="text-xs text-muted-foreground">Override</span>
-						<Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-700">
+						<Badge
+							variant="secondary"
+							className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-700"
+						>
 							Har override
 						</Badge>
 					</div>
@@ -1290,11 +1463,7 @@ function ToolDetail({
 						<Label className="text-[11px] text-muted-foreground flex items-center gap-1">
 							<Tag className="h-3 w-3" /> Namn
 						</Label>
-						<Input
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							className="text-xs h-8"
-						/>
+						<Input value={name} onChange={(e) => setName(e.target.value)} className="text-xs h-8" />
 					</div>
 
 					{/* Main Identifier */}
@@ -1308,7 +1477,9 @@ function ToolDetail({
 							className="text-xs h-8"
 							placeholder="Vad verktyget fundamentalt är, t.ex. 'SMHI Väderprognostjänst'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad verktyget fundamentalt är/representerar</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad verktyget fundamentalt är/representerar
+						</p>
 					</div>
 
 					{/* Core Activity */}
@@ -1322,7 +1493,9 @@ function ToolDetail({
 							className="text-xs h-8"
 							placeholder="Vad verktyget gör, t.ex. 'Hämtar detaljerade väderprognoser'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad verktyget gör / dess huvudsakliga funktion</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad verktyget gör / dess huvudsakliga funktion
+						</p>
 					</div>
 
 					{/* Description */}
@@ -1362,7 +1535,9 @@ function ToolDetail({
 							className="text-xs h-8"
 							placeholder="Vad som unikt avgränsar detta verktyg från andra"
 						/>
-						<p className="text-[10px] text-muted-foreground">Vad som skiljer detta verktyg från liknande</p>
+						<p className="text-[10px] text-muted-foreground">
+							Vad som skiljer detta verktyg från liknande
+						</p>
 					</div>
 
 					{/* Geographic Scope */}
@@ -1376,7 +1551,9 @@ function ToolDetail({
 							className="text-xs h-8"
 							placeholder="t.ex. 'Sverige', 'Norrköping kommun', 'Norden'"
 						/>
-						<p className="text-[10px] text-muted-foreground">Geografiskt omfång / tillämpningsområde</p>
+						<p className="text-[10px] text-muted-foreground">
+							Geografiskt omfång / tillämpningsområde
+						</p>
 					</div>
 
 					{/* Example queries */}
@@ -1388,7 +1565,9 @@ function ToolDetail({
 							value={exampleQueries}
 							onChange={(e) => setExampleQueries(e.target.value)}
 							className="text-xs min-h-[80px]"
-							placeholder={"Vad blir vädret imorgon i Stockholm?\nVisa temperatur för Göteborg\nRegnar det idag?"}
+							placeholder={
+								"Vad blir vädret imorgon i Stockholm?\nVisa temperatur för Göteborg\nRegnar det idag?"
+							}
 						/>
 					</div>
 
@@ -1458,12 +1637,7 @@ function ToolDetail({
 
 					{/* Save / Cancel buttons */}
 					<div className="flex gap-2">
-						<Button
-							size="sm"
-							className="h-7 text-xs flex-1"
-							onClick={handleSave}
-							disabled={saving}
-						>
+						<Button size="sm" className="h-7 text-xs flex-1" onClick={handleSave} disabled={saving}>
 							{saving ? (
 								<Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
 							) : (
@@ -1571,14 +1745,19 @@ function ToolDetail({
 								{catalogTool.example_queries.length > 0 ? (
 									<ul className="space-y-0.5">
 										{catalogTool.example_queries.map((q, i) => (
-											<li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+											<li
+												key={i}
+												className="text-[11px] text-muted-foreground flex items-start gap-1.5"
+											>
 												<span className="text-muted-foreground/50 shrink-0">•</span>
 												<span>{q}</span>
 											</li>
 										))}
 									</ul>
 								) : (
-									<span className="text-[10px] text-muted-foreground italic">Inga exempelfrågor</span>
+									<span className="text-[10px] text-muted-foreground italic">
+										Inga exempelfrågor
+									</span>
 								)}
 							</div>
 
@@ -1590,7 +1769,11 @@ function ToolDetail({
 									</Label>
 									<div className="flex flex-wrap gap-1">
 										{catalogTool.excludes.map((ex) => (
-											<Badge key={ex} variant="outline" className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive">
+											<Badge
+												key={ex}
+												variant="outline"
+												className="text-[10px] px-1.5 py-0 border-destructive/30 text-destructive"
+											>
 												{ex}
 											</Badge>
 										))}
@@ -1620,8 +1803,8 @@ function ToolDetail({
 						</>
 					) : (
 						<p className="text-xs text-muted-foreground italic">
-							Ingen metadata hittad i katalogen för detta verktyg.
-							Klicka "Redigera" för att lägga till metadata.
+							Ingen metadata hittad i katalogen för detta verktyg. Klicka "Redigera" för att lägga
+							till metadata.
 						</p>
 					)}
 				</div>
@@ -1629,10 +1812,7 @@ function ToolDetail({
 
 			{/* Tool Runtime Prompt */}
 			<Separator />
-			<InlinePromptEditor
-				promptKey={`tool.${tool.tool_id}.system`}
-				onSaved={onDataChanged}
-			/>
+			<InlinePromptEditor promptKey={`tool.${tool.tool_id}.system`} onSaved={onDataChanged} />
 		</div>
 	);
 }
@@ -1667,7 +1847,9 @@ function PipelineDetail({
 				</div>
 				<div className="flex items-center justify-between">
 					<span className="text-xs text-muted-foreground">Steg</span>
-					<Badge variant="secondary" className="text-xs">{node.stage}</Badge>
+					<Badge variant="secondary" className="text-xs">
+						{node.stage}
+					</Badge>
 				</div>
 			</div>
 
@@ -1691,7 +1873,9 @@ function PipelineDetail({
 			{!node.prompt_key && (
 				<>
 					<Separator />
-					<p className="text-xs text-muted-foreground italic">Denna nod har ingen direkt kopplad prompt.</p>
+					<p className="text-xs text-muted-foreground italic">
+						Denna nod har ingen direkt kopplad prompt.
+					</p>
 				</>
 			)}
 		</div>

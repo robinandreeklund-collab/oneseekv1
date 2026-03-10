@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Smooth character-by-character typing animation using requestAnimationFrame.
@@ -20,7 +20,7 @@ import { useState, useEffect, useRef } from "react";
 export function useSmoothTyping(
 	incomingText: string,
 	delayPerWord: number | undefined,
-	active: boolean,
+	active: boolean
 ) {
 	const [displayedText, setDisplayedText] = useState("");
 	const queueRef = useRef<string[]>([]);
@@ -32,9 +32,7 @@ export function useSmoothTyping(
 	const AVG_CHARS_PER_WORD = 6.5;
 	const VARIANCE_RATIO = 0.35; // ±35 % jitter for natural feel
 	const msPerChar =
-		delayPerWord && delayPerWord > 0
-			? (delayPerWord * 1000) / AVG_CHARS_PER_WORD
-			: 0;
+		delayPerWord && delayPerWord > 0 ? (delayPerWord * 1000) / AVG_CHARS_PER_WORD : 0;
 
 	// When not active or no animation speed, show everything immediately
 	useEffect(() => {

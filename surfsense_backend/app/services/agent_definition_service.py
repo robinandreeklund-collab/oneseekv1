@@ -6,8 +6,11 @@ that sit in the middle of the intent → agent → tool hierarchy.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -212,9 +215,6 @@ async def upsert_agent(
     if not normalized_id:
         normalized_id = "custom"
     domain_id = _normalize_text(payload.get("domain_id")).lower()
-    normalized = normalize_agent_payload(
-        payload, agent_id=normalized_id, domain_id=domain_id
-    )
 
     result = await session.execute(
         select(DomainAgentDefinition).filter(
@@ -222,6 +222,22 @@ async def upsert_agent(
         )
     )
     existing = result.scalars().first()
+
+    # Preserve existing domain_id when payload doesn't supply one
+    if not domain_id and existing:
+        domain_id = existing.domain_id or ""
+
+    if not domain_id and not existing:
+        logger.warning(
+            "upsert_agent: skipping %s — no domain_id could be resolved",
+            normalized_id,
+        )
+        return normalize_agent_payload(payload, agent_id=normalized_id, domain_id="")
+
+    normalized = normalize_agent_payload(
+        payload, agent_id=normalized_id, domain_id=domain_id
+    )
+
     previous_payload = (
         normalize_agent_payload(
             existing.definition_payload,

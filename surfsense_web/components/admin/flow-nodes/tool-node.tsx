@@ -1,12 +1,9 @@
+import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { GripVertical, Wrench } from "lucide-react";
 import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Wrench, GripVertical } from "lucide-react";
 import type { FlowToolNode } from "@/contracts/types/admin-flow-graph.types";
 
-export const ToolGraphNode = memo(function ToolGraphNode({
-	data,
-	selected,
-}: NodeProps) {
+export const ToolGraphNode = memo(function ToolGraphNode({ data, selected }: NodeProps) {
 	const tool = data as unknown as FlowToolNode;
 	return (
 		<div

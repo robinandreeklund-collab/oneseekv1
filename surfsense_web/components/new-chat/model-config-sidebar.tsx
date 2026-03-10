@@ -269,8 +269,8 @@ export function ModelConfigSidebar({
 									<Alert className="mb-6 border-amber-500/30 bg-amber-500/5">
 										<AlertCircle className="size-4 text-amber-500" />
 										<AlertDescription className="text-sm text-amber-700 dark:text-amber-400">
-											Globala konfigurationer är skrivskyddade. Skapa en ny konfiguration
-											baserad på denna mall för att anpassa inställningarna.
+											Globala konfigurationer är skrivskyddade. Skapa en ny konfiguration baserad på
+											denna mall för att anpassa inställningarna.
 										</AlertDescription>
 									</Alert>
 								)}

@@ -1,7 +1,6 @@
 "use client";
 
 import { useAssistantState } from "@assistant-ui/react";
-import { AnimatePresence, motion } from "motion/react";
 import {
 	CheckCircle2Icon,
 	ChevronDownIcon,
@@ -12,9 +11,10 @@ import {
 	LoaderCircleIcon,
 	ZapIcon,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import {
-	type FC,
 	createContext,
+	type FC,
 	useCallback,
 	useContext,
 	useEffect,
@@ -25,18 +25,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-	Collapsible,
-	CollapsibleContent,
-	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-	MODEL_LOGOS as SHARED_MODEL_LOGOS,
-	ENERGY_WH_PER_1K_TOKENS,
 	CO2G_PER_1K_TOKENS,
-	LEAKED_JSON_FIELDS,
+	ENERGY_WH_PER_1K_TOKENS,
 	formatLatency,
+	LEAKED_JSON_FIELDS,
+	MODEL_LOGOS as SHARED_MODEL_LOGOS,
 } from "@/lib/compare-constants";
 import { cn } from "@/lib/utils";
 
@@ -56,7 +52,10 @@ export interface CriterionPodMeta {
 	parent_pod_id: string;
 	latency_ms: number;
 }
-export type LiveCriterionPodMap = Record<string, Partial<Record<keyof ModelScore, CriterionPodMeta>>>;
+export type LiveCriterionPodMap = Record<
+	string,
+	Partial<Record<keyof ModelScore, CriterionPodMeta>>
+>;
 export const LiveCriterionPodContext = createContext<LiveCriterionPodMap>({});
 
 // ============================================================================
@@ -159,7 +158,7 @@ const TOOL_TO_DOMAIN: Record<string, string> = {
 
 // MODEL_LOGOS: simplified accessor using shared mapping
 const MODEL_LOGOS: Record<string, string> = Object.fromEntries(
-	Object.entries(SHARED_MODEL_LOGOS).map(([k, v]) => [k, v.src]),
+	Object.entries(SHARED_MODEL_LOGOS).map(([k, v]) => [k, v.src])
 );
 
 const PHASE_LABELS: { id: ArenaPhase; label: string }[] = [
@@ -169,12 +168,7 @@ const PHASE_LABELS: { id: ArenaPhase; label: string }[] = [
 	{ id: "rankar", label: "Rankar" },
 ];
 
-const SCORE_KEYS: (keyof ModelScore)[] = [
-	"relevans",
-	"djup",
-	"klarhet",
-	"korrekthet",
-];
+const SCORE_KEYS: (keyof ModelScore)[] = ["relevans", "djup", "klarhet", "korrekthet"];
 
 const SCORE_COLORS: Record<keyof ModelScore, string> = {
 	relevans: "bg-blue-500",
@@ -212,7 +206,7 @@ function parseResult(raw: unknown): Record<string, unknown> | null {
 function extractMeta(
 	result: Record<string, unknown> | null,
 	responseText: string,
-	queryText: string,
+	queryText: string
 ): ModelMeta {
 	if (!result) {
 		return {
@@ -239,17 +233,13 @@ function extractMeta(
 
 	if (usage) {
 		if (typeof usage.prompt_tokens === "number") prompt = usage.prompt_tokens;
-		if (typeof usage.completion_tokens === "number")
-			completion = usage.completion_tokens;
+		if (typeof usage.completion_tokens === "number") completion = usage.completion_tokens;
 		if (typeof usage.total_tokens === "number") total = usage.total_tokens;
 	}
 
 	if (total === null) {
 		const estPrompt = Math.max(1, Math.round((queryText || "").length / 4));
-		const estCompletion = Math.max(
-			1,
-			Math.round((responseText || "").length / 4),
-		);
+		const estCompletion = Math.max(1, Math.round((responseText || "").length / 4));
 		total = estPrompt + estCompletion;
 		prompt = estPrompt;
 		completion = estCompletion;
@@ -261,8 +251,7 @@ function extractMeta(
 		model: String(result.model || ""),
 		modelString: String(result.model_string || ""),
 		source: String(result.source || result.provider || ""),
-		latencyMs:
-			typeof result.latency_ms === "number" ? result.latency_ms : null,
+		latencyMs: typeof result.latency_ms === "number" ? result.latency_ms : null,
 		tokens: { prompt, completion, total, isEstimated },
 		truncated: result.truncated === true,
 	};
@@ -272,16 +261,16 @@ function extractMeta(
 const CRITERION_WEIGHTS: Record<keyof ModelScore, number> = {
 	korrekthet: 0.35,
 	relevans: 0.25,
-	djup: 0.20,
-	klarhet: 0.20,
+	djup: 0.2,
+	klarhet: 0.2,
 };
 
 function weightedScore(s: ModelScore): number {
 	return Math.round(
 		s.korrekthet * CRITERION_WEIGHTS.korrekthet +
-		s.relevans * CRITERION_WEIGHTS.relevans +
-		s.djup * CRITERION_WEIGHTS.djup +
-		s.klarhet * CRITERION_WEIGHTS.klarhet
+			s.relevans * CRITERION_WEIGHTS.relevans +
+			s.djup * CRITERION_WEIGHTS.djup +
+			s.klarhet * CRITERION_WEIGHTS.klarhet
 	);
 }
 
@@ -324,26 +313,19 @@ function sanitizeSynthesisText(text: string): string {
 	// 2. Remove ```json ... ``` fenced blocks with leaked fields
 	cleaned = cleaned.replace(/```json\s*\n[\s\S]*?```\s*\n?/g, "");
 	// 3. Remove trailing JSON blob (greedy to end of text)
-	cleaned = cleaned.replace(
-		new RegExp(`\\n?\\s*\\{\\s*"(?:${FIELD_ALT})"[\\s\\S]*$`),
-		"",
-	);
+	cleaned = cleaned.replace(new RegExp(`\\n?\\s*\\{\\s*"(?:${FIELD_ALT})"[\\s\\S]*$`), "");
 	// 4. Remove inline/multi-line naked JSON blobs with known field names
 	cleaned = cleaned.replace(
 		new RegExp(`\\{\\s*"(?:${FIELD_ALT})"[\\s\\S]*?\\}(?:\\s*\\})*`, "g"),
-		"",
+		""
 	);
 	return cleaned.trim();
 }
 
 /** Extract ```spotlight-arena-data JSON block from synthesis text */
-function extractArenaAnalysis(
-	textParts: string[],
-): ArenaAnalysis | null {
+function extractArenaAnalysis(textParts: string[]): ArenaAnalysis | null {
 	for (const text of textParts) {
-		const match = text.match(
-			/```spotlight-arena-data\s*\n([\s\S]*?)```/,
-		);
+		const match = text.match(/```spotlight-arena-data\s*\n([\s\S]*?)```/);
 		if (match?.[1]) {
 			try {
 				const parsed = JSON.parse(match[1]);
@@ -357,13 +339,9 @@ function extractArenaAnalysis(
 }
 
 /** Extract convergence model_scores from arena-data or text */
-function extractModelScores(
-	textParts: string[],
-): Record<string, ModelScore> | null {
+function extractModelScores(textParts: string[]): Record<string, ModelScore> | null {
 	for (const text of textParts) {
-		const match = text.match(
-			/```spotlight-arena-data\s*\n([\s\S]*?)```/,
-		);
+		const match = text.match(/```spotlight-arena-data\s*\n([\s\S]*?)```/);
 		if (match?.[1]) {
 			try {
 				const parsed = JSON.parse(match[1]);
@@ -375,7 +353,6 @@ function extractModelScores(
 	}
 	return null;
 }
-
 
 // ============================================================================
 // Sub-components
@@ -390,7 +367,16 @@ const ScoreBar: FC<{
 	animate?: boolean;
 	isEvaluating?: boolean;
 	isComplete?: boolean;
-}> = ({ label, value, colorClass, rationale, compact = false, animate = true, isEvaluating = false, isComplete = false }) => {
+}> = ({
+	label,
+	value,
+	colorClass,
+	rationale,
+	compact = false,
+	animate = true,
+	isEvaluating = false,
+	isComplete = false,
+}) => {
 	const barRef = useRef<HTMLDivElement>(null);
 	const [width, setWidth] = useState(animate ? 0 : value);
 
@@ -409,7 +395,7 @@ const ScoreBar: FC<{
 			<span
 				className={cn(
 					"text-muted-foreground shrink-0 capitalize flex items-center",
-					compact ? "text-[10px] w-16" : "text-xs w-20",
+					compact ? "text-[10px] w-16" : "text-xs w-20"
 				)}
 			>
 				{label}
@@ -431,24 +417,18 @@ const ScoreBar: FC<{
 				)}
 			</span>
 			<div
-				className={cn(
-					"flex-1 rounded-full bg-muted/50 overflow-hidden",
-					compact ? "h-1.5" : "h-2",
-				)}
+				className={cn("flex-1 rounded-full bg-muted/50 overflow-hidden", compact ? "h-1.5" : "h-2")}
 			>
 				<div
 					ref={barRef}
-					className={cn(
-						"h-full rounded-full transition-all duration-1000 ease-out",
-						colorClass,
-					)}
+					className={cn("h-full rounded-full transition-all duration-1000 ease-out", colorClass)}
 					style={{ width: `${width}%` }}
 				/>
 			</div>
 			<span
 				className={cn(
 					"text-muted-foreground tabular-nums shrink-0",
-					compact ? "text-[10px] w-7" : "text-xs w-8",
+					compact ? "text-[10px] w-7" : "text-xs w-8"
 				)}
 			>
 				{value}%
@@ -458,26 +438,20 @@ const ScoreBar: FC<{
 				<LoaderCircleIcon
 					className={cn(
 						"shrink-0 animate-spin text-muted-foreground/60",
-						compact ? "size-2.5" : "size-3",
+						compact ? "size-2.5" : "size-3"
 					)}
 				/>
 			)}
 			{isComplete && (
 				<CheckCircle2Icon
-					className={cn(
-						"shrink-0 text-emerald-500",
-						compact ? "size-2.5" : "size-3",
-					)}
+					className={cn("shrink-0 text-emerald-500", compact ? "size-2.5" : "size-3")}
 				/>
 			)}
 		</div>
 	);
 };
 
-const ModelLogo: FC<{ toolName: string; size?: "sm" | "md" }> = ({
-	toolName,
-	size = "md",
-}) => {
+const ModelLogo: FC<{ toolName: string; size?: "sm" | "md" }> = ({ toolName, size = "md" }) => {
 	const [hasError, setHasError] = useState(false);
 	const logo = MODEL_LOGOS[toolName];
 	const fallback = (MODEL_DISPLAY[toolName] || "M").charAt(0);
@@ -488,7 +462,7 @@ const ModelLogo: FC<{ toolName: string; size?: "sm" | "md" }> = ({
 			<div
 				className={cn(
 					sizeClass,
-					"flex items-center justify-center rounded-lg border bg-muted text-xs font-semibold text-muted-foreground",
+					"flex items-center justify-center rounded-lg border bg-muted text-xs font-semibold text-muted-foreground"
 				)}
 			>
 				{fallback}
@@ -499,19 +473,14 @@ const ModelLogo: FC<{ toolName: string; size?: "sm" | "md" }> = ({
 		<img
 			src={logo}
 			alt={`${MODEL_DISPLAY[toolName]} logo`}
-			className={cn(
-				sizeClass,
-				"rounded-lg border bg-white object-contain p-0.5",
-			)}
+			className={cn(sizeClass, "rounded-lg border bg-white object-contain p-0.5")}
 			loading="lazy"
 			onError={() => setHasError(true)}
 		/>
 	);
 };
 
-const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({
-	currentPhase,
-}) => {
+const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({ currentPhase }) => {
 	const currentIdx = PHASE_LABELS.findIndex((p) => p.id === currentPhase);
 	return (
 		<div className="flex gap-1">
@@ -524,7 +493,7 @@ const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({
 							? "bg-primary text-primary-foreground"
 							: idx < currentIdx
 								? "bg-primary/10 text-primary"
-								: "bg-muted text-muted-foreground",
+								: "bg-muted text-muted-foreground"
 					)}
 				>
 					{label}
@@ -539,10 +508,7 @@ const PhaseIndicator: FC<{ currentPhase: ArenaPhase }> = ({
 
 // ── Metadata badges ─────────────────────────────────────────────────────────
 
-const MetaBadges: FC<{ meta: ModelMeta; compact?: boolean }> = ({
-	meta,
-	compact = false,
-}) => {
+const MetaBadges: FC<{ meta: ModelMeta; compact?: boolean }> = ({ meta, compact = false }) => {
 	const latency = formatLatency(meta.latencyMs);
 	const tokens = formatTokens(meta);
 	const co2 = estimateCo2(meta);
@@ -580,10 +546,7 @@ const MetaBadges: FC<{ meta: ModelMeta; compact?: boolean }> = ({
 				</Badge>
 			)}
 			{co2 && !compact && (
-				<Badge
-					variant="secondary"
-					className="gap-1 text-[10px]"
-				>
+				<Badge variant="secondary" className="gap-1 text-[10px]">
 					<ZapIcon className="size-2.5" />
 					{formatNum(co2.energyWh)} Wh
 				</Badge>
@@ -618,7 +581,7 @@ const PodDebugPanel: FC<{
 					size="sm"
 					className={cn(
 						"w-full justify-center text-muted-foreground/50 hover:text-muted-foreground",
-						compact ? "mt-0.5 text-[9px] h-5" : "mt-1 text-[10px] h-6",
+						compact ? "mt-0.5 text-[9px] h-5" : "mt-1 text-[10px] h-6"
 					)}
 				>
 					<span>{open ? "Dölj pod-info" : "Pod-info"}</span>
@@ -626,7 +589,7 @@ const PodDebugPanel: FC<{
 						className={cn(
 							"ml-1 transition-transform duration-200",
 							compact ? "size-2.5" : "size-3",
-							open && "rotate-180",
+							open && "rotate-180"
 						)}
 					/>
 				</Button>
@@ -636,9 +599,10 @@ const PodDebugPanel: FC<{
 					{entries.map((key) => {
 						const meta = podInfo[key];
 						if (!meta) return null;
-						const latencyStr = meta.latency_ms >= 1000
-							? `${(meta.latency_ms / 1000).toFixed(1)}s`
-							: `${meta.latency_ms}ms`;
+						const latencyStr =
+							meta.latency_ms >= 1000
+								? `${(meta.latency_ms / 1000).toFixed(1)}s`
+								: `${meta.latency_ms}ms`;
 						return (
 							<div
 								key={key}
@@ -678,7 +642,7 @@ const ExpandableResponse: FC<{
 					size="sm"
 					className={cn(
 						"w-full justify-center text-muted-foreground",
-						compact ? "mt-1 text-[10px] h-6" : "mt-2 text-xs",
+						compact ? "mt-1 text-[10px] h-6" : "mt-2 text-xs"
 					)}
 				>
 					<span>{open ? "Dölj svar" : "Visa svar"}</span>
@@ -686,7 +650,7 @@ const ExpandableResponse: FC<{
 						className={cn(
 							"ml-1 transition-transform duration-200",
 							compact ? "size-3" : "size-4",
-							open && "rotate-180",
+							open && "rotate-180"
 						)}
 					/>
 				</Button>
@@ -742,8 +706,7 @@ function useCriteriaFinalized(model: RankedModel) {
 	const domainLive = liveScores[model.domain];
 	const domainPods = livePods[model.domain] || model.criterionPodInfo;
 	const hasFinalFromResult =
-		Object.keys(model.criterionPodInfo).length === 4 ||
-		(model.hasRealScores && !domainLive);
+		Object.keys(model.criterionPodInfo).length === 4 || (model.hasRealScores && !domainLive);
 	const allLiveDone = domainLive
 		? domainLive.relevans != null &&
 			domainLive.djup != null &&
@@ -752,8 +715,7 @@ function useCriteriaFinalized(model: RankedModel) {
 		: false;
 	return {
 		criteriaFinalized: hasFinalFromResult || allLiveDone,
-		isEvaluating:
-			model.status === "complete" && !(hasFinalFromResult || allLiveDone),
+		isEvaluating: model.status === "complete" && !(hasFinalFromResult || allLiveDone),
 		domainLive,
 		domainPods,
 	};
@@ -761,12 +723,8 @@ function useCriteriaFinalized(model: RankedModel) {
 
 // ── Duel card (top-2 models) ────────────────────────────────────────────────
 
-const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
-	model,
-	delay = 0,
-}) => {
-	const { criteriaFinalized, isEvaluating, domainLive, domainPods } =
-		useCriteriaFinalized(model);
+const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({ model, delay = 0 }) => {
+	const { criteriaFinalized, isEvaluating, domainLive, domainPods } = useCriteriaFinalized(model);
 
 	if (model.status === "running") {
 		return (
@@ -799,13 +757,9 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 				<Card className="h-full border-destructive/20 bg-destructive/5">
 					<CardContent className="p-4">
 						<div className="flex items-center gap-2 mb-2">
-							<span className="text-lg font-bold text-muted-foreground">
-								#{model.rank}
-							</span>
+							<span className="text-lg font-bold text-muted-foreground">#{model.rank}</span>
 							<ModelLogo toolName={model.toolName} />
-							<span className="font-semibold text-sm">
-								{model.displayName}
-							</span>
+							<span className="font-semibold text-sm">{model.displayName}</span>
 						</div>
 						<p className="text-xs text-destructive">
 							{model.errorMessage || "Modellen svarade inte"}
@@ -827,19 +781,12 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 				<CardContent className="p-4">
 					{/* Header: rank + logo + name + source badge */}
 					<div className="flex items-center gap-2 mb-1">
-						<span className="text-lg font-bold text-primary">
-							#{model.rank}
-						</span>
+						<span className="text-lg font-bold text-primary">#{model.rank}</span>
 						<ModelLogo toolName={model.toolName} />
 						<div className="flex-1 min-w-0">
-							<span className="font-semibold text-sm">
-								{model.displayName}
-							</span>
+							<span className="font-semibold text-sm">{model.displayName}</span>
 							{model.meta.source && (
-								<Badge
-									variant="secondary"
-									className="ml-2 text-[9px] px-1.5 py-0"
-								>
+								<Badge variant="secondary" className="ml-2 text-[9px] px-1.5 py-0">
 									{model.meta.source}
 								</Badge>
 							)}
@@ -871,7 +818,9 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 							<LoaderCircleIcon className="size-3 animate-spin" />
 							<span>
 								Utvärderar{" "}
-								{SCORE_KEYS.filter((k) => domainLive?.[k] == null).map((k) => k).join(", ") || "..."}
+								{SCORE_KEYS.filter((k) => domainLive?.[k] == null)
+									.map((k) => k)
+									.join(", ") || "..."}
 							</span>
 						</div>
 					)}
@@ -887,9 +836,7 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 							</div>
 							<div className="flex items-center justify-between text-[10px]">
 								<span className="text-muted-foreground">Totalpoäng</span>
-								<span className="tabular-nums text-muted-foreground">
-									{model.totalScore}/400
-								</span>
+								<span className="tabular-nums text-muted-foreground">{model.totalScore}/400</span>
 							</div>
 						</>
 					)}
@@ -907,10 +854,7 @@ const DuelCard: FC<{ model: RankedModel; delay?: number }> = ({
 
 // ── VS duel layout ──────────────────────────────────────────────────────────
 
-const VsDuel: FC<{ first: RankedModel; second: RankedModel }> = ({
-	first,
-	second,
-}) => (
+const VsDuel: FC<{ first: RankedModel; second: RankedModel }> = ({ first, second }) => (
 	<div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-stretch">
 		<DuelCard model={first} delay={0.1} />
 		<div className="flex items-center justify-center">
@@ -933,8 +877,7 @@ const RunnerUpCard: FC<{
 	model: RankedModel;
 	delay?: number;
 }> = ({ model, delay = 0 }) => {
-	const { criteriaFinalized, isEvaluating, domainLive, domainPods } =
-		useCriteriaFinalized(model);
+	const { criteriaFinalized, isEvaluating, domainLive, domainPods } = useCriteriaFinalized(model);
 
 	if (model.status === "running") {
 		return (
@@ -961,13 +904,9 @@ const RunnerUpCard: FC<{
 				<Card className="border-destructive/20 bg-destructive/5 opacity-60">
 					<CardContent className="p-3">
 						<div className="flex items-center gap-1.5">
-							<span className="text-sm font-bold text-muted-foreground">
-								#{model.rank}
-							</span>
+							<span className="text-sm font-bold text-muted-foreground">#{model.rank}</span>
 							<ModelLogo toolName={model.toolName} size="sm" />
-							<span className="text-xs font-medium line-through">
-								{model.displayName}
-							</span>
+							<span className="text-xs font-medium line-through">{model.displayName}</span>
 						</div>
 					</CardContent>
 				</Card>
@@ -984,16 +923,11 @@ const RunnerUpCard: FC<{
 			<Card>
 				<CardContent className="p-3">
 					<div className="flex items-center gap-1.5 mb-1">
-						<span className="text-sm font-bold text-primary">
-							#{model.rank}
-						</span>
+						<span className="text-sm font-bold text-primary">#{model.rank}</span>
 						<ModelLogo toolName={model.toolName} size="sm" />
 						<span className="text-xs font-semibold">{model.displayName}</span>
 						{model.meta.source && (
-							<Badge
-								variant="secondary"
-								className="text-[8px] px-1 py-0 ml-auto"
-							>
+							<Badge variant="secondary" className="text-[8px] px-1 py-0 ml-auto">
 								{model.meta.source}
 							</Badge>
 						)}
@@ -1022,9 +956,7 @@ const RunnerUpCard: FC<{
 					) : (
 						<div className="mt-1.5 flex items-center justify-between text-[10px]">
 							<span className="text-muted-foreground">Viktat</span>
-							<span className="font-bold tabular-nums text-primary">
-								{model.weightedScore}/100
-							</span>
+							<span className="font-bold tabular-nums text-primary">{model.weightedScore}/100</span>
 						</div>
 					)}
 					<PodDebugPanel podInfo={domainPods} compact />
@@ -1075,9 +1007,7 @@ const ConvergenceSummary: FC<{
 												key={`c-${i}`}
 												className="text-xs text-foreground leading-relaxed flex gap-1.5"
 											>
-												<span className="text-emerald-500 shrink-0">
-													+
-												</span>
+												<span className="text-emerald-500 shrink-0">+</span>
 												{item}
 											</li>
 										))}
@@ -1097,20 +1027,13 @@ const ConvergenceSummary: FC<{
 												key={`d-${i}`}
 												className="rounded-lg border border-border/40 p-2 text-xs"
 											>
-												<p className="font-medium text-foreground mb-1">
-													{d.topic}
-												</p>
+												<p className="font-medium text-foreground mb-1">{d.topic}</p>
 												<div className="space-y-0.5 text-muted-foreground">
-													{Object.entries(d.sides).map(
-														([models, stance]) => (
-															<p key={models}>
-																<strong className="text-foreground">
-																	{models}
-																</strong>
-																: {stance}
-															</p>
-														),
-													)}
+													{Object.entries(d.sides).map(([models, stance]) => (
+														<p key={models}>
+															<strong className="text-foreground">{models}</strong>: {stance}
+														</p>
+													))}
 												</div>
 												{d.verdict && (
 													<p className="mt-1 text-[10px] text-primary font-medium">
@@ -1131,16 +1054,9 @@ const ConvergenceSummary: FC<{
 									</p>
 									<div className="space-y-1">
 										{analysis.unique_contributions.map((uc, i) => (
-											<div
-												key={`u-${i}`}
-												className="flex gap-2 text-xs"
-											>
-												<strong className="text-foreground shrink-0">
-													{uc.model}:
-												</strong>
-												<span className="text-muted-foreground">
-													{uc.insight}
-												</span>
+											<div key={`u-${i}`} className="flex gap-2 text-xs">
+												<strong className="text-foreground shrink-0">{uc.model}:</strong>
+												<span className="text-muted-foreground">{uc.insight}</span>
 											</div>
 										))}
 									</div>
@@ -1157,17 +1073,11 @@ const ConvergenceSummary: FC<{
 					) : (
 						/* Fallback when no structured analysis is available */
 						<p className="text-xs text-muted-foreground leading-relaxed">
-							<strong className="text-foreground">
-								{completed[0].displayName}
-							</strong>{" "}
-							(viktat: {completed[0].weightedScore}/100) och{" "}
-							<strong className="text-foreground">
-								{completed[1].displayName}
-							</strong>{" "}
-							(viktat: {completed[1].weightedScore}/100){" "}
-							toppar rankingen. Klicka{" "}
-							<em>Visa svar</em> på varje modell för att se fullständiga svar
-							och jämföra själv.
+							<strong className="text-foreground">{completed[0].displayName}</strong> (viktat:{" "}
+							{completed[0].weightedScore}/100) och{" "}
+							<strong className="text-foreground">{completed[1].displayName}</strong> (viktat:{" "}
+							{completed[1].weightedScore}/100) toppar rankingen. Klicka <em>Visa svar</em> på varje
+							modell för att se fullständiga svar och jämföra själv.
 						</p>
 					)}
 				</CardContent>
@@ -1183,7 +1093,7 @@ const ConvergenceSummary: FC<{
 export const SpotlightArenaLayout: FC = () => {
 	const messageContent = useAssistantState(({ message }) => message?.content);
 	const isStreaming = useAssistantState(
-		({ thread, message }) => thread.isRunning && (message?.isLast ?? false),
+		({ thread, message }) => thread.isRunning && (message?.isLast ?? false)
 	);
 
 	// Live criterion scores from SSE events (partial, before tool completion)
@@ -1198,7 +1108,7 @@ export const SpotlightArenaLayout: FC = () => {
 		return messageContent
 			.filter(
 				(part: { type: string; text?: string }) =>
-					part.type === "text" && typeof part.text === "string",
+					part.type === "text" && typeof part.text === "string"
 			)
 			.map((part: { text: string }) => part.text);
 	}, [messageContent]);
@@ -1207,18 +1117,12 @@ export const SpotlightArenaLayout: FC = () => {
 	// so they don't appear in the rendered markdown
 	const cleanTextParts = useMemo(
 		() => textParts.map(sanitizeSynthesisText).filter(Boolean),
-		[textParts],
+		[textParts]
 	);
 
-	const arenaAnalysis = useMemo(
-		() => extractArenaAnalysis(textParts),
-		[textParts],
-	);
+	const arenaAnalysis = useMemo(() => extractArenaAnalysis(textParts), [textParts]);
 
-	const externalModelScores = useMemo(
-		() => extractModelScores(textParts),
-		[textParts],
-	);
+	const externalModelScores = useMemo(() => extractModelScores(textParts), [textParts]);
 
 	// OPT-09: Split model parsing (stable) from score merging (changes
 	// up to 32× during SSE criterion_complete events) so that the
@@ -1229,8 +1133,7 @@ export const SpotlightArenaLayout: FC = () => {
 
 		const toolParts = messageContent.filter(
 			(part: { type: string; toolName?: string }) =>
-				part.type === "tool-call" &&
-				COMPARE_TOOL_NAMES.has(part.toolName ?? ""),
+				part.type === "tool-call" && COMPARE_TOOL_NAMES.has(part.toolName ?? "")
 		);
 
 		return toolParts.map(
@@ -1248,8 +1151,7 @@ export const SpotlightArenaLayout: FC = () => {
 				const domain = TOOL_TO_DOMAIN[part.toolName] || part.toolName;
 
 				// Extract criterion reasonings (motivations for each score)
-				const reasonings: ModelReasonings =
-					(result?.criterion_reasonings as ModelReasonings) || {};
+				const reasonings: ModelReasonings = (result?.criterion_reasonings as ModelReasonings) || {};
 
 				// Extract per-criterion pod info from tool result
 				const criterionPodInfo: Partial<Record<keyof ModelScore, CriterionPodMeta>> =
@@ -1258,25 +1160,22 @@ export const SpotlightArenaLayout: FC = () => {
 				return {
 					toolName: part.toolName,
 					displayName:
-						(result?.model_display_name as string) ||
-						MODEL_DISPLAY[part.toolName] ||
-						part.toolName,
+						(result?.model_display_name as string) || MODEL_DISPLAY[part.toolName] || part.toolName,
 					domain,
 					// criterion_scores baked into the tool result (final)
-					criterionScores: (result?.criterion_scores as ModelScore | undefined),
+					criterionScores: result?.criterion_scores as ModelScore | undefined,
 					reasonings,
 					criterionPodInfo,
 					meta: extractMeta(result, responseText, queryText),
 					summary: String(result?.summary || ""),
 					fullResponse: responseText,
 					status: (isRunning ? "running" : isError ? "error" : "complete") as
-						"running" | "complete" | "error",
-					errorMessage:
-						typeof result?.error === "string"
-							? (result.error as string)
-							: undefined,
+						| "running"
+						| "complete"
+						| "error",
+					errorMessage: typeof result?.error === "string" ? (result.error as string) : undefined,
 				};
-			},
+			}
 		);
 	}, [messageContent]);
 
@@ -1293,20 +1192,14 @@ export const SpotlightArenaLayout: FC = () => {
 			const hasAnyLive = !!liveScores && Object.keys(liveScores).length > 0;
 			const partialLiveScores: ModelScore | undefined = hasAnyLive
 				? {
-					relevans: liveScores.relevans ?? 0,
-					djup: liveScores.djup ?? 0,
-					klarhet: liveScores.klarhet ?? 0,
-					korrekthet: liveScores.korrekthet ?? 0,
-				}
+						relevans: liveScores.relevans ?? 0,
+						djup: liveScores.djup ?? 0,
+						klarhet: liveScores.klarhet ?? 0,
+						korrekthet: liveScores.korrekthet ?? 0,
+					}
 				: undefined;
-			const convergenceScores = externalModelScores?.[m.domain] as
-				| ModelScore
-				| undefined;
-			const scores =
-				m.criterionScores ||
-				partialLiveScores ||
-				convergenceScores ||
-				ZERO_SCORES;
+			const convergenceScores = externalModelScores?.[m.domain] as ModelScore | undefined;
+			const scores = m.criterionScores || partialLiveScores || convergenceScores || ZERO_SCORES;
 			const hasReal = !!(m.criterionScores || hasAnyLive || convergenceScores);
 
 			return {
@@ -1345,9 +1238,7 @@ export const SpotlightArenaLayout: FC = () => {
 	}, [parsedModels, externalModelScores, liveCriterionScores]);
 
 	// Track completed count for determining new arrivals
-	const completedCount = rankedModels.filter(
-		(m) => m.status === "complete",
-	).length;
+	const completedCount = rankedModels.filter((m) => m.status === "complete").length;
 	useEffect(() => {
 		prevCompletedRef.current = completedCount;
 	}, [completedCount]);
@@ -1402,22 +1293,13 @@ export const SpotlightArenaLayout: FC = () => {
 			{runnerUps.length > 0 && (
 				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 					{runnerUps.map((model, i) => (
-						<RunnerUpCard
-							key={model.toolName}
-							model={model}
-							delay={0.3 + i * 0.08}
-						/>
+						<RunnerUpCard key={model.toolName} model={model} delay={0.3 + i * 0.08} />
 					))}
 				</div>
 			)}
 
 			{/* Convergence summary */}
-			{phase === "rankar" && (
-				<ConvergenceSummary
-					models={rankedModels}
-					analysis={arenaAnalysis}
-				/>
-			)}
+			{phase === "rankar" && <ConvergenceSummary models={rankedModels} analysis={arenaAnalysis} />}
 		</div>
 	);
 };

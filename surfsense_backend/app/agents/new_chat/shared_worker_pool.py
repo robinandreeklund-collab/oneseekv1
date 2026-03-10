@@ -139,6 +139,7 @@ async def get_or_create_shared_worker_pool(
     llm: Any,
     dependencies: dict[str, Any],
     checkpointer: Checkpointer | None,
+    llm_gate_mode: bool = False,
 ) -> LazyWorkerPool:
     """Return a cached worker pool for the current runtime signature."""
     key = _build_worker_pool_key(
@@ -163,6 +164,7 @@ async def get_or_create_shared_worker_pool(
             llm=llm,
             dependencies=dependencies,
             checkpointer=checkpointer,
+            llm_gate_mode=llm_gate_mode,
         )
         _shared_pools[key] = pool
         _shared_pools.move_to_end(key)

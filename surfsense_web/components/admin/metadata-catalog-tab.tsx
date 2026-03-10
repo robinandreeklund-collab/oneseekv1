@@ -403,8 +403,8 @@ type AuditScopeOption = {
 	id: string;
 	label: string;
 	prefix?: string;
-	toolIds?: string[];  // explicit tool list for agent-based scopes
-	isAgent?: boolean;   // marks dynamically-generated agent entries
+	toolIds?: string[]; // explicit tool list for agent-based scopes
+	isAgent?: boolean; // marks dynamically-generated agent entries
 };
 
 const STATIC_AUDIT_SCOPE_OPTIONS: AuditScopeOption[] = [
@@ -942,9 +942,7 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 		const scopePrefixes = selectedOptions
 			.map((option) => option.prefix)
 			.filter((value): value is string => typeof value === "string" && value.length > 0);
-		const scopeExactIds = new Set(
-			selectedOptions.flatMap((option) => option.toolIds ?? [])
-		);
+		const scopeExactIds = new Set(selectedOptions.flatMap((option) => option.toolIds ?? []));
 		if (!scopePrefixes.length && scopeExactIds.size === 0) return [];
 		return allToolOptions.filter((toolId) => {
 			const normalizedToolId = toolId.toLocaleLowerCase();
@@ -1552,17 +1550,18 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 			});
 			await refetch();
 			const parts: string[] = [];
-			if (response.cleared_tool_overrides > 0) parts.push(`${response.cleared_tool_overrides} tool`);
-			if (response.cleared_intent_overrides > 0) parts.push(`${response.cleared_intent_overrides} intent`);
-			if (response.cleared_agent_overrides > 0) parts.push(`${response.cleared_agent_overrides} agent`);
+			if (response.cleared_tool_overrides > 0)
+				parts.push(`${response.cleared_tool_overrides} tool`);
+			if (response.cleared_intent_overrides > 0)
+				parts.push(`${response.cleared_intent_overrides} intent`);
+			if (response.cleared_agent_overrides > 0)
+				parts.push(`${response.cleared_agent_overrides} agent`);
 			if (response.cleared_lock_pairs > 0) parts.push(`${response.cleared_lock_pairs} lås`);
 			const detail = parts.length > 0 ? parts.join(", ") : "inga overrides";
 			toast.success(`Metadata återställd till standard. Rensade: ${detail}.`);
 		} catch (error) {
 			const message =
-				error instanceof Error && error.message
-					? error.message
-					: "Kunde inte återställa metadata.";
+				error instanceof Error && error.message ? error.message : "Kunde inte återställa metadata.";
 			toast.error(message);
 		} finally {
 			setIsResettingMetadata(false);
@@ -4199,9 +4198,9 @@ export function MetadataCatalogTab({ searchSpaceId }: { searchSpaceId?: number }
 					<AlertDialogHeader>
 						<AlertDialogTitle>Återställ all metadata?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Detta tar bort alla manuella overrides för tools, agents och intents,
-							rensar alla stabilitetslås och separationslås, och återställer metadata
-							till koddefinierade standardvärden. Historik bevaras.
+							Detta tar bort alla manuella overrides för tools, agents och intents, rensar alla
+							stabilitetslås och separationslås, och återställer metadata till koddefinierade
+							standardvärden. Historik bevaras.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

@@ -95,7 +95,8 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
 	status,
 }) => {
 	const [isCollapsed, setIsCollapsed] = useState(true);
-	const showSkolverketBranding = isSkolverketToolName(toolName) || isSkolverketResultPayload(result);
+	const showSkolverketBranding =
+		isSkolverketToolName(toolName) || isSkolverketResultPayload(result);
 
 	const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 	const cancelledReason =
