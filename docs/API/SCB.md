@@ -1,8 +1,8 @@
 # SCB API Integration — Fullständig Dokumentation
 
-> **Version:** 5.0
-> **Datum:** 2026-03-10
-> **Status:** Produktion — 7-verktygspipeline med JSON-stat2-dekoder & auto-complete (v5.0)
+> **Version:** 5.1
+> **Datum:** 2026-03-11
+> **Status:** Produktion — 7-verktygspipeline med JSON-stat2-dekoder, auto-complete & analytisk resonering (v5.1)
 > **Författare:** OneSeek-teamet
 
 ---
@@ -27,7 +27,10 @@
 16. [Evalueringsdata](#16-evalueringsdata)
 17. [Konfiguration och Environment](#17-konfiguration-och-environment)
 18. [7-verktygspipeline (v5.0)](#18-7-verktygspipeline-v50)
-19. [Framtida Arbete](#19-framtida-arbete)
+19. [Supervisor-integrationer för SCB-data (v5.1)](#19-supervisor-integrationer-för-scb-data-v51)
+20. [Implementeringslogg](#20-implementeringslogg)
+21. [Historik: Hybrid LLM-driven Variabelförståelse (v4.0)](#21-historik-hybrid-llm-driven-variabelförståelse-v40)
+22. [Framtida Arbete](#22-framtida-arbete)
 
 ---
 
@@ -143,7 +146,9 @@ surfsense_backend/
 │   └── agents/new_chat/
 │       ├── scb_tool_definitions.py      # 47 SCB-verktygsdefinitioner + scoring (KQ-3)
 │       ├── statistics_agent.py          # Agent-fabrik + tool-bygger
-│       ├── statistics_prompts.py        # System prompt med 7-verktygsflöde
+│       ├── statistics_prompts.py        # System prompt med 4-stegs analytiskt arbetsflöde (v5.1)
+│       ├── supervisor_memory.py         # Artifact read-back: _load_recent_artifact_contents() (v5.1)
+│       ├── supervisor_pipeline_prompts.py # Planner/decomposer med analytisk resonering (v5.1)
 │       ├── bigtool_store.py             # Bigtool store med SCB-verktygsregistrering
 │       ├── domain_fan_out.py            # Parallell exekvering per domän
 │       ├── supervisor_constants.py      # Routing-konstanter inkl. SCB
@@ -565,9 +570,15 @@ Poängsättning:
 
 De 7 LLM-verktygen (scb_search, scb_browse, etc.) registreras separat via `tools/registry.py` som `BUILTIN_TOOLS` och är alltid tillgängliga.
 
-### System Prompt (v5.0)
+### System Prompt (v5.1)
 
-Prompten i `statistics_prompts.py` dokumenterar alla 7 verktyg med arbetsflöden:
+Prompten i `statistics_prompts.py` dokumenterar alla 7 verktyg med arbetsflöden.
+
+**Viktig ändring i v5.1:** Arbetsflödet har utökats från 3 till 4 steg med ett
+inledande analyssteg som tvingar agenten att tänka på vilken DATA som faktiskt
+behövs innan den gör tool calls. Detta löser problemet med att LLM:en tolkade
+frågor för bokstavligt (t.ex. "vanligaste dödsorsaken" → letade efter en tabell
+med exakt det namnet istället för att hämta ALL dödsorsaksdata och rangordna).
 
 ```
 Du har 7 SCB-verktyg:
@@ -585,10 +596,16 @@ Data:
 - scb_validate(table_id, selection) — Torrkörning utan datahämtning
 - scb_fetch(table_id, selection, codelist?) — Hämta data som markdown-tabell
 
-Typiskt arbetsflöde (3 steg):
-1. scb_search("befolkning") → hitta tabell
-2. scb_inspect("TAB638")    → se variabler, defaults
-3. scb_fetch("TAB638", {"Region": ["0180"], "Tid": ["TOP(3)"]}) → data
+Arbetsflöde (4 steg):
+1. ANALYSERA — Tänk: "Vilken DATA behöver jag?" Översätt frågan till datakrav.
+   - "Vanligaste dödsorsaken?" → behöver ALLA dödsorsaker + antal, sedan rangordna
+   - "Nettoinvandring?"        → behöver BÅDE invandring OCH utvandring, sedan subtrahera
+   - "Störst befolkningsökning?" → behöver befolkning per region över tid, sedan jämföra
+2. HITTA — scb_search("befolkning") → hitta tabell
+3. INSPEKTERA — scb_inspect("TAB638") → se variabler, defaults
+4. HÄMTA — scb_fetch("TAB638", {"Region": ["0180"], "Tid": ["TOP(3)"]}) → data
+   VIKTIGT: Hämta TILLRÄCKLIGT BRED data för att kunna besvara frågan.
+   Om frågan frågar "vilken/störst/minst/vanligast" — hämta ALLA kategorier.
 ```
 
 ---
@@ -1179,6 +1196,47 @@ v4.0 hade 3 LLM-verktyg (`scb_search_and_inspect`, `scb_validate_selection`, `sc
 
 De 47 domänverktygen fungerar fortfarande som alternativa ingångar — de söker inom sitt domänområde och returnerar tabell-inspektioner som LLM:en sedan följer upp med `scb_fetch`.
 
+#### Analytiska arbetsflöden (v5.1)
+
+Många frågor kräver mer än bara datahämtning — de kräver **analys, beräkning eller rangordning** av hämtad data. Agenten har nu ett inledande analyssteg som översätter frågan till datakrav innan tool calls görs.
+
+**Rankningsfråga ("Vilken/störst/vanligast?"):**
+```
+Fråga: "Vanligaste dödsorsaken i Sverige?"
+  → Steg 1 (ANALYSERA): Jag behöver ALLA dödsorsaker + antal för att rangordna
+  → scb_hälsa("dödsorsaker per kategori")
+  → scb_validate med breda selektioner (alla orsaker)
+  → scb_fetch med Region=["00"], Tid=["TOP(1)"]  ← ALLA kategorier
+  → Agenten rangordnar resultatet → presenterar topplistan
+```
+
+**Beräkningsfråga ("Netto-X?"):**
+```
+Fråga: "Vad är nettoinvandringen?"
+  → Steg 1 (ANALYSERA): Netto = invandring - utvandring, behöver BÅDA
+  → scb_befolkning("invandring utvandring")
+  → scb_fetch med ContentsCode som inkluderar både invandring OCH utvandring
+  → Agenten beräknar netto = invandring - utvandring
+```
+
+**Jämförelsefråga ("Jämför X och Y"):**
+```
+Fråga: "Jämför arbetslösheten i Stockholm och Göteborg"
+  → Steg 1 (ANALYSERA): Behöver arbetslöshet per region för båda städerna
+  → scb_arbetsmarknad("arbetslöshet kommun")
+  → scb_fetch med Region=["0180","1480"], Tid=["TOP(5)"]
+  → Agenten jämför trenderna
+```
+
+**Trendfråga ("Hur har X utvecklats?"):**
+```
+Fråga: "Hur har bostadspriserna utvecklats senaste 10 åren?"
+  → Steg 1 (ANALYSERA): Behöver prisindex per år, tidsserie
+  → scb_boende_byggande("bostadspriser index")
+  → scb_fetch med Tid=["TOP(10)"]
+  → Agenten analyserar trenden (uppgång, nedgång, toppar)
+```
+
 ### Verktygs-API
 
 #### `scb_search(query, max_results?, past_days?)`
@@ -1332,7 +1390,90 @@ LLM:en kan använda PxWeb v2:s filteruttryck istället för att lista specifika 
 
 ---
 
-## 19. Implementeringslogg
+## 19. Supervisor-integrationer för SCB-data (v5.1)
+
+### Problemet: Artifact offload var write-only
+
+SCB-verktyg returnerar ofta stora datamängder (5-15KB markdown-tabeller). Supervisor-agentens
+`artifact_indexer` offloadar dessa till disk för att spara context window. **Men**: de
+nedströms-noder som behöver datan (synthesizer, critic, progressive_synthesizer) hade ingen
+mekanism att läsa tillbaka artifact-innehållet — de såg bara en 220-teckens sammanfattning.
+
+```
+Före v5.1:
+  scb_fetch → 10KB markdown-tabell
+      ↓
+  artifact_indexer → sparar till /tmp/oneseek-artifacts/...
+      ↓
+  manifest: {summary: "Folkmängd efter region... (220 tecken)", artifact_uri: "artifact://art-abc"}
+      ↓
+  synthesizer → ser BARA 220-teckens summary → HALLUCINERAR siffror
+  critic → ser INGET av artifact-datan → kan inte verifiera
+```
+
+### Lösning: Artifact content read-back
+
+Ny funktion i `supervisor_memory.py` som läser tillbaka offloadade artifacts:
+
+```python
+_read_artifact_content(entry)               # Läser en artifact från disk
+_load_recent_artifact_contents(manifest)     # Laddar N senaste artifacts med storleksgräns
+_format_artifact_contents_for_context(items) # Formaterar som <artifact_data>-XML för LLM
+```
+
+**Integrerad i tre noder:**
+
+| Nod | Fil | Max artifacts | Beskrivning |
+|-----|-----|--------------|-------------|
+| `synthesizer` | `nodes/synthesizer.py` | 3 st (4KB/st, 12KB total) | Full artifact-data injiceras i `synth_input` |
+| `critic` | `nodes/critic.py` | 2 st | Artifact-data för kvalitetsverifiering |
+| `progressive_synthesizer` | `nodes/progressive_synthesizer.py` | 2 st | Berikar draft med artifact-innehåll |
+
+```
+Efter v5.1:
+  scb_fetch → 10KB markdown-tabell
+      ↓
+  artifact_indexer → sparar till disk (som förut)
+      ↓
+  synthesizer → _load_recent_artifact_contents() → LÄSER tillbaka fullt innehåll
+      ↓
+  synthesizer skriver svar baserat på RIKTIG data
+  critic verifierar mot RIKTIG data
+```
+
+### Storleksgränser
+
+| Parameter | Värde | Syfte |
+|-----------|-------|-------|
+| `_ARTIFACT_READ_MAX_ITEMS` | 3 | Max antal artifacts att läsa per nod |
+| `_ARTIFACT_READ_MAX_CHARS_PER_ITEM` | 4 000 | Max tecken per artifact |
+| `_ARTIFACT_READ_MAX_TOTAL_CHARS` | 12 000 | Total gräns för context injection |
+
+Dessa gränser förhindrar att context window sprängs, samtidigt som tillräckligt
+med data injiceras för korrekta svar.
+
+### Supervisor-prompter för analytiska frågor
+
+Tre supervisor-prompter har förbättrats (i `supervisor_pipeline_prompts.py`):
+
+1. **Planner-prompt** — Ny "ANALYTISKA FRÅGOR"-sektion som lär planner att skapa multi-steg-planer:
+   - Ranking → "hämta ALL data, sedan analysera"
+   - Beräkning → "hämta komponent A + B (parallellt), sedan beräkna"
+   - Jämförelse → "hämta X + Y (parallellt), sedan sammanställ"
+   - **Aldrig** skapa en plan med bara "hämta data" när frågan kräver analys
+
+2. **Decomposer-prompt** — Ny instruktion för analytiska/beräkningsfrågor:
+   - "Tolka ALDRIG frågan så snävt att viktig data utelämnas"
+   - Om frågan frågar "vilken/störst/vanligast" → delfrågan ska uttryckligen be om ALL data
+   - Beräkningsfrågor → separata delfrågor per datakomponent
+
+3. **Statistics agent-prompt** — Nytt steg 0 "Analysera frågan":
+   - Översätter frågan till datakrav INNAN tool calls
+   - Explicita exempel: ranking, beräkning, jämförelse
+
+---
+
+## 20. Implementeringslogg
 
 Alla uppgifter från den ursprungliga analysen (P1, P2, P3) är nu implementerade.
 
@@ -1384,7 +1525,7 @@ Alla uppgifter från den ursprungliga analysen (P1, P2, P3) är nu implementerad
 
 ---
 
-## 20. Historik: Hybrid LLM-driven Variabelförståelse (v4.0)
+## 21. Historik: Hybrid LLM-driven Variabelförståelse (v4.0)
 
 > **Ersatt av:** v5.0 (7-verktygspipeline, se sektion 18)
 > **Implementerad:** 2026-03-10
@@ -1580,13 +1721,26 @@ QUL:s entitetsextraktion (`nexus/routing/qul.py`) utökad med:
 
 ---
 
-## 21. Framtida Arbete
+## 22. Framtida Arbete
+
+### Nyligen implementerat (v5.1)
+
+| Uppgift | Status | Beskrivning |
+|---------|--------|-------------|
+| Artifact content read-back | **KLAR** | Synthesizer, critic och progressive_synthesizer läser nu tillbaka offloadad artifact-data |
+| Analytisk resonering i statistics agent | **KLAR** | 4-stegs arbetsflöde med inledande analyssteg |
+| Planner multi-steg för analytiska frågor | **KLAR** | Planner skapar nu flerstegplaner för ranking/beräknings/jämförelsefrågor |
+| Decomposer-förbättringar | **KLAR** | Bred datahämtning för analytiska frågor, aldrig för snäv tolkning |
+
+### Kvarvarande
 
 | Prioritet | Uppgift | Beskrivning |
 |-----------|---------|-------------|
 | P1 | Caching av codelist-resultat | TTL-cache för kodlistor (ofta återanvända) |
+| P1 | Sandbox artifact-läsning | `_read_artifact_content()` stödjer bara lokal disk — sandbox-lagrade artifacts kan inte läsas tillbaka |
 | P2 | Dedikerat SCB Tool UI | Frontend-komponent med tabell-rendering istället för generisk ToolFallback |
 | P2 | Multi-tabell korrelation | Kombinera data från flera SCB-tabeller i en analys |
+| P2 | Cross-domain analytical plans | Planner ska kunna skapa planer som korsrefererar data från olika domäner (t.ex. väder + turism, demografi + ekonomi) |
 | P3 | Diagram-generering | Automatisk visualisering av tidsserier från scb_fetch |
 | P3 | CSV/Parquet export | Låt användaren ladda ner data i andra format |
 
