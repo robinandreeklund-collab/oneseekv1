@@ -20,21 +20,45 @@ TABELLKATALOG for det amnesomradet. Katalogen visar:
 - `scb_validate(table_id, selection)` — Torrkoring: validera utan datahamtning. KOR ALLTID FORST.
 - `scb_fetch(table_id, selection, codelist?)` — Hamta data som lasbar markdown-tabell
 
-## Arbetsflode (3 steg)
+## Arbetsflode (4 steg)
 
-1. **Anropa domanverktyget** — t.ex. `scb_befolkning(question="folkmangd Sverige 2024")`
+1. **Analysera fragan** — Tank: "Vilken DATA behover jag for att BESVARA fragan?"
+   Fragan sager sallan exakt vilken tabell eller variabel som behovs.
+   Oversatt fragan till datakrav:
+   - "Vanligaste dodsorsaken?" → behover ALLA dodsorsaker + antal, sedan rangordna
+   - "Hogst medellon?" → behover lon per yrke/sektor, sedan rangordna
+   - "Nettoinvandring?" → behover bade invandring OCH utvandring, sedan subtrahera
+   - "Storst befolkningsokning?" → behover befolkning per region over tid, sedan jamfora
+2. **Anropa domanverktyget** — t.ex. `scb_befolkning(question="folkmangd Sverige 2024")`
    → Du far en katalog med alla tabeller och deras matt.
-2. **Valj ratt tabell** fran katalogen baserat pa ContentsCode (matt).
+3. **Valj ratt tabell** fran katalogen baserat pa ContentsCode (matt).
    Bygg en selection-dict med variabelkoder.
-3. **Validera och hamta data:**
+   VIKTIGT: Hamta TILLRACKLIGT BRED data for att kunna besvara fragan.
+   Om fragan fragar "vilken/storst/minst/vanligast" — hamta ALLA kategorier
+   sa du kan rangordna, inte bara en enstaka kategori.
+4. **Validera och hamta data:**
    - `scb_validate(table_id='...', selection={{...}})` → kontrollera att selektionen ar korrekt
    - `scb_fetch(table_id='...', selection={{...}})` → hamta datan som markdown
 
-### Exempel
+### Exempel: Enkel fraga
 1. Domanverktyg: `scb_befolkning(question="befolkning Goteborg 2020-2024")`
    → Katalog visar tabell "BefolkningNy" med matt "Folkmangd", region inkl 1480=Goteborg
 2. Validate: `scb_validate(table_id='BefolkningNy', selection={{"Region": ["1480"], "Tid": ["RANGE(2020,2024)"]}})`
 3. Fetch: `scb_fetch(table_id='BefolkningNy', selection={{"Region": ["1480"], "Tid": ["RANGE(2020,2024)"]}})`
+
+### Exempel: Analytisk fraga
+Fraga: "Vilket lan har storst inflyttning?"
+1. Analysera: Jag behover inflyttningsdata for ALLA lan, inte bara ett.
+2. Domanverktyg: `scb_befolkning(question="inflyttning per lan")`
+3. Validate med Region=* (alla lan) eller codelist for lan: `scb_validate(table_id='...', selection={{"Region": ["*"], "Tid": ["TOP(1)"]}})`
+4. Fetch → Rangordna resultatet → Presentera topp-lanet
+
+### Exempel: Berakningsfraga
+Fraga: "Vad ar nettoinvandringen?"
+1. Analysera: Nettoinvandring = invandring - utvandring. Jag behover BADA.
+2. Domanverktyg for invandring + utvandring (eller tabell med bada matt)
+3. Hamta bada dataserierna
+4. Berakna netto = invandring - utvandring, presentera resultatet
 
 ## Viktiga regler
 
