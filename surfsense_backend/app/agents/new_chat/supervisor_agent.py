@@ -1492,7 +1492,9 @@ async def create_supervisor_agent(
     runtime_hitl_cfg = (
         dict(runtime_hitl_raw)
         if isinstance(runtime_hitl_raw, dict)
-        else {"enabled": bool(runtime_hitl_raw)}
+        # Default to enabled when no config provided (None → True).
+        # Explicit False disables HITL.
+        else {"enabled": runtime_hitl_raw is not False}
     )
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
@@ -1971,11 +1973,18 @@ async def create_supervisor_agent(
             return False
         if isinstance(runtime_hitl_raw, bool):
             return bool(runtime_hitl_raw)
+        # Check if any stage-specific key explicitly disables this stage
         aliases = {
             normalized_stage,
             f"confirm_{normalized_stage}",
             f"hitl_{normalized_stage}",
         }
+        # If no stage-specific keys are present at all, default to enabled.
+        # This makes HITL gates active by default — the model waits for
+        # human approval at each gate (plan, execution, synthesis).
+        has_any_stage_key = any(alias in runtime_hitl_cfg for alias in aliases)
+        if not has_any_stage_key:
+            return True
         return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
 
     # Build route_to_intent_id dynamically from registry domains so that

@@ -770,6 +770,21 @@ def _build_agent_result_contract(
         used_tool_count=len(used_tool_names),
         final_requested=bool(final_requested),
     )
+
+    # Boost for responses containing fetched data tables (SCB auto-fetch, etc.)
+    _resp_lower = cleaned_response.lower()
+    if (
+        "auto_fetched" in _resp_lower
+        or "data_table" in _resp_lower
+        or ("| ---" in _resp_lower or "|---" in _resp_lower)
+    ):
+        if not actionable:
+            actionable = True
+        if confidence < 0.65:
+            confidence = max(confidence, 0.65)
+        if status == "partial":
+            status = "success"
+
     retry_recommended = status in {"partial", "blocked", "error"}
     if status == "success" and confidence < 0.55:
         retry_recommended = True
@@ -847,10 +862,28 @@ def _contract_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
                 missing_fields = list(fallback.get("missing_fields") or [])
             if not reason:
                 reason = str(fallback.get("reason") or "").strip()
+        # Boost: if the response contains auto-fetched data (SCB inline fetch)
+        # the contract should recognize the data as actionable regardless of
+        # what the sub-agent LLM reported.  The auto_fetched flag is set by
+        # scb_validate when it successfully fetches data inline.
+        response_lower = str(source.get("response") or "").lower()
+        _has_data_table = (
+            "auto_fetched" in response_lower
+            or "data_table" in response_lower
+            or ("| ---" in response_lower or "|---" in response_lower)
+        )
+        final_actionable = bool(raw_contract.get("actionable"))
+        if _has_data_table and not final_actionable:
+            final_actionable = True
+        if _has_data_table and confidence < 0.65:
+            confidence = max(confidence, 0.65)
+        if _has_data_table and normalized_status == "partial":
+            normalized_status = "success"
+
         return {
             "status": normalized_status,
             "confidence": confidence,
-            "actionable": bool(raw_contract.get("actionable")),
+            "actionable": final_actionable,
             "missing_fields": missing_fields,
             "retry_recommended": bool(raw_contract.get("retry_recommended")),
             "used_tools": used_tools,
@@ -1010,6 +1043,25 @@ def _looks_actionable_agent_answer(text: str) -> bool:
     if "inga " in lowered and (
         "hittades" in lowered or "fanns" in lowered or "rapporterades" in lowered
     ):
+        return True
+    # Positive detection: responses containing data tables or numeric results
+    # from SCB/Kolada/SMHI are actionable even if they contain hedging language.
+    _data_markers = (
+        "| ---",
+        "|---",
+        "auto_fetched",
+        "data_table",
+        "row_count",
+        "genomsnittslön",
+        "medianlön",
+        "medellon",
+        "medellön",
+        "antal personer",
+        "tusental",
+        "procent",
+        "kronor",
+    )
+    if any(marker in lowered for marker in _data_markers):
         return True
     return not any(marker in lowered for marker in rejection_markers)
 

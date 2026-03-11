@@ -472,6 +472,34 @@ _ALIASES: dict[str, str] = {
     "stockholms län": "01",
     "uppsala lan": "03",
     "uppsala län": "03",
+    # Disambiguate common short forms that might match multiple municipalities
+    "boras": "1490",
+    "borås": "1490",
+    "boras kommun": "1490",
+    "malmo": "1280",
+    "malmö": "1280",
+    "helsingborg": "1283",
+    "norrkoping": "0581",
+    "norrköping": "0581",
+    "linkoping": "0580",
+    "linköping": "0580",
+    "vasteras": "1980",
+    "västerås": "1980",
+    "sundsvall": "2281",
+    "lulea": "2580",
+    "luleå": "2580",
+    "umea": "2480",
+    "umeå": "2480",
+    "gavle": "2180",
+    "gävle": "2180",
+    "kalmar": "0880",
+    "karlstad": "1780",
+    "vaxjo": "0780",
+    "växjö": "0780",
+    "halmstad": "1380",
+    "trollhattan": "1488",
+    "trollhättan": "1488",
+    "uddevalla": "1485",
 }
 
 
@@ -513,15 +541,25 @@ def find_region_fuzzy(query: str) -> list[ScbRegion]:
         return [region]
 
     # 3. Substring / prefix matching
-    matches: list[ScbRegion] = []
+    exact_prefix: list[ScbRegion] = []
+    substring_matches: list[ScbRegion] = []
     for norm_name, region in _BY_NORMALIZED.items():
-        if query_norm in norm_name or norm_name.startswith(query_norm):
-            matches.append(region)
+        if norm_name.startswith(query_norm):
+            exact_prefix.append(region)
+        elif query_norm in norm_name:
+            substring_matches.append(region)
 
-    # Sort: municipalities first (more specific), then counties
+    # Sort: prioritize shorter names (closer match), then municipalities first
     type_order = {"municipality": 0, "county": 1, "country": 2}
-    matches.sort(key=lambda r: (type_order.get(r.type, 3), r.name))
 
+    def _sort_key(r: ScbRegion) -> tuple[int, int, str]:
+        return (type_order.get(r.type, 3), len(r.name), r.name)
+
+    exact_prefix.sort(key=_sort_key)
+    substring_matches.sort(key=_sort_key)
+
+    # Prefix matches first (more specific), then substring matches
+    matches = exact_prefix + substring_matches
     return matches[:10]
 
 

@@ -355,6 +355,11 @@ def create_scb_search_tool(scb_service: ScbService | None = None):
 
         Use Swedish search terms for best results (e.g. "befolkning", "arbetslöshet").
 
+        IMPORTANT: SCB often has multiple table versions covering different time periods.
+        If you need recent data (e.g. "senaste åren"), inspect the table first with
+        scb_inspect() to check the time range BEFORE fetching. If the table's time range
+        doesn't cover the requested period, search for a newer table instead of retrying.
+
         Args:
             query: Search terms in Swedish.
             max_results: Maximum number of results (default 15).
@@ -661,6 +666,36 @@ def create_scb_inspect_tool(scb_service: ScbService | None = None):
             # Default selection
             if default_selection:
                 result["default_selection"] = default_selection
+
+            # Add explicit time range info for LLM decision-making
+            for var in variables:
+                vcode = str(var.get("code") or "")
+                vlabel = str(var.get("text") or "")
+                if _is_time_variable(vcode, vlabel):
+                    time_values = [
+                        str(v) for v in (var.get("values") or []) if v is not None
+                    ]
+                    if time_values:
+                        result["time_range"] = {
+                            "first": time_values[0],
+                            "last": time_values[-1],
+                            "count": len(time_values),
+                        }
+                        # Warn if the table doesn't cover recent years
+                        import re as _re
+                        last_year_match = _re.search(r"(20\d{2})", time_values[-1])
+                        if last_year_match:
+                            last_year = int(last_year_match.group(1))
+                            from datetime import date as _date
+                            current_year = _date.today().year
+                            if last_year < current_year - 2:
+                                result["time_warning"] = (
+                                    f"OBS: Denna tabell slutar {time_values[-1]} "
+                                    f"(senaste data {last_year}). "
+                                    f"Om du behover nyare data (t.ex. {current_year - 1}-{current_year}), "
+                                    f"sok efter en nyare tabell med scb_search()."
+                                )
+                    break
 
             result["auto_complete_note"] = (
                 "Variables marked eliminable=true can be OMITTED from your selection — "
@@ -990,6 +1025,10 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
         Missing eliminable variables are auto-filled with their defaults.
         Supports v2 expressions: TOP(n), FROM(x), RANGE(x,y), *.
 
+        IMPORTANT: If you get time range errors (e.g. "Value '2024' not found"),
+        do NOT retry with the same table. The table does not cover that period.
+        Instead, use scb_search() to find a newer table with the correct time range.
+
         Args:
             table_id: The SCB table ID.
             selection: Dict mapping variable code to value codes.
@@ -1224,13 +1263,46 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     )
                     errors = []  # Clear errors — we've handled them
                 else:
-                    result = {
+                    result: dict[str, Any] = {
                         "status": "invalid",
                         "table_id": table_id,
                         "errors": errors,
                         "warnings": warnings,
                         "resolved_so_far": resolved_selection,
                     }
+                    # If there are Tid errors, add explicit guidance about
+                    # the table's time range and suggest searching for newer tables.
+                    if tid_errors and tid_code:
+                        tid_var = var_by_code.get(tid_code)
+                        if tid_var:
+                            all_tid = [
+                                str(v) for v in (tid_var.get("values") or [])
+                            ]
+                            if all_tid:
+                                result["table_time_range"] = {
+                                    "first": all_tid[0],
+                                    "last": all_tid[-1],
+                                }
+                                import re as _re
+                                last_match = _re.search(r"(20\d{2})", all_tid[-1])
+                                requested_years = []
+                                for te in tid_errors:
+                                    yr_match = _re.search(
+                                        r"(20\d{2})", str(te.get("value", ""))
+                                    )
+                                    if yr_match:
+                                        requested_years.append(int(yr_match.group(1)))
+                                if last_match and requested_years:
+                                    table_last = int(last_match.group(1))
+                                    needed = max(requested_years)
+                                    if needed > table_last:
+                                        result["action_required"] = (
+                                            f"Denna tabell ({table_id}) slutar "
+                                            f"{all_tid[-1]} och täcker INTE "
+                                            f"{needed}. Du MÅSTE söka efter en "
+                                            f"nyare tabell med scb_search(). "
+                                            f"Upprepa INTE samma tabell."
+                                        )
                     return json.dumps(result, ensure_ascii=False)
 
             # Auto-complete missing variables
