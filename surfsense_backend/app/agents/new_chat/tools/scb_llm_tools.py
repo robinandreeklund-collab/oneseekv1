@@ -1158,15 +1158,14 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     )
 
             if errors:
-                return json.dumps(
-                    {
-                        "status": "invalid",
-                        "errors": errors,
-                        "warnings": warnings,
-                        "resolved_so_far": resolved_selection,
-                    },
-                    ensure_ascii=False,
-                )
+                result = {
+                    "status": "invalid",
+                    "table_id": table_id,
+                    "errors": errors,
+                    "warnings": warnings,
+                    "resolved_so_far": resolved_selection,
+                }
+                return json.dumps(result, ensure_ascii=False)
 
             # Auto-complete missing variables
             auto_completed, auto_log = service.auto_complete_selection(

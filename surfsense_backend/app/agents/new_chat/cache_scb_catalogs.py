@@ -399,6 +399,10 @@ def format_catalog_for_prompt(
     lines.append(f"## Tabellkatalog: {catalog.domain_name}")
     lines.append(f"Domänväg: {catalog.base_path}")
     lines.append(f"Antal tabeller: {len(catalog.tables)}")
+    lines.append(
+        "OBS: Använd TAB-koderna nedan (t.ex. TAB2910) som table_id i "
+        "scb_validate/scb_fetch — INTE domänvägen."
+    )
     lines.append("")
 
     for table in catalog.tables:
