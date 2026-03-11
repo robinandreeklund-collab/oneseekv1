@@ -1002,6 +1002,19 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
         table_id = (table_id or "").strip()
         if not table_id:
             return json.dumps({"error": "table_id is required."})
+        # Auto-parse selection from JSON string — the text-format tool call
+        # coercion sometimes passes dicts as strings when the LLM emits
+        # slightly malformed JSON in <parameter> XML blocks.
+        if isinstance(selection, str):
+            sel_str = selection.strip()
+            # Try to fix common malformation: trailing }] → }
+            for suffix in ("}]", "} ]"):
+                if sel_str.endswith(suffix) and not sel_str.startswith("["):
+                    sel_str = sel_str[: -len(suffix)] + "}"
+            try:
+                selection = json.loads(sel_str)
+            except (json.JSONDecodeError, ValueError):
+                pass
         if not selection or not isinstance(selection, dict):
             return json.dumps(
                 {
@@ -1374,6 +1387,16 @@ def create_scb_fetch_tool(
         table_id = (table_id or "").strip()
         if not table_id:
             return json.dumps({"error": "table_id is required."})
+        # Auto-parse selection from JSON string (same fix as in scb_validate)
+        if isinstance(selection, str):
+            sel_str = selection.strip()
+            for suffix in ("}]", "} ]"):
+                if sel_str.endswith(suffix) and not sel_str.startswith("["):
+                    sel_str = sel_str[: -len(suffix)] + "}"
+            try:
+                selection = json.loads(sel_str)
+            except (json.JSONDecodeError, ValueError):
+                pass
         if not selection or not isinstance(selection, dict):
             return json.dumps(
                 {
