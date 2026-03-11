@@ -16,7 +16,9 @@ from app.agents.new_chat.cache_scb_catalogs import (
     get_domain_catalog,
     resolve_regions_for_prompt,
 )
-from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
+# NOTE: NormalizingChatWrapper import is lazy (inside function) to break circular import:
+# supervisor_constants → tools → registry → statistics_agent → nodes → critic
+# → supervisor_memory → supervisor_constants
 from app.agents.new_chat.scb_tool_definitions import (
     SCB_TOOL_DEFINITIONS,
     ScbToolDefinition,
@@ -501,6 +503,8 @@ def create_statistics_agent(
     async def _aretrieve_with_pipeline(query: str, limit: int = 2) -> list[str]:
         domain_tools = await aretrieve_scb_tools(query, limit=limit)
         return domain_tools + pipeline_tools
+
+    from app.agents.new_chat.nodes.executor import NormalizingChatWrapper
 
     graph = create_bigtool_agent(
         NormalizingChatWrapper(llm),
