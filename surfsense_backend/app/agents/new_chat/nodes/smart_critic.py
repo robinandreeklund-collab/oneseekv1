@@ -261,6 +261,36 @@ def build_smart_critic_node(
                     ],
                 }
 
+        # Guard: when all contracts have low confidence and none succeeded,
+        # do NOT delegate to the fallback LLM critic — it cannot see the
+        # confidence scores and may rubber-stamp bad data.  Instead, force
+        # a retry if we still have budget.
+        if (
+            not has_success
+            and avg_confidence < 0.5
+            and replan_count < max_replan_attempts
+        ):
+            logger.info(
+                "smart_critic: low confidence (%.2f) with no success, "
+                "forcing needs_more (replan_count=%d)",
+                avg_confidence,
+                replan_count,
+            )
+            await _record_feedback(False)
+            return {
+                "critic_decision": "needs_more",
+                "targeted_missing_info": missing_info[:6] if missing_info else [],
+                "replan_count": replan_count + 1,
+                "orchestration_phase": "resolve_tools",
+                "critic_history": critic_history + [
+                    {
+                        "decision": "needs_more",
+                        "reason": f"low_confidence_{avg_confidence:.2f}",
+                        "step": total_steps,
+                    }
+                ],
+            }
+
         fallback_updates = await fallback_critic_node(
             state,
             config=config,
