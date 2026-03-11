@@ -1497,6 +1497,8 @@ async def create_supervisor_agent(
         # Explicit False disables HITL.
         else {"enabled": runtime_hitl_raw is not False}
     )
+    print(f"[HITL-DEBUG] runtime_hitl_raw={runtime_hitl_raw!r}")
+    print(f"[HITL-DEBUG] runtime_hitl_cfg={runtime_hitl_cfg!r}")
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
     def _coerce_bool(value: Any, *, default: bool = False) -> bool:
@@ -1968,11 +1970,14 @@ async def create_supervisor_agent(
 
     def _hitl_enabled(stage: str) -> bool:
         if not bool(runtime_hitl_cfg.get("enabled", True)):
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → False (enabled=False)")
             return False
         normalized_stage = str(stage or "").strip().lower()
         if not normalized_stage:
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → False (empty stage)")
             return False
         if isinstance(runtime_hitl_raw, bool):
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → {runtime_hitl_raw} (raw is bool)")
             return bool(runtime_hitl_raw)
         # Check if any stage-specific key explicitly disables this stage
         aliases = {
@@ -1985,8 +1990,11 @@ async def create_supervisor_agent(
         # human approval at each gate (plan, execution, synthesis).
         has_any_stage_key = any(alias in runtime_hitl_cfg for alias in aliases)
         if not has_any_stage_key:
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → True (no stage keys)")
             return True
-        return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
+        result = any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
+        print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → {result} (stage keys found: {aliases & set(runtime_hitl_cfg.keys())})")
+        return result
 
     # Build route_to_intent_id dynamically from registry domains so that
     # domain-specific intent_ids (väder-och-klimat, trafik-och-transport …)
