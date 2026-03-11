@@ -106,7 +106,12 @@ _GENDER_ALIASES: dict[str, str] = {
     "alla": "TOT",
     "both": "TOT",
     "båda": "TOT",
+    # SCB uses "1+2" for totalt on some tables — fall through to fuzzy match
 }
+
+# Some tables use "1+2" instead of "TOT" for totalt.  If the gender alias
+# resolves to "TOT" but "TOT" is not in the valid set, try "1+2" as well.
+_GENDER_TOTALT_FALLBACKS = ["TOT", "1+2", "T"]
 
 _MAX_VALUES_TO_SHOW = 25
 
@@ -198,21 +203,76 @@ def _estimate_v2_expression_size(expr: str, total_values: int) -> int:
     return min(total_values, 20)
 
 
+def _auto_correct_values(
+    var_code: str,
+    var_info: dict[str, Any],
+    values: list[str],
+) -> tuple[list[str], list[str]]:
+    """Auto-correct common value mistakes for a single variable.
+
+    Returns ``(corrected_values, warnings)``.
+    """
+    valid_values = {str(v) for v in (var_info.get("values") or [])}
+    if not valid_values:
+        return values, []
+
+    corrected: list[str] = []
+    warnings: list[str] = []
+
+    is_gender = _is_gender_variable(var_code, str(var_info.get("text", "")))
+
+    for val in values:
+        val_str = str(val).strip()
+        # v2 expressions pass through
+        if _is_v2_expression(val_str):
+            corrected.append(val_str)
+            continue
+        # Direct match
+        if val_str in valid_values:
+            corrected.append(val_str)
+            continue
+        # Gender alias resolution
+        if is_gender:
+            alias = _GENDER_ALIASES.get(val_str.lower())
+            if alias and alias in valid_values:
+                corrected.append(alias)
+                warnings.append(f"'{val_str}' → '{alias}'")
+                continue
+            # "TOTAL"/"totalt" fallback chain
+            if alias == "TOT":
+                found = False
+                for fb in _GENDER_TOTALT_FALLBACKS:
+                    if fb in valid_values:
+                        corrected.append(fb)
+                        warnings.append(f"'{val_str}' → '{fb}'")
+                        found = True
+                        break
+                if found:
+                    continue
+        # Fuzzy match not attempted in fetch — just pass through and let SCB
+        # return the error (keeps fetch fast and predictable)
+        corrected.append(val_str)
+
+    return corrected, warnings
+
+
 def _resolve_and_clean_selection(
     selection: dict[str, list[str]],
     variables: list[dict[str, Any]],
 ) -> tuple[dict[str, list[str]], list[str]]:
-    """Resolve variable aliases and strip unknown variable keys.
+    """Resolve variable aliases, strip unknown keys, auto-correct values.
 
     Returns ``(clean_selection, warnings)`` where clean_selection only contains
     keys that map to actual variable codes in *variables*, and warnings list
     any keys that were removed or aliased.
     """
-    var_by_code: dict[str, str] = {}
+    var_by_code: dict[str, dict[str, Any]] = {}
+    var_code_map: dict[str, str] = {}
     var_by_normalized: dict[str, str] = {}
     for var in variables:
         code = str(var.get("code") or "")
-        var_by_code[code] = code
+        var_by_code[code] = var
+        var_code_map[code] = code
         var_by_normalized[normalize_diacritik(code)] = code
         text = str(var.get("text") or "")
         if text:
@@ -220,7 +280,7 @@ def _resolve_and_clean_selection(
 
     # Add well-known aliases
     for alias, real_code in _VARIABLE_ALIASES.items():
-        if real_code in var_by_code:
+        if real_code in var_code_map:
             norm_alias = normalize_diacritik(alias)
             if norm_alias not in var_by_normalized:
                 var_by_normalized[norm_alias] = real_code
@@ -229,25 +289,34 @@ def _resolve_and_clean_selection(
     warnings: list[str] = []
 
     for sel_key, sel_values in selection.items():
+        resolved_code: str | None = None
+
         # Direct match
-        if sel_key in var_by_code:
-            clean[sel_key] = sel_values
+        if sel_key in var_code_map:
+            resolved_code = sel_key
+        else:
+            # Alias / normalized match
+            norm_key = normalize_diacritik(sel_key)
+            if norm_key in var_by_normalized:
+                resolved_code = var_by_normalized[norm_key]
+                warnings.append(f"Variable alias: '{sel_key}' → '{resolved_code}'")
+
+        if resolved_code is None:
+            # Unknown key — strip it
+            valid_codes = [str(v.get("code", "")) for v in variables]
+            warnings.append(
+                f"Stripped unknown variable '{sel_key}'. "
+                f"Valid variables: {', '.join(valid_codes)}"
+            )
             continue
 
-        # Alias / normalized match
-        norm_key = normalize_diacritik(sel_key)
-        if norm_key in var_by_normalized:
-            real_code = var_by_normalized[norm_key]
-            clean[real_code] = sel_values
-            warnings.append(f"Variable alias: '{sel_key}' → '{real_code}'")
-            continue
-
-        # Unknown key — strip it
-        valid_codes = [str(v.get("code", "")) for v in variables]
-        warnings.append(
-            f"Stripped unknown variable '{sel_key}'. "
-            f"Valid variables: {', '.join(valid_codes)}"
+        # Auto-correct values
+        var_info = var_by_code.get(resolved_code, {})
+        corrected_vals, val_warnings = _auto_correct_values(
+            resolved_code, var_info, sel_values
         )
+        clean[resolved_code] = corrected_vals
+        warnings.extend(val_warnings)
 
     return clean, warnings
 
@@ -989,15 +1058,19 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     var_info = var_by_normalized.get(norm_code)
 
                 if not var_info:
-                    suggestions = _find_closest_variables(
-                        sel_code, [str(v.get("code", "")) for v in variables]
+                    # Auto-drop unknown variables with a warning instead of
+                    # hard-erroring.  The LLM often hallucinates variables
+                    # (e.g. "Region" on tables that lack it).  Dropping them
+                    # lets the rest of the selection validate and succeed.
+                    valid_codes = [str(v.get("code", "")) for v in variables]
+                    warnings.append(
+                        f"Variable '{sel_code}' not found — dropped. "
+                        f"Available: {', '.join(valid_codes)}"
                     )
-                    errors.append(
-                        {
-                            "variable": sel_code,
-                            "error": f"Variable '{sel_code}' not found.",
-                            "suggestions": suggestions,
-                        }
+                    logger.info(
+                        "scb_validate: dropping unknown variable '%s' (available: %s)",
+                        sel_code,
+                        valid_codes,
                     )
                     continue
 
@@ -1022,12 +1095,25 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                         resolved_values.append(val_str)
                         continue
 
-                    # Gender alias
+                    # Gender alias — with fallback chain for "totalt" variants
                     gender_alias = _GENDER_ALIASES.get(val_str.lower())
-                    if gender_alias and gender_alias in valid_set:
-                        resolved_values.append(gender_alias)
-                        warnings.append(f"'{val_str}' → '{gender_alias}'")
-                        continue
+                    if gender_alias:
+                        # Try the direct alias first, then fallbacks
+                        if gender_alias in valid_set:
+                            resolved_values.append(gender_alias)
+                            warnings.append(f"'{val_str}' → '{gender_alias}'")
+                            continue
+                        # "TOTAL"/"totalt" → try "1+2", "T" etc.
+                        if gender_alias == "TOT":
+                            for fb in _GENDER_TOTALT_FALLBACKS:
+                                if fb in valid_set:
+                                    resolved_values.append(fb)
+                                    warnings.append(f"'{val_str}' → '{fb}'")
+                                    break
+                            else:
+                                pass  # fall through to fuzzy match
+                            if resolved_values and resolved_values[-1] in valid_set:
+                                continue
 
                     # Region resolution
                     if _is_region_variable(actual_code, str(var_info.get("text", ""))):

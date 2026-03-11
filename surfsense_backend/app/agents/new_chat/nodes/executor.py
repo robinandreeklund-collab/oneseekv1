@@ -1268,7 +1268,13 @@ class NormalizingChatWrapper:
             )
             summary_msgs = self._build_summary_messages(normalized)
             summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
-            return self._base_llm.invoke(summary_msgs, config)
+            response = self._base_llm.invoke(summary_msgs, config)
+            if isinstance(response, AIMessage):
+                response = _coerce_text_tool_calls(response)
+                # Force-summary must never carry tool_calls — strip them
+                if getattr(response, "tool_calls", None):
+                    response = response.model_copy(update={"tool_calls": []})
+            return response
         response = self._llm.invoke(normalized, config, **kwargs)
         if isinstance(response, AIMessage):
             response = _coerce_text_tool_calls(response)
@@ -1284,7 +1290,13 @@ class NormalizingChatWrapper:
             )
             summary_msgs = self._build_summary_messages(normalized)
             summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
-            return await self._base_llm.ainvoke(summary_msgs, config)
+            response = await self._base_llm.ainvoke(summary_msgs, config)
+            if isinstance(response, AIMessage):
+                response = _coerce_text_tool_calls(response)
+                # Force-summary must never carry tool_calls — strip them
+                if getattr(response, "tool_calls", None):
+                    response = response.model_copy(update={"tool_calls": []})
+            return response
         response = await self._llm.ainvoke(normalized, config, **kwargs)
         if isinstance(response, AIMessage):
             response = _coerce_text_tool_calls(response)
