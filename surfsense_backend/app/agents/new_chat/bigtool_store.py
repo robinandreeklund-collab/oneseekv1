@@ -34,11 +34,9 @@ from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.registry import (
-    build_tools,
-    build_tools_async,
-    get_default_enabled_tools,
-)
+# NOTE: tools.registry imports are lazy (inside functions) to break
+# circular import: tools/registry → statistics_agent → nodes → critic
+# → supervisor_memory → bigtool_store → tools/registry
 from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikanalys import TRAFIKANALYS_TOOL_DEFINITIONS
@@ -2364,6 +2362,12 @@ async def build_global_tool_registry(
     include_mcp_tools: bool = True,
     respect_lifecycle: bool = True,
 ) -> dict[str, BaseTool]:
+    from app.agents.new_chat.tools.registry import (
+        build_tools,
+        build_tools_async,
+        get_default_enabled_tools,
+    )
+
     enabled_tools = list(get_default_enabled_tools())
     runtime_hitl = dependencies.get("runtime_hitl")
     sandbox_tool_ids = (
