@@ -1173,14 +1173,52 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     )
 
             if errors:
-                result = {
-                    "status": "invalid",
-                    "table_id": table_id,
-                    "errors": errors,
-                    "warnings": warnings,
-                    "resolved_so_far": resolved_selection,
-                }
-                return json.dumps(result, ensure_ascii=False)
+                # --- Auto-correct: if the ONLY errors are in Tid (time period)
+                # and we still have at least 1 valid Tid value, drop the invalid
+                # ones and proceed as "valid".  This avoids the common failure
+                # pattern where the LLM asks for e.g. 2015-2024 but only
+                # 2020-2024 exist, gets "invalid", and then gives up.
+                tid_code = None
+                for v in variables:
+                    vtype = str(v.get("type", "") or v.get("role", "")).lower()
+                    if vtype == "time" or str(v.get("code", "")).lower() == "tid":
+                        tid_code = str(v.get("code", ""))
+                        break
+
+                non_tid_errors = [
+                    e for e in errors if e.get("variable") != tid_code
+                ]
+                tid_errors = [
+                    e for e in errors if e.get("variable") == tid_code
+                ]
+                has_valid_tid = bool(
+                    tid_code and resolved_selection.get(tid_code)
+                )
+
+                if tid_errors and not non_tid_errors and has_valid_tid:
+                    # All errors are Tid-only and we have valid Tid values —
+                    # auto-correct by keeping only the valid ones.
+                    dropped = [e["value"] for e in tid_errors]
+                    kept = resolved_selection[tid_code]
+                    warnings.append(
+                        f"Tid auto-corrected: dropped {dropped} "
+                        f"(not found), kept {kept}."
+                    )
+                    logger.info(
+                        "scb_validate: auto-corrected Tid for %s: "
+                        "dropped %s, kept %s",
+                        table_id, dropped, kept,
+                    )
+                    errors = []  # Clear errors — we've handled them
+                else:
+                    result = {
+                        "status": "invalid",
+                        "table_id": table_id,
+                        "errors": errors,
+                        "warnings": warnings,
+                        "resolved_so_far": resolved_selection,
+                    }
+                    return json.dumps(result, ensure_ascii=False)
 
             # Auto-complete missing variables
             auto_completed, auto_log = service.auto_complete_selection(
