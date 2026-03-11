@@ -220,6 +220,7 @@ from app.agents.new_chat.supervisor_state_utils import (
     _format_route_hint,
     _format_selected_agents_context,
     _format_subagent_handoffs_context,
+    _make_artifact_manifest_context_fn,
     _tool_call_name_index,
 )
 from app.agents.new_chat.supervisor_text_utils import (
@@ -5279,7 +5280,9 @@ async def create_supervisor_agent(
         format_selected_agents_context_fn=_format_selected_agents_context,
         format_resolved_tools_context_fn=_format_resolved_tools_context,
         format_subagent_handoffs_context_fn=_format_subagent_handoffs_context,
-        format_artifact_manifest_context_fn=_format_artifact_manifest_context,
+        format_artifact_manifest_context_fn=_make_artifact_manifest_context_fn(
+            sandbox_read_fn=_sandbox_read_fn,
+        ),
         format_cross_session_memory_context_fn=_format_cross_session_memory_context,
         format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
