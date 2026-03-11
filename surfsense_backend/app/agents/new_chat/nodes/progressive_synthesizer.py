@@ -4,6 +4,7 @@ from typing import Any, Callable
 from langchain_core.runnables import RunnableConfig
 
 from ..supervisor_memory import (
+    SandboxReadFn,
     _format_artifact_contents_for_context,
     _load_recent_artifact_contents,
 )
@@ -53,6 +54,7 @@ def _average_contract_confidence(state: dict[str, Any], *, limit: int = 3) -> fl
 def build_progressive_synthesizer_node(
     *,
     truncate_for_prompt_fn: Callable[[str, int], str],
+    sandbox_read_fn: SandboxReadFn | None = None,
 ):
     async def progressive_synthesizer_node(
         state: dict[str, Any],
@@ -85,6 +87,7 @@ def build_progressive_synthesizer_node(
         artifact_contents = _load_recent_artifact_contents(
             state.get("artifact_manifest"),
             max_items=2,
+            sandbox_read_fn=sandbox_read_fn,
         )
         if artifact_contents:
             artifact_context = _format_artifact_contents_for_context(artifact_contents)

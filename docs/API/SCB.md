@@ -1413,12 +1413,28 @@ Före v5.1:
 
 ### Lösning: Artifact content read-back
 
-Ny funktion i `supervisor_memory.py` som läser tillbaka offloadade artifacts:
+Ny funktion i `supervisor_memory.py` som läser tillbaka offloadade artifacts,
+med stöd för **både lokal disk och sandbox-container** via `sandbox_read_fn` callback:
 
 ```python
-_read_artifact_content(entry)               # Läser en artifact från disk
-_load_recent_artifact_contents(manifest)     # Laddar N senaste artifacts med storleksgräns
-_format_artifact_contents_for_context(items) # Formaterar som <artifact_data>-XML för LLM
+_read_artifact_content(entry, sandbox_read_fn=None)  # Läser en artifact (lokal → sandbox fallback)
+_load_recent_artifact_contents(manifest, sandbox_read_fn=None)  # Laddar N senaste artifacts med storleksgräns
+_format_artifact_contents_for_context(items)  # Formaterar som <artifact_data>-XML för LLM
+```
+
+Supervisor-closuren skapar en `sandbox_read_fn` callback som binder `thread_id` och
+`runtime_hitl_cfg`, och skickar den till alla tre node-builders:
+
+```python
+# I supervisor closure (supervisor_agent.py):
+_sandbox_read_fn = None
+if sandbox_enabled:
+    def _sandbox_read_fn(path: str) -> str:
+        return sandbox_read_text_file(
+            thread_id=thread_id,
+            runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
+            path=path,
+        )
 ```
 
 **Integrerad i tre noder:**
@@ -1728,6 +1744,7 @@ QUL:s entitetsextraktion (`nexus/routing/qul.py`) utökad med:
 | Uppgift | Status | Beskrivning |
 |---------|--------|-------------|
 | Artifact content read-back | **KLAR** | Synthesizer, critic och progressive_synthesizer läser nu tillbaka offloadad artifact-data |
+| Sandbox artifact-läsning | **KLAR** | `sandbox_read_fn` callback från supervisor closure — stödjer både lokal och sandbox-lagrade artifacts |
 | Analytisk resonering i statistics agent | **KLAR** | 4-stegs arbetsflöde med inledande analyssteg |
 | Planner multi-steg för analytiska frågor | **KLAR** | Planner skapar nu flerstegplaner för ranking/beräknings/jämförelsefrågor |
 | Decomposer-förbättringar | **KLAR** | Bred datahämtning för analytiska frågor, aldrig för snäv tolkning |
@@ -1737,7 +1754,6 @@ QUL:s entitetsextraktion (`nexus/routing/qul.py`) utökad med:
 | Prioritet | Uppgift | Beskrivning |
 |-----------|---------|-------------|
 | P1 | Caching av codelist-resultat | TTL-cache för kodlistor (ofta återanvända) |
-| P1 | Sandbox artifact-läsning | `_read_artifact_content()` stödjer bara lokal disk — sandbox-lagrade artifacts kan inte läsas tillbaka |
 | P2 | Dedikerat SCB Tool UI | Frontend-komponent med tabell-rendering istället för generisk ToolFallback |
 | P2 | Multi-tabell korrelation | Kombinera data från flera SCB-tabeller i en analys |
 | P2 | Cross-domain analytical plans | Planner ska kunna skapa planer som korsrefererar data från olika domäner (t.ex. väder + turism, demografi + ekonomi) |

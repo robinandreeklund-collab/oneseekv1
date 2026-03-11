@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.agents.new_chat.bigtool_store import _normalize_text, _tokenize
 from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
@@ -20,6 +20,11 @@ from app.agents.new_chat.supervisor_text_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Type alias for sandbox read callback.
+# Signature: (path: str) -> str
+# Should be created by the supervisor closure binding thread_id and runtime_hitl.
+SandboxReadFn = Callable[[str], str]
 
 # Limits for artifact content injection into downstream nodes.
 _ARTIFACT_READ_MAX_ITEMS = 3
@@ -89,21 +94,46 @@ def _persist_artifact_content(
     return artifact_uri, str(local_path), "local"
 
 
-def _read_artifact_content(entry: dict[str, Any]) -> str | None:
-    """Read artifact content back from disk.
+def _read_artifact_content(
+    entry: dict[str, Any],
+    *,
+    sandbox_read_fn: SandboxReadFn | None = None,
+) -> str | None:
+    """Read artifact content back from disk or sandbox.
 
-    Returns the content string or ``None`` if it cannot be read (e.g. sandbox
-    path not locally accessible, deleted file, etc.).
+    Tries local filesystem first.  If the file is not locally accessible and
+    *sandbox_read_fn* is provided, falls back to reading via the sandbox
+    runtime (for artifacts stored in remote containers).
+
+    Returns the content string or ``None`` if it cannot be read.
     """
     artifact_path = str(entry.get("artifact_path") or "").strip()
     if not artifact_path:
         return None
+
+    # 1. Try local filesystem (works for storage_backend="local" and
+    #    for sandbox backends with mounted volumes).
     try:
         p = Path(artifact_path)
         if p.is_file():
             return p.read_text(encoding="utf-8")
     except Exception:
         pass
+
+    # 2. Try sandbox read for remote-stored artifacts.
+    storage_backend = str(entry.get("storage_backend") or "").strip().lower()
+    if storage_backend == "sandbox" and sandbox_read_fn is not None:
+        try:
+            content = sandbox_read_fn(artifact_path)
+            if content:
+                return content
+        except Exception:
+            logger.debug(
+                "sandbox read failed for artifact %s at %s",
+                entry.get("id", "?"),
+                artifact_path,
+            )
+
     return None
 
 
@@ -113,12 +143,16 @@ def _load_recent_artifact_contents(
     max_items: int = _ARTIFACT_READ_MAX_ITEMS,
     max_chars_per_item: int = _ARTIFACT_READ_MAX_CHARS_PER_ITEM,
     max_total_chars: int = _ARTIFACT_READ_MAX_TOTAL_CHARS,
+    sandbox_read_fn: SandboxReadFn | None = None,
 ) -> list[dict[str, str]]:
     """Load contents of the most recent artifacts from the manifest.
 
     Returns a list of ``{"tool": ..., "summary": ..., "content": ...}`` dicts
     for each artifact whose content could be read, newest first, subject to
     *max_items* / *max_total_chars* limits.
+
+    If *sandbox_read_fn* is provided it will be used as a fallback for artifacts
+    stored in a remote sandbox container (``storage_backend="sandbox"``).
     """
     if not manifest:
         return []
@@ -127,7 +161,7 @@ def _load_recent_artifact_contents(
     for entry in reversed(manifest):
         if not isinstance(entry, dict):
             continue
-        content = _read_artifact_content(entry)
+        content = _read_artifact_content(entry, sandbox_read_fn=sandbox_read_fn)
         if not content:
             continue
         # Truncate individual artifact content to limit

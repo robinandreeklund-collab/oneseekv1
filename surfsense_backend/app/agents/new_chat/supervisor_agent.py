@@ -185,7 +185,9 @@ from app.agents.new_chat.supervisor_constants import (
     _live_phase_enabled,
     _normalize_live_routing_phase,
 )
+from app.agents.new_chat.sandbox_runtime import sandbox_read_text_file
 from app.agents.new_chat.supervisor_memory import (
+    _artifact_runtime_hitl_thread_scope,
     _persist_artifact_content,
     _render_cross_session_memory_context,
     _select_cross_session_memory_entries,
@@ -1649,6 +1651,20 @@ async def create_supervisor_agent(
     )
     if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
         artifact_offload_storage_mode = _ARTIFACT_DEFAULT_STORAGE_MODE
+
+    # Callback for reading artifact files from the sandbox runtime.
+    # Bound to thread_id and runtime_hitl_cfg so downstream nodes
+    # (synthesizer, critic, progressive_synthesizer) can read sandbox-
+    # stored artifacts without needing direct access to these values.
+    _sandbox_read_fn = None
+    if sandbox_enabled:
+        def _sandbox_read_fn(path: str) -> str:
+            return sandbox_read_text_file(
+                thread_id=thread_id,
+                runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
+                path=path,
+            )
+
     context_compaction_enabled = _coerce_bool(
         runtime_hitl_cfg.get("context_compaction_enabled"),
         default=True,
@@ -5182,6 +5198,7 @@ async def create_supervisor_agent(
         extract_first_json_object_fn=_extract_first_json_object,
         render_guard_message_fn=_render_guard_message,
         max_total_steps=MAX_TOTAL_STEPS,
+        sandbox_read_fn=_sandbox_read_fn,
     )
     smart_critic_node = build_smart_critic_node(
         fallback_critic_node=critic_node,
@@ -5207,9 +5224,11 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         strip_critic_json_fn=_strip_critic_json,
+        sandbox_read_fn=_sandbox_read_fn,
     )
     progressive_synthesizer_node = build_progressive_synthesizer_node(
         truncate_for_prompt_fn=_truncate_for_prompt,
+        sandbox_read_fn=_sandbox_read_fn,
     )
 
     domain_planner_node = build_domain_planner_node(

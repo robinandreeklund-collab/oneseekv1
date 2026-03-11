@@ -13,6 +13,7 @@ from ..structured_schemas import (
     structured_output_enabled,
 )
 from ..supervisor_memory import (
+    SandboxReadFn,
     _format_artifact_contents_for_context,
     _load_recent_artifact_contents,
 )
@@ -129,6 +130,7 @@ def build_synthesizer_node(
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     strip_critic_json_fn: Callable[[str], str],
+    sandbox_read_fn: SandboxReadFn | None = None,
 ):
     async def synthesizer_node(
         state: dict[str, Any],
@@ -215,6 +217,7 @@ def build_synthesizer_node(
         artifact_data_context = ""
         artifact_contents = _load_recent_artifact_contents(
             state.get("artifact_manifest"),
+            sandbox_read_fn=sandbox_read_fn,
         )
         if artifact_contents:
             artifact_data_context = _format_artifact_contents_for_context(

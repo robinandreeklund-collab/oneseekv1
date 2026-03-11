@@ -13,6 +13,7 @@ from ..structured_schemas import (
     structured_output_enabled,
 )
 from ..supervisor_memory import (
+    SandboxReadFn,
     _format_artifact_contents_for_context,
     _load_recent_artifact_contents,
 )
@@ -32,6 +33,7 @@ def build_critic_node(
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     render_guard_message_fn: Callable[[str, list[str]], str],
     max_total_steps: int = 12,
+    sandbox_read_fn: SandboxReadFn | None = None,
 ):
     async def critic_node(
         state: dict[str, Any],
@@ -175,6 +177,7 @@ def build_critic_node(
         artifact_contents = _load_recent_artifact_contents(
             state.get("artifact_manifest"),
             max_items=2,  # critic needs less detail than synthesizer
+            sandbox_read_fn=sandbox_read_fn,
         )
         if artifact_contents:
             critic_payload["artifact_data"] = _format_artifact_contents_for_context(
