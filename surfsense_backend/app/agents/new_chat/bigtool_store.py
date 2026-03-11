@@ -24,10 +24,12 @@ from app.agents.new_chat.skolverket_tools import (
     SKOLVERKET_TOOL_DEFINITIONS,
     build_skolverket_tool_registry,
 )
-from app.agents.new_chat.statistics_agent import (
-    SCB_TOOL_DEFINITIONS,
-    build_scb_tool_registry,
-)
+# NOTE: build_scb_tool_registry is imported lazily (inside function) to break
+# a circular import chain:
+#   statistics_agent → nodes.executor → nodes → critic → supervisor_memory
+#   → bigtool_store → statistics_agent
+# SCB_TOOL_DEFINITIONS is imported directly from scb_tool_definitions (no cycle).
+from app.agents.new_chat.scb_tool_definitions import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
@@ -2403,6 +2405,8 @@ async def build_global_tool_registry(
             )
             for tool in fallback_tools:
                 registry[str(tool.name)] = tool
+    from app.agents.new_chat.statistics_agent import build_scb_tool_registry
+
     scb_registry = build_scb_tool_registry(
         connector_service=dependencies["connector_service"],
         search_space_id=dependencies["search_space_id"],
