@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any, Callable
 from langchain_core.runnables import RunnableConfig
 
+from ..supervisor_memory import (
+    _format_artifact_contents_for_context,
+    _load_recent_artifact_contents,
+)
+
 
 def _safe_confidence(value: Any, default: float = 0.0) -> float:
     try:
@@ -74,6 +79,17 @@ def build_progressive_synthesizer_node(
             }
 
         draft_source = "\n\n".join(recent_responses) if recent_responses else final_response
+
+        # Enrich draft source with artifact contents so that progressive
+        # synthesis can reference the full tool data, not just summaries.
+        artifact_contents = _load_recent_artifact_contents(
+            state.get("artifact_manifest"),
+            max_items=2,
+        )
+        if artifact_contents:
+            artifact_context = _format_artifact_contents_for_context(artifact_contents)
+            draft_source = draft_source + "\n\n" + artifact_context
+
         draft_text = truncate_for_prompt_fn(draft_source, 1200)
         if not draft_text:
             draft_text = truncate_for_prompt_fn(final_response, 1200)

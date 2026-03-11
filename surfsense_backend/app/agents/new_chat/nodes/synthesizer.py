@@ -12,6 +12,10 @@ from ..structured_schemas import (
     pydantic_to_response_format,
     structured_output_enabled,
 )
+from ..supervisor_memory import (
+    _format_artifact_contents_for_context,
+    _load_recent_artifact_contents,
+)
 
 _FILESYSTEM_QUERY_RE = re.compile(
     r"(/workspace|/tmp|sandbox_|\\b(file|files|fil|filer|directory|katalog|mapp|read|write|l[aä]s|skriv)\\b)",
@@ -205,14 +209,26 @@ def build_synthesizer_node(
             prompt_template = synthesizer_prompt_template
         
         prompt = append_datetime_context_fn(prompt_template)
-        synth_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "response": source_response,
-                "resolved_intent": state.get("resolved_intent") or {},
-            },
-            ensure_ascii=True,
+
+        # Inject artifact contents so the synthesizer has access to full
+        # tool data that was offloaded from context during artifact indexing.
+        artifact_data_context = ""
+        artifact_contents = _load_recent_artifact_contents(
+            state.get("artifact_manifest"),
         )
+        if artifact_contents:
+            artifact_data_context = _format_artifact_contents_for_context(
+                artifact_contents
+            )
+
+        synth_payload: dict[str, Any] = {
+            "query": latest_user_query,
+            "response": source_response,
+            "resolved_intent": state.get("resolved_intent") or {},
+        }
+        if artifact_data_context:
+            synth_payload["artifact_data"] = artifact_data_context
+        synth_input = json.dumps(synth_payload, ensure_ascii=True)
         refined_response = source_response
         try:
             _invoke_kwargs: dict[str, Any] = {"max_tokens": 800}

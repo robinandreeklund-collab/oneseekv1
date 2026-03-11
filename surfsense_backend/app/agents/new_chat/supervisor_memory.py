@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,13 @@ from app.agents.new_chat.supervisor_text_utils import (
     _serialize_artifact_payload,
     _truncate_for_prompt,
 )
+
+logger = logging.getLogger(__name__)
+
+# Limits for artifact content injection into downstream nodes.
+_ARTIFACT_READ_MAX_ITEMS = 3
+_ARTIFACT_READ_MAX_CHARS_PER_ITEM = 4000
+_ARTIFACT_READ_MAX_TOTAL_CHARS = 12000
 
 
 def _artifact_runtime_hitl_thread_scope(
@@ -79,6 +87,86 @@ def _persist_artifact_content(
     local_path = local_root / f"{artifact_id}.json"
     local_path.write_text(str(content or ""), encoding="utf-8")
     return artifact_uri, str(local_path), "local"
+
+
+def _read_artifact_content(entry: dict[str, Any]) -> str | None:
+    """Read artifact content back from disk.
+
+    Returns the content string or ``None`` if it cannot be read (e.g. sandbox
+    path not locally accessible, deleted file, etc.).
+    """
+    artifact_path = str(entry.get("artifact_path") or "").strip()
+    if not artifact_path:
+        return None
+    try:
+        p = Path(artifact_path)
+        if p.is_file():
+            return p.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return None
+
+
+def _load_recent_artifact_contents(
+    manifest: list[dict[str, Any]] | None,
+    *,
+    max_items: int = _ARTIFACT_READ_MAX_ITEMS,
+    max_chars_per_item: int = _ARTIFACT_READ_MAX_CHARS_PER_ITEM,
+    max_total_chars: int = _ARTIFACT_READ_MAX_TOTAL_CHARS,
+) -> list[dict[str, str]]:
+    """Load contents of the most recent artifacts from the manifest.
+
+    Returns a list of ``{"tool": ..., "summary": ..., "content": ...}`` dicts
+    for each artifact whose content could be read, newest first, subject to
+    *max_items* / *max_total_chars* limits.
+    """
+    if not manifest:
+        return []
+    loaded: list[dict[str, str]] = []
+    total_chars = 0
+    for entry in reversed(manifest):
+        if not isinstance(entry, dict):
+            continue
+        content = _read_artifact_content(entry)
+        if not content:
+            continue
+        # Truncate individual artifact content to limit
+        if len(content) > max_chars_per_item:
+            content = content[:max_chars_per_item] + "\n[...trunkerad]"
+        if total_chars + len(content) > max_total_chars:
+            # If adding this artifact would exceed the total limit, skip it
+            if loaded:
+                break
+            # If this is the first artifact and already too large, truncate
+            remaining = max_total_chars - total_chars
+            content = content[:remaining] + "\n[...trunkerad]"
+        loaded.append({
+            "tool": str(entry.get("tool") or "").strip(),
+            "summary": str(entry.get("summary") or "").strip(),
+            "content": content,
+        })
+        total_chars += len(content)
+        if len(loaded) >= max_items:
+            break
+    loaded.reverse()
+    return loaded
+
+
+def _format_artifact_contents_for_context(
+    artifact_contents: list[dict[str, str]],
+) -> str:
+    """Format loaded artifact contents as a context block for LLM injection."""
+    if not artifact_contents:
+        return ""
+    parts: list[str] = []
+    for item in artifact_contents:
+        tool = item.get("tool") or "tool"
+        summary = item.get("summary") or ""
+        content = item.get("content") or ""
+        parts.append(
+            f"<artifact tool=\"{tool}\" summary=\"{summary}\">\n{content}\n</artifact>"
+        )
+    return "<artifact_data>\n" + "\n".join(parts) + "\n</artifact_data>"
 
 
 def _tokenize_for_memory_relevance(text: str) -> set[str]:
