@@ -67,7 +67,13 @@ def build_progressive_synthesizer_node(
             state.get("final_response") or state.get("final_agent_response") or ""
         ).strip()
         if not final_response:
-            return {}
+            # Fallback: extract response from recent_agent_calls when budget
+            # was exhausted without populating final_response.
+            from .synthesizer import _extract_best_agent_response
+
+            final_response = _extract_best_agent_response(state)
+            if not final_response:
+                return {}
 
         recent_responses = _collect_recent_responses(state, limit=3)
         avg_confidence = _average_contract_confidence(state, limit=3)

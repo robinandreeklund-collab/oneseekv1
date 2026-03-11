@@ -121,6 +121,28 @@ def _candidate_is_degenerate(source_response: str, candidate: str) -> bool:
     return False
 
 
+def _extract_best_agent_response(state: dict[str, Any]) -> str:
+    """Extract the best available agent response from recent_agent_calls.
+
+    Used as a last-resort fallback when final_response is empty but agents
+    DID produce output (e.g. budget exhaustion with partial results).
+    """
+    recent_calls: list[dict[str, Any]] = list(state.get("recent_agent_calls") or [])
+    if not recent_calls:
+        return ""
+    # Prefer the most recent call with a non-empty response
+    for call in reversed(recent_calls):
+        response = str(call.get("response") or "").strip()
+        if not response or len(response) < 20:
+            continue
+        # Skip responses that are clearly just error/guard messages
+        lowered = response.lower()
+        if any(marker in lowered for marker in _NO_DATA_MARKERS + _GUARD_STYLE_MARKERS):
+            continue
+        return response
+    return ""
+
+
 def build_synthesizer_node(
     *,
     llm: Any,
@@ -143,7 +165,12 @@ def build_synthesizer_node(
             state.get("final_response") or state.get("final_agent_response") or ""
         ).strip()
         if not source_response:
-            return {}
+            # Fallback: when orchestration budget is exhausted without populating
+            # final_response, extract the best available agent response from
+            # recent_agent_calls so the user gets *something* instead of silence.
+            source_response = _extract_best_agent_response(state)
+            if not source_response:
+                return {}
         # Strip leaked <tool_call> XML blocks that the LLM emitted as text
         # instead of structured tool calls — never let raw XML reach the user.
         if "<tool_call>" in source_response:

@@ -353,6 +353,13 @@ def build_response_layer_node(
     ) -> dict[str, Any]:
         final_response = str(state.get("final_response") or "").strip()
         if not final_response:
+            # Fallback: try to extract a response from recent_agent_calls
+            # when orchestration budget was exhausted without populating
+            # final_response.  Import here to avoid circular dependency.
+            from .synthesizer import _extract_best_agent_response
+
+            final_response = _extract_best_agent_response(state)
+        if not final_response:
             route_hint_early = str(state.get("route_hint") or "kunskap").strip().lower()
             return {"response_mode": route_hint_early if route_hint_early in _VALID_MODES else "kunskap"}
 
