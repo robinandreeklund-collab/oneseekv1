@@ -45,6 +45,7 @@ _SCB_FETCH_FAILURE_MARKERS = (
     "400 bad request",
     "scb_fetch misslyckades",
     "<tool_call>",  # LLM emitted XML tool call as text = format failure
+    '"next_step"',  # scb_validate succeeded but scb_fetch was never called
 )
 # Regex to strip leaked <tool_call> XML blocks from responses.
 _TEXT_TOOL_CALL_STRIP_RE = re.compile(

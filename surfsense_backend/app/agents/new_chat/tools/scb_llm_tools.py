@@ -151,9 +151,24 @@ def _coerce_selection(
                     continue
             coerced[key] = [val]
         elif isinstance(val, list | tuple):
+            # First pass: rejoin RANGE() fragments that the LLM split on
+            # the comma.  E.g. ["RANGE(2015", "2024)"] → ["RANGE(2015,2024)"]
+            raw_items = [str(item).strip() for item in val]
+            joined_items: list[str] = []
+            i = 0
+            while i < len(raw_items):
+                s = raw_items[i]
+                if re.match(r"^RANGE\(\s*\w+$", s, re.IGNORECASE) and i + 1 < len(raw_items):
+                    nxt = raw_items[i + 1]
+                    if re.match(r"^\w+\)$", nxt):
+                        joined_items.append(f"{s},{nxt}")
+                        i += 2
+                        continue
+                joined_items.append(s)
+                i += 1
+
             expanded: list[str] = []
-            for item in val:
-                s = str(item).strip()
+            for s in joined_items:
                 m = re.match(r"^(\d{4})\s*[-\u2013]\s*(\d{4})$", s)
                 if m:
                     start, end = int(m.group(1)), int(m.group(2))
@@ -1184,6 +1199,55 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
                     else:
                         val_count += 1
                 estimated_cells *= max(val_count, 1)
+
+            # --- Auto-fetch: if cell count is small, fetch data inline ---
+            # The worker LLM often fails to make the second scb_fetch call
+            # (empty response, XML leak, etc.), so we eagerly fetch here.
+            _AUTO_FETCH_CELL_LIMIT = 10_000
+            if estimated_cells <= _AUTO_FETCH_CELL_LIMIT:
+                try:
+                    v2_sel = [
+                        {"variableCode": code, "valueCodes": vals}
+                        for code, vals in auto_completed.items()
+                        if vals
+                    ]
+                    fetch_payload = {"selection": v2_sel}
+                    data = await service.query_table(table_id, fetch_payload)
+                    decoded = service.decode_jsonstat2_to_markdown(
+                        data, max_rows=80
+                    )
+                    result: dict[str, Any] = {
+                        "status": "valid",
+                        "table_id": table_id,
+                        "title": metadata.get("title", table_id),
+                        "source": decoded.get("source", "SCB"),
+                        "updated": metadata.get("updated"),
+                        "selection": auto_completed,
+                        "auto_completed": auto_log,
+                        "estimated_cells": estimated_cells,
+                        "warnings": warnings,
+                        "data_table": decoded.get("data_table", ""),
+                        "row_count": decoded.get("row_count", 0),
+                        "truncated": decoded.get("truncated", False),
+                        "auto_fetched": True,
+                    }
+                    if decoded.get("unit"):
+                        result["unit"] = decoded["unit"]
+                    if decoded.get("ref_period"):
+                        result["ref_period"] = decoded["ref_period"]
+                    return json.dumps(result, ensure_ascii=False)
+                except Exception as fetch_exc:
+                    # Auto-fetch failed — fall through to normal response
+                    # so the LLM can still call scb_fetch manually.
+                    logger.warning(
+                        "scb_validate auto-fetch failed for %s: %s",
+                        table_id,
+                        fetch_exc,
+                    )
+                    warnings.append(
+                        f"Auto-fetch failed ({fetch_exc!s}). "
+                        f"Call scb_fetch manually with the selection below."
+                    )
 
             return json.dumps(
                 {

@@ -168,6 +168,9 @@ Regler:
 - Kort och tydligt pa svenska.
 - For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
+- ALDRIG hitta pa siffror eller statistik. Om kallsvaret inte innehaller
+  faktiska datatabeller (data_table) eller specifika siffror, skriv att
+  data inte kunde hamtas. Fabricera ALDRIG nummer.
 - "response"-faltet ska BARA innehalla det slutgiltiga svaret till anvandaren,
   inga numrerade steg, ingen planering, inget "jag ska nu...".
 
