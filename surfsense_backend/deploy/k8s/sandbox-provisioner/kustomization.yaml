@@ -4,5 +4,6 @@ namespace: oneseek-sandbox
 resources:
   - namespace.yaml
   - rbac.yaml
+  - pvc.yaml
   - deployment.yaml
   - service.yaml

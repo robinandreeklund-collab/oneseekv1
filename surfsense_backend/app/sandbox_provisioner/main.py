@@ -302,6 +302,7 @@ class ProvisionerSettings:
     pod_memory_request: str | None
     pod_cpu_limit: str | None
     pod_memory_limit: str | None
+    pvc_name: str | None
 
 
 def load_settings_from_env() -> ProvisionerSettings:
@@ -355,6 +356,7 @@ def load_settings_from_env() -> ProvisionerSettings:
         or None,
         pod_cpu_limit=str(os.getenv("PROVISIONER_POD_CPU_LIMIT") or "").strip() or None,
         pod_memory_limit=str(os.getenv("PROVISIONER_POD_MEMORY_LIMIT") or "").strip() or None,
+        pvc_name=str(os.getenv("PROVISIONER_PVC_NAME") or "sandbox-workspace").strip() or None,
     )
 
 
@@ -525,20 +527,30 @@ class KubectlSandboxProvisioner:
         if limits:
             resources["limits"] = limits
 
+        volume_mount: dict[str, Any] = {
+            "name": "workspace",
+            "mountPath": self.settings.workspace_dir,
+        }
+        if self.settings.pvc_name:
+            volume_mount["subPath"] = pod_name
+
         container_spec: dict[str, Any] = {
             "name": self.settings.worker_container_name,
             "image": self.settings.worker_image,
             "command": ["sh", "-lc", "while true; do sleep 3600; done"],
             "workingDir": self.settings.workspace_dir,
-            "volumeMounts": [
-                {
-                    "name": "workspace",
-                    "mountPath": self.settings.workspace_dir,
-                }
-            ],
+            "volumeMounts": [volume_mount],
         }
         if resources:
             container_spec["resources"] = resources
+
+        if self.settings.pvc_name:
+            volume_spec: dict[str, Any] = {
+                "name": "workspace",
+                "persistentVolumeClaim": {"claimName": self.settings.pvc_name},
+            }
+        else:
+            volume_spec = {"name": "workspace", "emptyDir": {}}
 
         return {
             "apiVersion": "v1",
@@ -559,7 +571,7 @@ class KubectlSandboxProvisioner:
             "spec": {
                 "restartPolicy": "Never",
                 "containers": [container_spec],
-                "volumes": [{"name": "workspace", "emptyDir": {}}],
+                "volumes": [volume_spec],
             },
         }
 
