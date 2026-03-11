@@ -163,6 +163,10 @@ class SupervisorState(TypedDict, total=False):
     response_mode: Annotated[str | None, _replace]
     # P1 loop-fix: guard_finalized prevents critic from overriding orchestration_guard.
     guard_finalized: Annotated[bool, _replace]
+    # True when at least one data-producing tool (scb_fetch, smhi_fetch, etc.)
+    # returned real data.  Used by response_layer to skip LLM formatting when
+    # the answer is not grounded in tool data (prevents hallucination).
+    data_grounded: Annotated[bool, _replace]
     # P1 loop-fix: total_steps counts all meaningful work nodes, hard cap at MAX_TOTAL_STEPS.
     total_steps: Annotated[int, _replace]
     # P1 loop-fix: critic_history tracks previous critic decisions for adaptive behavior.

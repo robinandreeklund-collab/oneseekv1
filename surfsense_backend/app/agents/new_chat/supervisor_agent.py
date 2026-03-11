@@ -3792,7 +3792,7 @@ async def create_supervisor_agent(
                 )
         config = {
             "configurable": worker_configurable,
-            "recursion_limit": 12,
+            "recursion_limit": 24,
         }
         try:
             result = await asyncio.wait_for(
@@ -4130,6 +4130,89 @@ async def create_supervisor_agent(
                 name,
                 ",".join(used_tool_names[:4]),
             )
+        # Guard: if the inner (subagent) critic assessed the response as
+        # needing more work, downgrade the contract.  Previously the critic
+        # payload was included in the return JSON but never influenced the
+        # contract — causing the outer critic to accept hallucinated answers
+        # that the inner critic correctly flagged.
+        if (
+            not filesystem_sandbox_task
+            and isinstance(critic_payload, dict)
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            critic_status = str(critic_payload.get("status") or "").strip().lower()
+            if critic_status in {"needs_more", "error", "blocked", "retry"}:
+                result_contract.update(
+                    {
+                        "status": "partial",
+                        "actionable": False,
+                        "retry_recommended": True,
+                        "confidence": min(
+                            float(result_contract.get("confidence") or 0.40),
+                            0.40,
+                        ),
+                        "reason": (
+                            f"Inner critic flagged: {critic_status}. "
+                            + str(critic_payload.get("reason") or "")[:120]
+                        ),
+                    }
+                )
+                logger.info(
+                    "LLM gate guard: inner critic flagged %s for agent=%s — "
+                    "downgrading contract to partial",
+                    critic_status,
+                    name,
+                )
+        # Guard: if discovery tools (scb_befolkning_*, scb_validate) were
+        # used but NO data-producing tools (scb_fetch, scb_preview) were
+        # called, the LLM has no real data to ground its answer on.
+        # _all_tool_data_empty misses this because it only counts tools
+        # that WERE called — zero data-tools means data_tool_count=0
+        # which returns False (safe default).
+        if (
+            not filesystem_sandbox_task
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            _DATA_PRODUCING_TOOLS = {
+                "scb_fetch", "scb_preview",
+                "kolada_fetch", "kolada_preview",
+                "riksbank_fetch",
+                "smhi_fetch", "smhi_vaderprognoser_metfcst",
+            }
+            _DISCOVERY_TOOLS = {
+                "scb_validate",
+                "scb_befolkning_dodsfall", "scb_befolkning_forandringar",
+                "scb_befolkning_folkmangd", "scb_befolkning_flyttningar",
+                "scb_befolkning_namnstatistik", "scb_befolkning_medborgarskap",
+                "scb_befolkning_fodda", "scb_befolkning_alder_kon",
+                "kolada_search", "kolada_validate",
+            }
+            used_set = set(used_tool_names)
+            has_discovery = bool(used_set & _DISCOVERY_TOOLS)
+            has_data = bool(used_set & _DATA_PRODUCING_TOOLS)
+            if has_discovery and not has_data:
+                result_contract.update(
+                    {
+                        "status": "partial",
+                        "actionable": False,
+                        "retry_recommended": True,
+                        "confidence": min(
+                            float(result_contract.get("confidence") or 0.30),
+                            0.30,
+                        ),
+                        "reason": (
+                            "Enbart discovery-verktyg anvandes utan datahämtning. "
+                            "scb_fetch/preview anropades aldrig."
+                        ),
+                    }
+                )
+                logger.warning(
+                    "LLM gate guard: discovery-only tools for agent=%s "
+                    "(discovery=%s, data=%s) — downgrading contract",
+                    name,
+                    ",".join(sorted(used_set & _DISCOVERY_TOOLS)),
+                    "none",
+                )
         if _live_phase_enabled(live_routing_config, "shadow"):
             logger.info(
                 "live-routing tool-outcome phase=%s agent=%s mode=%s predicted_top1=%s margin=%s worker_top1=%s used_count=%s",
@@ -4658,7 +4741,7 @@ async def create_supervisor_agent(
                         )
                 config = {
                     "configurable": worker_configurable,
-                    "recursion_limit": 12,
+                    "recursion_limit": 24,
                 }
                 try:
                     result = await asyncio.wait_for(
@@ -5683,6 +5766,26 @@ async def create_supervisor_agent(
             state.get("messages") or [],
             turn_id=current_turn_id or None,
         )
+        # Track whether any call entry used a data-producing tool with a
+        # successful contract.  This lets the response_layer know whether
+        # the final answer is grounded in real tool data.
+        _DATA_TOOLS_FOR_GROUNDING = {
+            "scb_fetch", "scb_preview",
+            "kolada_fetch", "kolada_preview",
+            "riksbank_fetch",
+            "smhi_fetch", "smhi_vaderprognoser_metfcst",
+            "trafikverket_trainstation",
+        }
+        is_data_grounded = bool(state.get("data_grounded"))
+        if not is_data_grounded and call_entries:
+            for entry in call_entries:
+                entry_tools = entry.get("used_tools")
+                if isinstance(entry_tools, list) and set(entry_tools) & _DATA_TOOLS_FOR_GROUNDING:
+                    entry_contract = _contract_from_payload(entry)
+                    if str(entry_contract.get("status") or "") in {"success", "partial"}:
+                        is_data_grounded = True
+                        break
+        updates["data_grounded"] = is_data_grounded
         if not parallel_preview and call_entries:
             for item in reversed(call_entries):
                 response_text = _strip_critic_json(

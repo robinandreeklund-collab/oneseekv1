@@ -328,7 +328,7 @@ def build_subagent_spawner_node(
                 )
         config = {
             "configurable": worker_configurable,
-            "recursion_limit": 12,
+            "recursion_limit": 24,
         }
 
         # Invoke worker with timeout (same as call_agent)

@@ -997,6 +997,13 @@ def _looks_actionable_agent_answer(text: str) -> bool:
         "scb_fetch misslyckades",
         "kunde inte hamta den efterfragade datan",
         "kunde inte hämta den efterfrågade datan",
+        "selection must be a valid",
+        "selection måste vara",
+        "input should be a valid dictionary",
+        "enbart discovery-verktyg",
+        "alla verktyg returnerade tom data",
+        "validering misslyckades",
+        "pydantic_core._pydantic_core.validationerror",
     )
     if any(marker in lowered for marker in _broken_markers):
         return False

@@ -80,6 +80,11 @@ _NO_DATA_RE = re.compile(
     r"kunde inte hamta|kunde inte hämta|"
     r"fetch failed|data fetch failed|400 bad request|"
     r"scb_fetch misslyckades|"
+    r"selection must be a|selection måste vara|"
+    r"input should be a valid|pydantic.*validation|"
+    r"enbart discovery.verktyg|"
+    r"alla verktyg returnerade tom|"
+    r"validering misslyckades|"
     r"<tool_call>|"
     r"no tools available|cannot answer|unable to)",
     re.IGNORECASE,
@@ -386,8 +391,17 @@ def build_response_layer_node(
         # Guard: skip LLM formatting when the response is a disclaimer
         # (e.g. "ingen tillgång till verktyg") — a small model may
         # hallucinate data to replace the disclaimer.
+        # Also skip when `data_grounded` is False — the answer is NOT
+        # backed by real tool data, so the LLM must not "fill in" numbers.
         mode_prompt = _mode_prompts.get(mode, "").strip()
         skip_llm = bool(_NO_DATA_RE.search(final_response))
+        if not skip_llm and not state.get("data_grounded", True):
+            # No data-producing tool returned real data.  Letting the LLM
+            # reformat risks hallucinating plausible-sounding numbers.
+            skip_llm = True
+            logger.info(
+                "response_layer: skipping LLM format — data_grounded=False"
+            )
         if mode_prompt and llm is not None and not skip_llm:
             formatted = await _llm_format(
                 mode_prompt, final_response, latest_user_query,
