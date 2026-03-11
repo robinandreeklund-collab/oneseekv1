@@ -3373,6 +3373,10 @@ async def create_supervisor_agent(
                     "size_bytes": len(serialized_payload.encode("utf-8")),
                     "content_sha1": content_sha1,
                     "created_at": datetime.now(UTC).isoformat(),
+                    # Store content inline so downstream nodes (synthesizer,
+                    # critic) can read it back without filesystem access —
+                    # critical for isolated k8s pods / remote sandboxes.
+                    "inline_content": serialized_payload,
                 }
             )
             seen_source_ids.add(source_id)
@@ -5658,6 +5662,9 @@ async def create_supervisor_agent(
                 "size_bytes": len(serialized_payload.encode("utf-8")),
                 "content_sha1": content_sha1,
                 "created_at": datetime.now(UTC).isoformat(),
+                # Store content inline so downstream nodes can read it
+                # back without filesystem access (k8s pod isolation).
+                "inline_content": serialized_payload,
             }
             new_entries.append(entry)
             existing_source_ids.add(source_id)

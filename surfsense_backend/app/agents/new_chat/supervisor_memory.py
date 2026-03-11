@@ -99,19 +99,28 @@ def _read_artifact_content(
     *,
     sandbox_read_fn: SandboxReadFn | None = None,
 ) -> str | None:
-    """Read artifact content back from disk or sandbox.
+    """Read artifact content back from the manifest entry.
 
-    Tries local filesystem first.  If the file is not locally accessible and
-    *sandbox_read_fn* is provided, falls back to reading via the sandbox
-    runtime (for artifacts stored in remote containers).
+    Resolution order:
+    1. ``inline_content`` — the serialized payload stored directly in the
+       manifest dict.  This is the primary path and works regardless of
+       filesystem isolation (k8s pods, remote sandboxes, etc.).
+    2. Local filesystem — works for ``storage_backend="local"`` and sandbox
+       backends with mounted volumes.
+    3. Sandbox read callback — for artifacts stored in remote containers.
 
     Returns the content string or ``None`` if it cannot be read.
     """
+    # 1. Inline content — always available when stored at creation time.
+    inline = entry.get("inline_content")
+    if inline and isinstance(inline, str):
+        return inline
+
     artifact_path = str(entry.get("artifact_path") or "").strip()
     if not artifact_path:
         return None
 
-    # 1. Try local filesystem (works for storage_backend="local" and
+    # 2. Try local filesystem (works for storage_backend="local" and
     #    for sandbox backends with mounted volumes).
     try:
         p = Path(artifact_path)
@@ -120,7 +129,7 @@ def _read_artifact_content(
     except Exception:
         pass
 
-    # 2. Try sandbox read for remote-stored artifacts.
+    # 3. Try sandbox read for remote-stored artifacts.
     storage_backend = str(entry.get("storage_backend") or "").strip().lower()
     if storage_backend == "sandbox" and sandbox_read_fn is not None:
         try:
