@@ -512,3 +512,55 @@ async def prewarm_catalogs(
             results[definition.tool_id] = 0
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Table-ID resolution — auto-correct common LLM mistakes
+# ---------------------------------------------------------------------------
+
+
+def resolve_table_id(raw_table_id: str) -> str | None:
+    """Try to resolve a wrong table_id to the correct one using cached catalogs.
+
+    Common LLM mistakes:
+    - Using a ContentsCode (e.g. ``BE0101N1``) instead of table_id (``TAB638``)
+    - Using a path segment (e.g. ``BE0101A``) instead of table_id
+    - Using the domain base_path (e.g. ``BE0101``)
+
+    Returns the corrected table_id if found, or ``None`` if no match.
+    """
+    raw = (raw_table_id or "").strip()
+    if not raw:
+        return None
+
+    raw_upper = raw.upper()
+    raw_lower = raw.lower()
+
+    # Walk all cached catalogs
+    for catalog in _catalog_cache.values():
+        if not isinstance(catalog, DomainCatalog):
+            continue
+        for table in catalog.tables:
+            # Direct match — already correct
+            if table.table_id.upper() == raw_upper:
+                return table.table_id
+
+            # Match by ContentsCode (e.g. "BE0101N1" → TAB638)
+            for var in table.variables:
+                if var.var_type == "measure":
+                    for sample in var.values_sample:
+                        code = str(sample.get("code") or "").strip()
+                        if code and code.upper() == raw_upper:
+                            return table.table_id
+
+            # Match by path segment (e.g. "BE0101A" appearing in table.path)
+            if raw_lower in table.path.lower():
+                return table.table_id
+
+        # Match by domain base_path (e.g. "BE0101" → first table in domain)
+        base_clean = catalog.base_path.strip("/").replace("/", "")
+        if raw_upper == base_clean.upper() or raw_lower == catalog.base_path.strip("/").lower():
+            if catalog.tables:
+                return catalog.tables[0].table_id
+
+    return None

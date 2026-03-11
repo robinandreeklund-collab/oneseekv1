@@ -774,6 +774,8 @@ def build_executor_nodes(
                     "Template NullValue persisted after compaction; retrying without tools"
                 )
                 response = llm.invoke(retry_messages)
+        if isinstance(response, AIMessage):
+            response = _coerce_text_tool_calls(response)
         response = coerce_supervisor_tool_calls_fn(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
@@ -851,6 +853,8 @@ def build_executor_nodes(
                     "Template NullValue persisted after compaction; retrying without tools"
                 )
                 response = await llm.ainvoke(retry_messages)
+        if isinstance(response, AIMessage):
+            response = _coerce_text_tool_calls(response)
         response = coerce_supervisor_tool_calls_fn(
             response,
             orchestration_phase=str(state.get("orchestration_phase") or ""),
@@ -994,6 +998,111 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
 
 _BIGTOOL_MAX_SAME_TOOL_CALLS = 2
 _BIGTOOL_MAX_TOTAL_TOOL_CALLS = 6  # max total domain tool calls per turn
+
+# ---------------------------------------------------------------------------
+# Text-format tool call parser
+# ---------------------------------------------------------------------------
+# Models like nvidia/nemotron-3-nano sometimes emit tool calls as XML text in
+# the content field instead of producing structured tool_calls.  Format:
+#   <tool_call>
+#   <function=scb_validate>
+#   <parameter=selection>{"Region": ["0180"]}</parameter>
+#   <parameter=table_id>TAB638</parameter>
+#   </function>
+#   </tool_call>
+#
+# This parser extracts these and converts them into proper tool_calls dicts.
+
+_TEXT_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*<function=(\w+)>(.*?)</function>\s*</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
+_TEXT_PARAM_RE = re.compile(
+    r"<parameter=(\w+)>\s*(.*?)\s*</parameter>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_text_tool_calls(content: str) -> list[dict[str, Any]]:
+    """Parse ``<tool_call>`` XML text into structured tool call dicts.
+
+    Returns a list of tool call dicts compatible with LangChain AIMessage.tool_calls.
+    Returns an empty list if no text tool calls are found.
+    """
+    results: list[dict[str, Any]] = []
+    for idx, match in enumerate(_TEXT_TOOL_CALL_RE.finditer(content)):
+        func_name = match.group(1).strip()
+        body = match.group(2)
+        args: dict[str, Any] = {}
+        for param_match in _TEXT_PARAM_RE.finditer(body):
+            param_name = param_match.group(1).strip()
+            param_value = param_match.group(2).strip()
+            # Try to parse JSON values (dicts, lists, numbers)
+            try:
+                args[param_name] = json.loads(param_value)
+            except (json.JSONDecodeError, ValueError):
+                args[param_name] = param_value
+        results.append({
+            "id": f"text_tc_{idx}",
+            "name": func_name,
+            "args": args,
+            "type": "tool_call",
+        })
+    return results
+
+
+def _coerce_text_tool_calls(response: AIMessage) -> AIMessage:
+    """If the response has text-format tool calls in content but no structured
+    tool_calls, parse and promote them to proper tool_calls.
+
+    Also strips the raw XML from the content field so it never leaks downstream.
+    """
+    existing_calls = getattr(response, "tool_calls", None) or []
+    if existing_calls:
+        # Already has structured tool calls — just strip any leaked XML from content
+        raw = str(getattr(response, "content", "") or "")
+        if "<tool_call>" in raw:
+            cleaned = _TEXT_TOOL_CALL_RE.sub("", raw).strip()
+            try:
+                return response.model_copy(update={"content": cleaned})
+            except Exception:
+                return AIMessage(
+                    content=cleaned,
+                    tool_calls=list(existing_calls),
+                    additional_kwargs=dict(getattr(response, "additional_kwargs", {}) or {}),
+                    response_metadata=dict(getattr(response, "response_metadata", {}) or {}),
+                    id=getattr(response, "id", None),
+                )
+        return response
+
+    raw = str(getattr(response, "content", "") or "")
+    if "<tool_call>" not in raw:
+        return response
+
+    parsed_calls = _parse_text_tool_calls(raw)
+    if not parsed_calls:
+        return response
+
+    # Strip the XML tool call text from content
+    cleaned_content = _TEXT_TOOL_CALL_RE.sub("", raw).strip()
+    logger.info(
+        "coerced %d text-format tool call(s) from content into structured tool_calls: %s",
+        len(parsed_calls),
+        ", ".join(tc["name"] for tc in parsed_calls),
+    )
+    try:
+        return response.model_copy(update={
+            "content": cleaned_content,
+            "tool_calls": parsed_calls,
+        })
+    except Exception:
+        return AIMessage(
+            content=cleaned_content,
+            tool_calls=parsed_calls,
+            additional_kwargs=dict(getattr(response, "additional_kwargs", {}) or {}),
+            response_metadata=dict(getattr(response, "response_metadata", {}) or {}),
+            id=getattr(response, "id", None),
+        )
 
 _FORCE_SUMMARIZE_INSTRUCTION = (
     "Du har redan hämtat tillräckligt med data från verktygen ovan. "
@@ -1160,7 +1269,10 @@ class NormalizingChatWrapper:
             summary_msgs = self._build_summary_messages(normalized)
             summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
             return self._base_llm.invoke(summary_msgs, config)
-        return self._llm.invoke(normalized, config, **kwargs)
+        response = self._llm.invoke(normalized, config, **kwargs)
+        if isinstance(response, AIMessage):
+            response = _coerce_text_tool_calls(response)
+        return response
 
     async def ainvoke(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
         normalized = self._normalize(input_)
@@ -1173,7 +1285,10 @@ class NormalizingChatWrapper:
             summary_msgs = self._build_summary_messages(normalized)
             summary_msgs = _normalize_messages_for_provider_compat(summary_msgs)
             return await self._base_llm.ainvoke(summary_msgs, config)
-        return await self._llm.ainvoke(normalized, config, **kwargs)
+        response = await self._llm.ainvoke(normalized, config, **kwargs)
+        if isinstance(response, AIMessage):
+            response = _coerce_text_tool_calls(response)
+        return response
 
     def stream(self, input_: Any, config: Any = None, **kwargs: Any) -> Any:
         return self._llm.stream(self._normalize(input_), config, **kwargs)

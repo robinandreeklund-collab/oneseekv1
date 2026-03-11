@@ -46,6 +46,11 @@ _SCB_FETCH_FAILURE_MARKERS = (
     "scb_fetch misslyckades",
     "<tool_call>",  # LLM emitted XML tool call as text = format failure
 )
+# Regex to strip leaked <tool_call> XML blocks from responses.
+_TEXT_TOOL_CALL_STRIP_RE = re.compile(
+    r"<tool_call>.*?</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
 _SYNTH_PLACEHOLDER_RESPONSES = {
     "guardrail",
     "no-data",
@@ -132,6 +137,10 @@ def build_synthesizer_node(
         ).strip()
         if not source_response:
             return {}
+        # Strip leaked <tool_call> XML blocks that the LLM emitted as text
+        # instead of structured tool calls — never let raw XML reach the user.
+        if "<tool_call>" in source_response:
+            source_response = _TEXT_TOOL_CALL_STRIP_RE.sub("", source_response).strip()
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
         if graph_complexity == "simple":

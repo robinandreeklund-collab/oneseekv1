@@ -351,6 +351,15 @@ def build_response_layer_node(
             route_hint_early = str(state.get("route_hint") or "kunskap").strip().lower()
             return {"response_mode": route_hint_early if route_hint_early in _VALID_MODES else "kunskap"}
 
+        # Strip leaked <tool_call> XML blocks before formatting
+        if "<tool_call>" in final_response:
+            final_response = re.sub(
+                r"<tool_call>.*?</tool_call>",
+                "",
+                final_response,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         route_hint = str(state.get("route_hint") or "").strip().lower()
         sub_intents: list[str] = [

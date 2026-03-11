@@ -4005,6 +4005,15 @@ async def create_supervisor_agent(
                         )
         if not response_text:
             response_text = str(result)
+        # Strip leaked <tool_call> XML text — the LLM emitted tool calls as
+        # text instead of structured tool_calls.  Never propagate raw XML.
+        if "<tool_call>" in response_text:
+            response_text = re.sub(
+                r"<tool_call>.*?</tool_call>",
+                "",
+                response_text,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
         used_tool_names = _tool_names_from_messages(messages_out)
         explicit_file_read_required = bool(explicit_file_read_requested)
         used_explicit_read_tool = "sandbox_read_file" in used_tool_names

@@ -51,6 +51,21 @@ from app.services.scb_service import (
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_table_id_from_cache(raw_table_id: str) -> str | None:
+    """Try to resolve a wrong table_id using the cached SCB catalog.
+
+    Avoids circular import by importing lazily.  Returns the corrected
+    table_id if found, or ``None`` if no match.
+    """
+    try:
+        from app.agents.new_chat.cache_scb_catalogs import resolve_table_id
+
+        return resolve_table_id(raw_table_id)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Variable / value translation
 # ---------------------------------------------------------------------------
@@ -922,6 +937,20 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
             )
 
             if not metadata or not metadata.get("variables"):
+                # Try to resolve common LLM mistakes (ContentsCode/path as table_id)
+                resolved = _resolve_table_id_from_cache(table_id)
+                if resolved and resolved != table_id:
+                    logger.info(
+                        "scb_validate: resolved '%s' → '%s'", table_id, resolved
+                    )
+                    table_id = resolved
+                    metadata_task = service.get_table_metadata(table_id)
+                    default_sel_task = service.get_default_selection(table_id)
+                    metadata, default_selection = await asyncio.gather(
+                        metadata_task, default_sel_task
+                    )
+
+            if not metadata or not metadata.get("variables"):
                 return json.dumps(
                     {
                         "error": f"Table '{table_id}' not found.",
@@ -1155,6 +1184,20 @@ def create_scb_fetch_tool(
             metadata, default_selection = await asyncio.gather(
                 metadata_task, default_sel_task
             )
+
+            if not metadata or not metadata.get("variables"):
+                # Try to resolve common LLM mistakes (ContentsCode/path as table_id)
+                resolved = _resolve_table_id_from_cache(table_id)
+                if resolved and resolved != table_id:
+                    logger.info(
+                        "scb_fetch: resolved '%s' → '%s'", table_id, resolved
+                    )
+                    table_id = resolved
+                    metadata_task = service.get_table_metadata(table_id)
+                    default_sel_task = service.get_default_selection(table_id)
+                    metadata, default_selection = await asyncio.gather(
+                        metadata_task, default_sel_task
+                    )
 
             if not metadata or not metadata.get("variables"):
                 return json.dumps(
