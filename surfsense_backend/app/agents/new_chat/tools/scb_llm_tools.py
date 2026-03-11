@@ -1202,50 +1202,70 @@ def create_scb_validate_tool(scb_service: ScbService | None = None):
 
             # --- Auto-fetch: if cell count is small, fetch data inline ---
             # The worker LLM often fails to make the second scb_fetch call
-            # (empty response, XML leak, etc.), so we eagerly fetch here.
+            # (empty response, XML leak, loop guard kills it, etc.), so we
+            # eagerly fetch here with retry logic for SCB's 429 rate limit.
             _AUTO_FETCH_CELL_LIMIT = 10_000
+            _AUTO_FETCH_MAX_RETRIES = 3
+            _AUTO_FETCH_BACKOFF_BASE = 1.5  # seconds
             if estimated_cells <= _AUTO_FETCH_CELL_LIMIT:
-                try:
-                    v2_sel = [
-                        {"variableCode": code, "valueCodes": vals}
-                        for code, vals in auto_completed.items()
-                        if vals
-                    ]
-                    fetch_payload = {"selection": v2_sel}
-                    data = await service.query_table(table_id, fetch_payload)
-                    decoded = service.decode_jsonstat2_to_markdown(
-                        data, max_rows=80
-                    )
-                    result: dict[str, Any] = {
-                        "status": "valid",
-                        "table_id": table_id,
-                        "title": metadata.get("title", table_id),
-                        "source": decoded.get("source", "SCB"),
-                        "updated": metadata.get("updated"),
-                        "selection": auto_completed,
-                        "auto_completed": auto_log,
-                        "estimated_cells": estimated_cells,
-                        "warnings": warnings,
-                        "data_table": decoded.get("data_table", ""),
-                        "row_count": decoded.get("row_count", 0),
-                        "truncated": decoded.get("truncated", False),
-                        "auto_fetched": True,
-                    }
-                    if decoded.get("unit"):
-                        result["unit"] = decoded["unit"]
-                    if decoded.get("ref_period"):
-                        result["ref_period"] = decoded["ref_period"]
-                    return json.dumps(result, ensure_ascii=False)
-                except Exception as fetch_exc:
-                    # Auto-fetch failed — fall through to normal response
-                    # so the LLM can still call scb_fetch manually.
+                v2_sel = [
+                    {"variableCode": code, "valueCodes": vals}
+                    for code, vals in auto_completed.items()
+                    if vals
+                ]
+                fetch_payload = {"selection": v2_sel}
+                last_exc: Exception | None = None
+                for attempt in range(_AUTO_FETCH_MAX_RETRIES):
+                    try:
+                        data = await service.query_table(
+                            table_id, fetch_payload
+                        )
+                        decoded = service.decode_jsonstat2_to_markdown(
+                            data, max_rows=80
+                        )
+                        result: dict[str, Any] = {
+                            "status": "valid",
+                            "table_id": table_id,
+                            "title": metadata.get("title", table_id),
+                            "source": decoded.get("source", "SCB"),
+                            "updated": metadata.get("updated"),
+                            "selection": auto_completed,
+                            "auto_completed": auto_log,
+                            "estimated_cells": estimated_cells,
+                            "warnings": warnings,
+                            "data_table": decoded.get("data_table", ""),
+                            "row_count": decoded.get("row_count", 0),
+                            "truncated": decoded.get("truncated", False),
+                            "auto_fetched": True,
+                        }
+                        if decoded.get("unit"):
+                            result["unit"] = decoded["unit"]
+                        if decoded.get("ref_period"):
+                            result["ref_period"] = decoded["ref_period"]
+                        return json.dumps(result, ensure_ascii=False)
+                    except Exception as fetch_exc:
+                        last_exc = fetch_exc
+                        is_rate_limit = "429" in str(fetch_exc)
+                        if is_rate_limit and attempt < _AUTO_FETCH_MAX_RETRIES - 1:
+                            wait = _AUTO_FETCH_BACKOFF_BASE * (2 ** attempt)
+                            logger.info(
+                                "scb_validate auto-fetch 429 for %s, "
+                                "retrying in %.1fs (attempt %d/%d)",
+                                table_id, wait, attempt + 1,
+                                _AUTO_FETCH_MAX_RETRIES,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        break
+                # All retries exhausted or non-retryable error
+                if last_exc is not None:
                     logger.warning(
                         "scb_validate auto-fetch failed for %s: %s",
                         table_id,
-                        fetch_exc,
+                        last_exc,
                     )
                     warnings.append(
-                        f"Auto-fetch failed ({fetch_exc!s}). "
+                        f"Auto-fetch failed ({last_exc!s}). "
                         f"Call scb_fetch manually with the selection below."
                     )
 

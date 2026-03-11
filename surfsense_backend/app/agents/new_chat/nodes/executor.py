@@ -996,8 +996,14 @@ def _sanitize_tool_schema_for_strict_templates(tool_def: Any) -> Any:
     return tool_def
 
 
-_BIGTOOL_MAX_SAME_TOOL_CALLS = 2
-_BIGTOOL_MAX_TOTAL_TOOL_CALLS = 6  # max total domain tool calls per turn
+_BIGTOOL_MAX_SAME_TOOL_CALLS = 3  # raised from 2 — SCB needs validate→fix→validate→fetch
+_BIGTOOL_MAX_TOTAL_TOOL_CALLS = 8  # raised from 6 — domain tools like SCB need more room
+
+# Tools that form a logical pipeline — calling scb_validate then scb_fetch
+# is NOT a "repeated tool" pattern even though both are domain tools.
+_PIPELINE_TOOL_SETS: set[frozenset[str]] = {
+    frozenset({"scb_validate", "scb_fetch"}),
+}
 
 # ---------------------------------------------------------------------------
 # Text-format tool call parser
@@ -1111,6 +1117,12 @@ _FORCE_SUMMARIZE_INSTRUCTION = (
 )
 
 
+def _are_pipeline_tools(name_a: str, name_b: str) -> bool:
+    """Return True if the two tool names belong to the same logical pipeline."""
+    pair = frozenset({name_a, name_b})
+    return any(pair <= ps for ps in _PIPELINE_TOOL_SETS)
+
+
 def _detect_repeated_tool_in_history(messages: Any) -> bool:
     """Return True if domain tools have been called excessively.
 
@@ -1118,6 +1130,10 @@ def _detect_repeated_tool_in_history(messages: Any) -> bool:
     1. Same tool called >= ``_BIGTOOL_MAX_SAME_TOOL_CALLS`` times consecutively
     2. Total domain tool calls >= ``_BIGTOOL_MAX_TOTAL_TOOL_CALLS`` (catches
        alternating validate↔fetch loops with identical failing arguments)
+
+    Pipeline-aware: transitions between tools that form a logical pipeline
+    (e.g. scb_validate → scb_fetch) reset the consecutive counter, since
+    they represent forward progress rather than a stuck loop.
     """
     if not isinstance(messages, list):
         return False
@@ -1138,11 +1154,17 @@ def _detect_repeated_tool_in_history(messages: Any) -> bool:
         total_domain_calls += 1
         if not last_tool_name:
             last_tool_name = name
-        if name == last_tool_name:
+            consecutive = 1
+        elif name == last_tool_name:
             consecutive += 1
+        elif _are_pipeline_tools(name, last_tool_name):
+            # Forward progress in a pipeline — reset consecutive
+            last_tool_name = name
+            consecutive = 1
         else:
-            # Reset consecutive but keep counting total
-            pass
+            # Different, non-pipeline tool — reset consecutive
+            last_tool_name = name
+            consecutive = 1
     if consecutive >= _BIGTOOL_MAX_SAME_TOOL_CALLS:
         return True
     return total_domain_calls >= _BIGTOOL_MAX_TOTAL_TOOL_CALLS
