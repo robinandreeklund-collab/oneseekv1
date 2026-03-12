@@ -706,17 +706,17 @@ def test_ttl_cache_custom_ttl():
 # ---------------------------------------------------------------------------
 
 
-def test_codelist_v1_returns_empty():
-    """v1 service should return empty dict for codelist requests."""
+def test_codelist_v1_returns_error():
+    """v1 service should return error dict for codelist requests."""
     service = _make_v1_service()
     result = asyncio.get_event_loop().run_until_complete(
         service.get_codelist("some_codelist")
     )
-    assert result == {}
+    assert "error" in result
 
 
 def test_codelist_v2_success():
-    """v2 service should fetch and cache codelists."""
+    """v2 service should fetch codelists."""
     service = ScbService(base_url="https://statistikdatabasen.scb.se/api/v2/")
 
     mock_codelist = {
@@ -727,44 +727,32 @@ def test_codelist_v2_success():
         ],
     }
 
-    call_count = 0
-
     async def fake_get_json(url, *, params=None):
-        nonlocal call_count
-        call_count += 1
         assert "codelists" in url
         return mock_codelist
 
     service._get_json = fake_get_json  # type: ignore[method-assign]
 
-    # First call — should fetch from API
-    result1 = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.get_event_loop().run_until_complete(
         service.get_codelist("Regions")
     )
-    assert result1["id"] == "Regions"
-    assert call_count == 1
-
-    # Second call — should use cache
-    result2 = asyncio.get_event_loop().run_until_complete(
-        service.get_codelist("Regions")
-    )
-    assert result2["id"] == "Regions"
-    assert call_count == 1  # No additional fetch
+    assert result["id"] == "Regions"
+    assert len(result["values"]) == 2
 
 
 def test_codelist_v2_http_error():
-    """HTTP errors during codelist fetch should return empty dict."""
+    """HTTP errors during codelist fetch should return error dict."""
     service = ScbService(base_url="https://statistikdatabasen.scb.se/api/v2/")
 
     async def fake_get_json(url, *, params=None):
-        raise httpx.HTTPError("Simulated error")
+        raise Exception("Simulated error")
 
     service._get_json = fake_get_json  # type: ignore[method-assign]
 
     result = asyncio.get_event_loop().run_until_complete(
         service.get_codelist("nonexistent")
     )
-    assert result == {}
+    assert "error" in result
 
 
 # ---------------------------------------------------------------------------

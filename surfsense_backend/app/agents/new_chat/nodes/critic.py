@@ -12,6 +12,11 @@ from ..structured_schemas import (
     pydantic_to_response_format,
     structured_output_enabled,
 )
+from ..supervisor_memory import (
+    SandboxReadFn,
+    _format_artifact_contents_for_context,
+    _load_recent_artifact_contents,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,7 @@ def build_critic_node(
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     render_guard_message_fn: Callable[[str, list[str]], str],
     max_total_steps: int = 12,
+    sandbox_read_fn: SandboxReadFn | None = None,
 ):
     async def critic_node(
         state: dict[str, Any],
@@ -158,16 +164,26 @@ def build_critic_node(
             }
 
         prompt = append_datetime_context_fn(critic_gate_prompt_template)
-        critic_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "resolved_intent": state.get("resolved_intent") or {},
-                "active_plan": state.get("active_plan") or [],
-                "final_agent_name": state.get("final_agent_name"),
-                "final_response": final_response,
-            },
-            ensure_ascii=True,
+
+        # Inject artifact contents so the critic can verify data quality
+        # against the full tool output (not just the truncated summary).
+        critic_payload: dict[str, Any] = {
+            "query": latest_user_query,
+            "resolved_intent": state.get("resolved_intent") or {},
+            "active_plan": state.get("active_plan") or [],
+            "final_agent_name": state.get("final_agent_name"),
+            "final_response": final_response,
+        }
+        artifact_contents = _load_recent_artifact_contents(
+            state.get("artifact_manifest"),
+            max_items=2,  # critic needs less detail than synthesizer
+            sandbox_read_fn=sandbox_read_fn,
         )
+        if artifact_contents:
+            critic_payload["artifact_data"] = _format_artifact_contents_for_context(
+                artifact_contents
+            )
+        critic_input = json.dumps(critic_payload, ensure_ascii=True)
         decision = "ok"
         try:
             _invoke_kwargs: dict[str, Any] = {"max_tokens": 250}

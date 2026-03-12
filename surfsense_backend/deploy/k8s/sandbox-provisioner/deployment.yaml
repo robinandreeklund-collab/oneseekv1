@@ -19,7 +19,7 @@ spec:
       containers:
         - name: sandbox-provisioner
           # Build/push this image from surfsense_backend/docker/provisioner/Dockerfile.
-          image: ghcr.io/your-org/oneseek-sandbox-provisioner:latest
+          image: oneseek-sandbox-provisioner:local
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002

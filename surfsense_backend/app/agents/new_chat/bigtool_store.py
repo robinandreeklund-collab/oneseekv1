@@ -24,19 +24,19 @@ from app.agents.new_chat.skolverket_tools import (
     SKOLVERKET_TOOL_DEFINITIONS,
     build_skolverket_tool_registry,
 )
-from app.agents.new_chat.statistics_agent import (
-    SCB_TOOL_DEFINITIONS,
-    build_scb_tool_registry,
-)
+# NOTE: build_scb_tool_registry is imported lazily (inside function) to break
+# a circular import chain:
+#   statistics_agent → nodes.executor → nodes → critic → supervisor_memory
+#   → bigtool_store → statistics_agent
+# SCB_TOOL_DEFINITIONS is imported directly from scb_tool_definitions (no cycle).
+from app.agents.new_chat.scb_tool_definitions import SCB_TOOL_DEFINITIONS
 from app.agents.new_chat.tool_identity_defaults import _DEFAULT_TOOL_IDENTITY
 from app.agents.new_chat.tools.bolagsverket import BOLAGSVERKET_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.elpris import ELPRIS_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.geoapify_maps import GEOAPIFY_TOOL_DEFINITIONS
-from app.agents.new_chat.tools.registry import (
-    build_tools,
-    build_tools_async,
-    get_default_enabled_tools,
-)
+# NOTE: tools.registry imports are lazy (inside functions) to break
+# circular import: tools/registry → statistics_agent → nodes → critic
+# → supervisor_memory → bigtool_store → tools/registry
 from app.agents.new_chat.tools.riksbank import RIKSBANK_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.smhi import SMHI_TOOL_DEFINITIONS
 from app.agents.new_chat.tools.trafikanalys import TRAFIKANALYS_TOOL_DEFINITIONS
@@ -167,25 +167,42 @@ TOOL_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
     "marketplace_compare_prices": ("tools", "marketplace", "compare"),
     "marketplace_categories": ("tools", "marketplace", "reference"),
     "marketplace_regions": ("tools", "marketplace", "reference"),
-    # SCB LLM-driven hybrid tools
-    "scb_search_and_inspect": ("tools", "statistics", "scb"),
-    "scb_validate_selection": ("tools", "statistics", "scb"),
-    "scb_fetch_validated": ("tools", "statistics", "scb"),
+    # SCB 7-tool pipeline
+    "scb_search": ("tools", "statistics", "scb"),
+    "scb_browse": ("tools", "statistics", "scb"),
+    "scb_inspect": ("tools", "statistics", "scb"),
+    "scb_codelist": ("tools", "statistics", "scb"),
+    "scb_preview": ("tools", "statistics", "scb"),
+    "scb_validate": ("tools", "statistics", "scb"),
+    "scb_fetch": ("tools", "statistics", "scb"),
 }
 
 TOOL_KEYWORDS: dict[str, list[str]] = {
-    # SCB LLM-driven hybrid tools
-    "scb_search_and_inspect": [
+    # SCB 7-tool pipeline
+    "scb_search": [
         "scb", "statistik", "tabell", "variabel", "statistiska",
         "centralbyran", "befolkning", "arbetsmarknad", "ekonomi",
         "utbildning", "miljo", "halsa", "boende", "priser",
         "handel", "transport", "energi", "jordbruk",
     ],
-    "scb_validate_selection": [
+    "scb_browse": [
+        "scb", "statistik", "amne", "kategori", "utforska", "navigera",
+    ],
+    "scb_inspect": [
+        "scb", "metadata", "variabel", "kodlista", "tabell",
+        "inspektion", "statistik",
+    ],
+    "scb_codelist": [
+        "scb", "kodlista", "lan", "kommun", "region", "aggregering",
+    ],
+    "scb_preview": [
+        "scb", "forhandsvisning", "preview", "testa", "statistik",
+    ],
+    "scb_validate": [
         "scb", "validera", "kontrollera", "selection", "variabel",
         "kod", "varde", "statistik",
     ],
-    "scb_fetch_validated": [
+    "scb_fetch": [
         "scb", "hamta", "data", "fetch", "statistik", "tabell",
     ],
     "search_knowledge_base": ["sok", "search", "note", "calendar", "knowledge"],
@@ -2345,6 +2362,12 @@ async def build_global_tool_registry(
     include_mcp_tools: bool = True,
     respect_lifecycle: bool = True,
 ) -> dict[str, BaseTool]:
+    from app.agents.new_chat.tools.registry import (
+        build_tools,
+        build_tools_async,
+        get_default_enabled_tools,
+    )
+
     enabled_tools = list(get_default_enabled_tools())
     runtime_hitl = dependencies.get("runtime_hitl")
     sandbox_tool_ids = (
@@ -2386,6 +2409,8 @@ async def build_global_tool_registry(
             )
             for tool in fallback_tools:
                 registry[str(tool.name)] = tool
+    from app.agents.new_chat.statistics_agent import build_scb_tool_registry
+
     scb_registry = build_scb_tool_registry(
         connector_service=dependencies["connector_service"],
         search_space_id=dependencies["search_space_id"],

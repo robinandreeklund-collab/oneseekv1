@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.agents.new_chat.bigtool_store import _normalize_text, _tokenize
 from app.agents.new_chat.sandbox_runtime import sandbox_write_text_file
@@ -17,6 +18,18 @@ from app.agents.new_chat.supervisor_text_utils import (
     _serialize_artifact_payload,
     _truncate_for_prompt,
 )
+
+logger = logging.getLogger(__name__)
+
+# Type alias for sandbox read callback.
+# Signature: (path: str) -> str
+# Should be created by the supervisor closure binding thread_id and runtime_hitl.
+SandboxReadFn = Callable[[str], str]
+
+# Limits for artifact content injection into downstream nodes.
+_ARTIFACT_READ_MAX_ITEMS = 3
+_ARTIFACT_READ_MAX_CHARS_PER_ITEM = 4000
+_ARTIFACT_READ_MAX_TOTAL_CHARS = 12000
 
 
 def _artifact_runtime_hitl_thread_scope(
@@ -79,6 +92,124 @@ def _persist_artifact_content(
     local_path = local_root / f"{artifact_id}.json"
     local_path.write_text(str(content or ""), encoding="utf-8")
     return artifact_uri, str(local_path), "local"
+
+
+def _read_artifact_content(
+    entry: dict[str, Any],
+    *,
+    sandbox_read_fn: SandboxReadFn | None = None,
+) -> str | None:
+    """Read artifact content back from the manifest entry.
+
+    Resolution order:
+    1. ``inline_content`` — the serialized payload stored directly in the
+       manifest dict.  This is the primary path and works regardless of
+       filesystem isolation (k8s pods, remote sandboxes, etc.).
+    2. Local filesystem — works for ``storage_backend="local"`` and sandbox
+       backends with mounted volumes.
+    3. Sandbox read callback — for artifacts stored in remote containers.
+
+    Returns the content string or ``None`` if it cannot be read.
+    """
+    # 1. Inline content — always available when stored at creation time.
+    inline = entry.get("inline_content")
+    if inline and isinstance(inline, str):
+        return inline
+
+    artifact_path = str(entry.get("artifact_path") or "").strip()
+    if not artifact_path:
+        return None
+
+    # 2. Try local filesystem (works for storage_backend="local" and
+    #    for sandbox backends with mounted volumes).
+    try:
+        p = Path(artifact_path)
+        if p.is_file():
+            return p.read_text(encoding="utf-8")
+    except Exception:
+        pass
+
+    # 3. Try sandbox read for remote-stored artifacts.
+    storage_backend = str(entry.get("storage_backend") or "").strip().lower()
+    if storage_backend == "sandbox" and sandbox_read_fn is not None:
+        try:
+            content = sandbox_read_fn(artifact_path)
+            if content:
+                return content
+        except Exception:
+            logger.debug(
+                "sandbox read failed for artifact %s at %s",
+                entry.get("id", "?"),
+                artifact_path,
+            )
+
+    return None
+
+
+def _load_recent_artifact_contents(
+    manifest: list[dict[str, Any]] | None,
+    *,
+    max_items: int = _ARTIFACT_READ_MAX_ITEMS,
+    max_chars_per_item: int = _ARTIFACT_READ_MAX_CHARS_PER_ITEM,
+    max_total_chars: int = _ARTIFACT_READ_MAX_TOTAL_CHARS,
+    sandbox_read_fn: SandboxReadFn | None = None,
+) -> list[dict[str, str]]:
+    """Load contents of the most recent artifacts from the manifest.
+
+    Returns a list of ``{"tool": ..., "summary": ..., "content": ...}`` dicts
+    for each artifact whose content could be read, newest first, subject to
+    *max_items* / *max_total_chars* limits.
+
+    If *sandbox_read_fn* is provided it will be used as a fallback for artifacts
+    stored in a remote sandbox container (``storage_backend="sandbox"``).
+    """
+    if not manifest:
+        return []
+    loaded: list[dict[str, str]] = []
+    total_chars = 0
+    for entry in reversed(manifest):
+        if not isinstance(entry, dict):
+            continue
+        content = _read_artifact_content(entry, sandbox_read_fn=sandbox_read_fn)
+        if not content:
+            continue
+        # Truncate individual artifact content to limit
+        if len(content) > max_chars_per_item:
+            content = content[:max_chars_per_item] + "\n[...trunkerad]"
+        if total_chars + len(content) > max_total_chars:
+            # If adding this artifact would exceed the total limit, skip it
+            if loaded:
+                break
+            # If this is the first artifact and already too large, truncate
+            remaining = max_total_chars - total_chars
+            content = content[:remaining] + "\n[...trunkerad]"
+        loaded.append({
+            "tool": str(entry.get("tool") or "").strip(),
+            "summary": str(entry.get("summary") or "").strip(),
+            "content": content,
+        })
+        total_chars += len(content)
+        if len(loaded) >= max_items:
+            break
+    loaded.reverse()
+    return loaded
+
+
+def _format_artifact_contents_for_context(
+    artifact_contents: list[dict[str, str]],
+) -> str:
+    """Format loaded artifact contents as a context block for LLM injection."""
+    if not artifact_contents:
+        return ""
+    parts: list[str] = []
+    for item in artifact_contents:
+        tool = item.get("tool") or "tool"
+        summary = item.get("summary") or ""
+        content = item.get("content") or ""
+        parts.append(
+            f"<artifact tool=\"{tool}\" summary=\"{summary}\">\n{content}\n</artifact>"
+        )
+    return "<artifact_data>\n" + "\n".join(parts) + "\n</artifact_data>"
 
 
 def _tokenize_for_memory_relevance(text: str) -> set[str]:

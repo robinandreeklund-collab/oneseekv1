@@ -63,11 +63,6 @@ from ..statistics_agent import (
     SCB_TOOL_DEFINITIONS,
     build_scb_tool,
 )
-from .scb_llm_tools import (
-    create_scb_fetch_validated_tool,
-    create_scb_search_and_inspect_tool,
-    create_scb_validate_selection_tool,
-)
 from .bolagsverket import (
     BOLAGSVERKET_TOOL_DEFINITIONS,
     create_bolagsverket_tool,
@@ -100,6 +95,17 @@ from .sandbox_filesystem import (
     create_sandbox_write_file_tool,
 )
 from .sandbox_release import create_sandbox_release_tool
+from .scb_llm_tools import (
+    # --- Discovery tools commented out: catalog approach replaces them ---
+    # create_scb_browse_tool,
+    # create_scb_codelist_tool,
+    # create_scb_inspect_tool,
+    # create_scb_preview_tool,
+    # create_scb_search_tool,
+    # --- Keep validate + fetch ---
+    create_scb_fetch_tool,
+    create_scb_validate_tool,
+)
 from .scrape_webpage import create_scrape_webpage_tool
 from .search_surfsense_docs import create_search_surfsense_docs_tool
 from .smhi import (
@@ -444,7 +450,9 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ToolDefinition(
             name=definition.tool_id,
             description=definition.description,
-            factory=lambda deps, definition=definition: create_riksbank_tool(definition),
+            factory=lambda deps, definition=definition: create_riksbank_tool(
+                definition
+            ),
             requires=[],
         )
         for definition in RIKSBANK_TOOL_DEFINITIONS
@@ -468,45 +476,96 @@ BUILTIN_TOOLS: list[ToolDefinition] = [
         ToolDefinition(
             name=definition.tool_id,
             description=definition.description,
-            factory=lambda deps, definition=definition: create_trafikanalys_tool(definition),
+            factory=lambda deps, definition=definition: create_trafikanalys_tool(
+                definition
+            ),
             requires=[],
         )
         for definition in TRAFIKANALYS_TOOL_DEFINITIONS
     ],
     # =========================================================================
-    # SCB (Statistics Sweden) — LLM-driven tools (hybrid approach)
+    # SCB (Statistics Sweden) — Discovery tools COMMENTED OUT
+    # The cached catalog approach in statistics_agent.py replaces the need for
+    # search/browse/inspect/codelist/preview. LLM sees all tables + ContentsCode
+    # in the catalog prompt and picks directly.
+    # Kept here for rollback if needed.
+    # =========================================================================
+    # ToolDefinition(
+    #     name="scb_search",
+    #     description=(
+    #         "Search SCB tables by keywords. Returns a compact list of matches "
+    #         "with table IDs and titles. Use scb_inspect for full metadata."
+    #     ),
+    #     factory=lambda deps: create_scb_search_tool(
+    #         scb_service=deps.get("scb_service"),
+    #     ),
+    #     requires=[],
+    # ),
+    # ToolDefinition(
+    #     name="scb_browse",
+    #     description=(
+    #         "Navigate SCB's topic tree step by step. Use empty path for top-level "
+    #         "subjects, then drill down into interesting areas."
+    #     ),
+    #     factory=lambda deps: create_scb_browse_tool(
+    #         scb_service=deps.get("scb_service"),
+    #     ),
+    #     requires=[],
+    # ),
+    # ToolDefinition(
+    #     name="scb_inspect",
+    #     description=(
+    #         "Inspect a SCB table's full metadata: variables, codes, elimination "
+    #         "defaults, codelists, units, and usage hints. Key step before fetching."
+    #     ),
+    #     factory=lambda deps: create_scb_inspect_tool(
+    #         scb_service=deps.get("scb_service"),
+    #     ),
+    #     requires=[],
+    # ),
+    # ToolDefinition(
+    #     name="scb_codelist",
+    #     description=(
+    #         "Fetch a SCB codelist (e.g. vs_RegionLän for counties only, "
+    #         "vs_RegionKommun07 for municipalities). Shows all values."
+    #     ),
+    #     factory=lambda deps: create_scb_codelist_tool(
+    #         scb_service=deps.get("scb_service"),
+    #     ),
+    #     requires=[],
+    # ),
+    # ToolDefinition(
+    #     name="scb_preview",
+    #     description=(
+    #         "Preview a SCB table with auto-limited data (~20 rows). "
+    #         "Use to see what data looks like before a full fetch."
+    #     ),
+    #     factory=lambda deps: create_scb_preview_tool(
+    #         scb_service=deps.get("scb_service"),
+    #     ),
+    #     requires=[],
+    # ),
+    # =========================================================================
+    # SCB — validate + fetch (KEPT ACTIVE)
     # =========================================================================
     ToolDefinition(
-        name="scb_search_and_inspect",
+        name="scb_validate",
         description=(
-            "Search SCB tables and inspect their variable structure. "
-            "Returns table candidates with variables, codes, and labels "
-            "so the LLM can build precise selections."
+            "Validate a selection without fetching data. Auto-completes missing "
+            "variables with elimination defaults. Supports TOP(n), FROM(x), RANGE(x,y)."
         ),
-        factory=lambda deps: create_scb_search_and_inspect_tool(
+        factory=lambda deps: create_scb_validate_tool(
             scb_service=deps.get("scb_service"),
         ),
         requires=[],
     ),
     ToolDefinition(
-        name="scb_validate_selection",
+        name="scb_fetch",
         description=(
-            "Validate a selection against SCB table metadata without fetching data. "
-            "Checks all variables are covered, all codes are valid, with fuzzy "
-            "matching and suggestions for corrections."
+            "Fetch data from SCB as a readable markdown table. Auto-completes "
+            "missing variables. Supports v2 expressions and codelists."
         ),
-        factory=lambda deps: create_scb_validate_selection_tool(
-            scb_service=deps.get("scb_service"),
-        ),
-        requires=[],
-    ),
-    ToolDefinition(
-        name="scb_fetch_validated",
-        description=(
-            "Fetch data from SCB using a pre-validated selection. "
-            "Use scb_validate_selection first to ensure correctness."
-        ),
-        factory=lambda deps: create_scb_fetch_validated_tool(
+        factory=lambda deps: create_scb_fetch_tool(
             scb_service=deps.get("scb_service"),
             connector_service=deps.get("connector_service"),
             search_space_id=deps.get("search_space_id", 0),
@@ -562,10 +621,18 @@ def get_tool_by_name(name: str) -> ToolDefinition | None:
 
 def get_default_enabled_tools() -> list[str]:
     """Get names of tools that are enabled by default."""
-    default_tools = [tool_def.name for tool_def in BUILTIN_TOOLS if tool_def.enabled_by_default]
-    riksdagen_tool_ids = [definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS]
-    marketplace_tool_ids = [definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS]
-    skolverket_tool_ids = [definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS]
+    default_tools = [
+        tool_def.name for tool_def in BUILTIN_TOOLS if tool_def.enabled_by_default
+    ]
+    riksdagen_tool_ids = [
+        definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS
+    ]
+    marketplace_tool_ids = [
+        definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS
+    ]
+    skolverket_tool_ids = [
+        definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS
+    ]
     kolada_tool_ids = [definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS]
     scb_tool_ids = [definition.tool_id for definition in SCB_TOOL_DEFINITIONS]
     return (
@@ -581,9 +648,15 @@ def get_default_enabled_tools() -> list[str]:
 def get_all_tool_names() -> list[str]:
     """Get all registered tool names across all categories."""
     builtin_tool_names = [tool_def.name for tool_def in BUILTIN_TOOLS]
-    riksdagen_tool_ids = [definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS]
-    marketplace_tool_ids = [definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS]
-    skolverket_tool_ids = [definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS]
+    riksdagen_tool_ids = [
+        definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS
+    ]
+    marketplace_tool_ids = [
+        definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS
+    ]
+    skolverket_tool_ids = [
+        definition.tool_id for definition in SKOLVERKET_TOOL_DEFINITIONS
+    ]
     kolada_tool_ids = [definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS]
     scb_tool_ids = [definition.tool_id for definition in SCB_TOOL_DEFINITIONS]
     external_model_ids = [spec.tool_name for spec in EXTERNAL_MODEL_SPECS]
@@ -704,8 +777,9 @@ async def build_tools_async(
     if respect_lifecycle and "db_session" in dependencies:
         try:
             from app.services.tool_lifecycle_service import get_live_tool_ids
+
             live_tool_ids = await get_live_tool_ids(dependencies["db_session"])
-            
+
             if live_tool_ids:
                 # Filter enabled_tools to only include live tools
                 if enabled_tools is not None:
@@ -714,36 +788,42 @@ async def build_tools_async(
                     # Use default tools but filter to only live ones
                     default_tools = set(get_default_enabled_tools())
                     enabled_tools = [t for t in default_tools if t in live_tool_ids]
-                
-                logging.info(f"Lifecycle filtering enabled: {len(live_tool_ids)} live tools")
+
+                logging.info(
+                    f"Lifecycle filtering enabled: {len(live_tool_ids)} live tools"
+                )
         except Exception as e:
             # Fallback: if lifecycle check fails, continue with original behavior
             logging.warning(f"Lifecycle filtering failed, using all tools: {e}")
-    
+
     # Build standard tools
     tools = build_tools(dependencies, enabled_tools, disabled_tools, additional_tools)
 
     # Build Riksdagen tools if any are enabled
     if enabled_tools:
         riksdag_tools_to_build = [
-            tool_id for tool_id in enabled_tools 
-            if tool_id.startswith("riksdag_")
+            tool_id for tool_id in enabled_tools if tool_id.startswith("riksdag_")
         ]
     else:
         # Check if any riksdag tools would be enabled by default
         riksdag_tools_to_build = [
             definition.tool_id for definition in RIKSDAGEN_TOOL_DEFINITIONS
         ]
-    
+
     # Filter out disabled riksdag tools
     if disabled_tools:
         riksdag_tools_to_build = [
-            tool_id for tool_id in riksdag_tools_to_build
+            tool_id
+            for tool_id in riksdag_tools_to_build
             if tool_id not in disabled_tools
         ]
-    
+
     # Build Riksdagen tools if any should be enabled
-    if riksdag_tools_to_build and "connector_service" in dependencies and "search_space_id" in dependencies:
+    if (
+        riksdag_tools_to_build
+        and "connector_service" in dependencies
+        and "search_space_id" in dependencies
+    ):
         try:
             riksdag_registry = build_riksdagen_tool_registry(
                 connector_service=dependencies["connector_service"],
@@ -763,24 +843,28 @@ async def build_tools_async(
     # Build Marketplace tools if any are enabled
     if enabled_tools:
         marketplace_tools_to_build = [
-            tool_id for tool_id in enabled_tools 
-            if tool_id.startswith("marketplace_")
+            tool_id for tool_id in enabled_tools if tool_id.startswith("marketplace_")
         ]
     else:
         # Check if any marketplace tools would be enabled by default
         marketplace_tools_to_build = [
             definition.tool_id for definition in MARKETPLACE_TOOL_DEFINITIONS
         ]
-    
+
     # Filter out disabled marketplace tools
     if disabled_tools:
         marketplace_tools_to_build = [
-            tool_id for tool_id in marketplace_tools_to_build
+            tool_id
+            for tool_id in marketplace_tools_to_build
             if tool_id not in disabled_tools
         ]
-    
+
     # Build Marketplace tools if any should be enabled
-    if marketplace_tools_to_build and "connector_service" in dependencies and "search_space_id" in dependencies:
+    if (
+        marketplace_tools_to_build
+        and "connector_service" in dependencies
+        and "search_space_id" in dependencies
+    ):
         try:
             marketplace_registry = build_marketplace_tool_registry(
                 connector_service=dependencies["connector_service"],
@@ -816,7 +900,9 @@ async def build_tools_async(
     # Remove disabled tools
     if disabled_tools:
         skolverket_tools_to_build = [
-            tool_id for tool_id in skolverket_tools_to_build if tool_id not in disabled_tools
+            tool_id
+            for tool_id in skolverket_tools_to_build
+            if tool_id not in disabled_tools
         ]
 
     if skolverket_tools_to_build and "connector_service" in dependencies:
@@ -846,8 +932,7 @@ async def build_tools_async(
             tool_id
             for tool_id in enabled_tools
             if any(
-                tool_id == definition.tool_id
-                for definition in KOLADA_TOOL_DEFINITIONS
+                tool_id == definition.tool_id for definition in KOLADA_TOOL_DEFINITIONS
             )
         ]
     else:
@@ -859,7 +944,9 @@ async def build_tools_async(
     # Remove disabled tools
     if disabled_tools:
         kolada_tools_to_build = [
-            tool_id for tool_id in kolada_tools_to_build if tool_id not in disabled_tools
+            tool_id
+            for tool_id in kolada_tools_to_build
+            if tool_id not in disabled_tools
         ]
 
     if kolada_tools_to_build and "connector_service" in dependencies:
@@ -888,15 +975,10 @@ async def build_tools_async(
         scb_tools_to_build = [
             tool_id
             for tool_id in enabled_tools
-            if any(
-                tool_id == definition.tool_id
-                for definition in SCB_TOOL_DEFINITIONS
-            )
+            if any(tool_id == definition.tool_id for definition in SCB_TOOL_DEFINITIONS)
         ]
     else:
-        scb_tools_to_build = [
-            definition.tool_id for definition in SCB_TOOL_DEFINITIONS
-        ]
+        scb_tools_to_build = [definition.tool_id for definition in SCB_TOOL_DEFINITIONS]
 
     if disabled_tools:
         scb_tools_to_build = [

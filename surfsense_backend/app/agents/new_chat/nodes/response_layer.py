@@ -77,6 +77,15 @@ _NO_DATA_RE = re.compile(
     r"kan tyvärr inte|desvärre|"
     r"returnerade ingen data|returnerade tom data|"
     r"data saknas|ingen data|"
+    r"kunde inte hamta|kunde inte hämta|"
+    r"fetch failed|data fetch failed|400 bad request|"
+    r"scb_fetch misslyckades|"
+    r"selection must be a|selection måste vara|"
+    r"input should be a valid|pydantic.*validation|"
+    r"enbart discovery.verktyg|"
+    r"alla verktyg returnerade tom|"
+    r"validering misslyckades|"
+    r"<tool_call>|"
     r"no tools available|cannot answer|unable to)",
     re.IGNORECASE,
 )
@@ -344,8 +353,24 @@ def build_response_layer_node(
     ) -> dict[str, Any]:
         final_response = str(state.get("final_response") or "").strip()
         if not final_response:
+            # Fallback: try to extract a response from recent_agent_calls
+            # when orchestration budget was exhausted without populating
+            # final_response.  Import here to avoid circular dependency.
+            from .synthesizer import _extract_best_agent_response
+
+            final_response = _extract_best_agent_response(state)
+        if not final_response:
             route_hint_early = str(state.get("route_hint") or "kunskap").strip().lower()
             return {"response_mode": route_hint_early if route_hint_early in _VALID_MODES else "kunskap"}
+
+        # Strip leaked <tool_call> XML blocks before formatting
+        if "<tool_call>" in final_response:
+            final_response = re.sub(
+                r"<tool_call>.*?</tool_call>",
+                "",
+                final_response,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
 
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         route_hint = str(state.get("route_hint") or "").strip().lower()
@@ -373,8 +398,17 @@ def build_response_layer_node(
         # Guard: skip LLM formatting when the response is a disclaimer
         # (e.g. "ingen tillgång till verktyg") — a small model may
         # hallucinate data to replace the disclaimer.
+        # Also skip when `data_grounded` is False — the answer is NOT
+        # backed by real tool data, so the LLM must not "fill in" numbers.
         mode_prompt = _mode_prompts.get(mode, "").strip()
         skip_llm = bool(_NO_DATA_RE.search(final_response))
+        if not skip_llm and not state.get("data_grounded", True):
+            # No data-producing tool returned real data.  Letting the LLM
+            # reformat risks hallucinating plausible-sounding numbers.
+            skip_llm = True
+            logger.info(
+                "response_layer: skipping LLM format — data_grounded=False"
+            )
         if mode_prompt and llm is not None and not skip_llm:
             formatted = await _llm_format(
                 mode_prompt, final_response, latest_user_query,

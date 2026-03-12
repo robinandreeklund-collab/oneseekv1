@@ -1,8 +1,8 @@
 # SCB API Integration — Fullständig Dokumentation
 
-> **Version:** 4.0
-> **Datum:** 2026-03-10
-> **Status:** Produktion — Hybrid LLM-driven variabelförståelse (v4.0)
+> **Version:** 5.1
+> **Datum:** 2026-03-11
+> **Status:** Produktion — 7-verktygspipeline med JSON-stat2-dekoder, auto-complete & analytisk resonering (v5.1)
 > **Författare:** OneSeek-teamet
 
 ---
@@ -12,11 +12,11 @@
 1. [Översikt](#1-översikt)
 2. [Arkitektur](#2-arkitektur)
 3. [Filstruktur](#3-filstruktur)
-4. [SCB PxWeb API — Nuvarande (v1)](#4-scb-pxweb-api--nuvarande-v1)
-5. [SCB PxWebApi v2 — Migrationsplan](#5-scb-pxwebapi-v2--migrationsplan)
+4. [SCB PxWeb API — v1 (legacy)](#4-scb-pxweb-api--v1-legacy)
+5. [SCB PxWebApi v2 — Aktiv](#5-scb-pxwebapi-v2--aktiv)
 6. [ScbService — Kärntjänst](#6-scbservice--kärntjänst)
 7. [Statistics Agent — LangGraph Bigtool](#7-statistics-agent--langgraph-bigtool)
-8. [Verktygsregistret — 40 SCB-verktyg](#8-verktygsregistret--40-scb-verktyg)
+8. [Verktygsregistret — 47 domänverktyg](#8-verktygsregistret--47-domänverktyg)
 9. [Domain Fan-Out](#9-domain-fan-out)
 10. [Routing och Intent Detection](#10-routing-och-intent-detection)
 11. [Kodkvalitetsanalys](#11-kodkvalitetsanalys)
@@ -26,7 +26,11 @@
 15. [Testsvit](#15-testsvit)
 16. [Evalueringsdata](#16-evalueringsdata)
 17. [Konfiguration och Environment](#17-konfiguration-och-environment)
-18. [Framtida Arbete](#18-framtida-arbete)
+18. [7-verktygspipeline (v5.0)](#18-7-verktygspipeline-v50)
+19. [Supervisor-integrationer för SCB-data (v5.1)](#19-supervisor-integrationer-för-scb-data-v51)
+20. [Implementeringslogg](#20-implementeringslogg)
+21. [Historik: Hybrid LLM-driven Variabelförståelse (v4.0)](#21-historik-hybrid-llm-driven-variabelförståelse-v40)
+22. [Framtida Arbete](#22-framtida-arbete)
 
 ---
 
@@ -34,14 +38,16 @@
 
 SCB-integrationen (Statistiska Centralbyrån) ger OneSeek tillgång till hela Sveriges officiella statistikdatabas via PxWeb API. Systemet:
 
-- Navigerar SCB:s trädstruktur av ämnesområden automatiskt
-- Hittar bästa matchande tabell baserat på användarens fråga
-- Bygger optimerade frågor med intelligent variabelval
+- **7 LLM-drivna verktyg** för sökning, navigering, inspektion, preview, validering och datahämtning
+- **47 domänverktyg** som alternativa ingångar per ämnesområde
+- **JSON-stat2-dekoder** som konverterar rå API-data till läsbara markdown-tabeller
+- **Auto-complete** som fyller saknade variabler med elimination-defaults
+- **v2-uttryck** (TOP, FROM, RANGE, *) för förenklade frågor
+- **Trädnavigering** för explorativa frågor
 - Hanterar batching vid stora datamängder (>150 000 celler)
 - Lagrar resultat i OneSeek:s kunskapsbas via ConnectorService
-- Presenterar data med källhänvisning och citationsformat
 
-**Täckning:** 20+ ämnesområden, 47 verktyg (21 breda + 26 specifika), ~2000+ tabeller
+**Täckning:** 20+ ämnesområden, 47 domänverktyg + 7 LLM-verktyg, ~2000+ tabeller
 
 ---
 
@@ -55,35 +61,58 @@ SCB-integrationen (Statistiska Centralbyrån) ger OneSeek tillgång till hela Sv
                │
     ┌──────────▼──────────┐
     │  Statistics Agent    │  (LangGraph Bigtool)
-    │  - retrieve_tools() │  ← Vektorliknande sökning bland 47 SCB-verktyg
+    │  - retrieve_tools() │  ← Vektorliknande sökning bland 47+7 verktyg
     │  - NormalizingChat   │
     │  - max 2 tools/turn │
-    └──────────┬──────────┘
-               │
-    ┌──────────▼──────────┐     ┌─────────────────────┐
-    │  SCB Tool (dynamic)  │────▶│   ScbService          │
-    │  per ämnesområde     │     │   - collect_tables()  │
-    │  scb_befolkning,     │     │   - find_best_table() │
-    │  scb_arbetsmarknad.. │     │   - build_query()     │
-    └──────────────────────┘     │   - query_table()     │
-                                 └──────────┬────────────┘
-                                            │
-                                 ┌──────────▼────────────┐
-                                 │  SCB PxWebApi (v2)       │
-                                 │  statistikdatabasen.scb. │
-                                 │  se/api/v2/              │
-                                 │  - GET /tables?query=    │
-                                 │  - GET /tables/{id}/meta │
-                                 │  - POST /tables/{id}/data│
-                                 │  - GET /codelists/{id}   │
-                                 │  (v1 fallback stöds)     │
-                                 └─────────────────────────┘
-                                            │
-                                 ┌──────────▼────────────┐
-                                 │  ConnectorService       │
-                                 │  - ingest_tool_output() │
-                                 │  → PostgreSQL + PGVector│
-                                 └─────────────────────────┘
+    └──────┬────────┬─────┘
+           │        │
+    ┌──────▼──┐  ┌──▼───────────────────────┐
+    │ 47 dom- │  │ 7 LLM-verktyg (v5.0)     │
+    │ änverk- │  │                           │
+    │ tyg     │  │ Discovery:                │
+    │         │  │  scb_search, scb_browse   │
+    │ scb_    │  │                           │
+    │ befol-  │  │ Inspektion:               │
+    │ kning,  │  │  scb_inspect, scb_codelist│
+    │ scb_    │  │                           │
+    │ arbets- │  │ Data:                     │
+    │ marknad │  │  scb_preview, scb_validate│
+    │ ...     │  │  scb_fetch                │
+    └────┬────┘  └────────────┬─────────────┘
+         │                    │
+         └────────┬───────────┘
+                  │
+       ┌──────────▼──────────────┐
+       │      ScbService           │
+       │  - search_tables()        │
+       │  - list_nodes() (v1 tree) │
+       │  - get_table_metadata()   │
+       │  - get_default_selection() │
+       │  - get_codelist()         │
+       │  - auto_complete_selection│
+       │  - query_table()          │
+       │  - decode_jsonstat2_to_   │
+       │    markdown()             │
+       └──────────┬────────────────┘
+                  │
+       ┌──────────▼────────────┐
+       │  SCB PxWebApi (v2)       │
+       │  statistikdatabasen.scb. │
+       │  se/api/v2/              │
+       │  - GET /tables?query=    │
+       │  - GET /tables/{id}/meta │
+       │  - GET /tables/{id}/     │
+       │    defaultselection      │
+       │  - POST /tables/{id}/data│
+       │  - GET /codelists/{id}   │
+       │  (v1 fallback: list_nodes)│
+       └─────────────────────────┘
+                  │
+       ┌──────────▼────────────┐
+       │  ConnectorService       │
+       │  - ingest_tool_output() │
+       │  → PostgreSQL + PGVector│
+       └─────────────────────────┘
 ```
 
 ### Domain Fan-Out (parallell exekvering)
@@ -108,7 +137,8 @@ Fråga: "Jämför befolkning och arbetslöshet i Sverige"
 surfsense_backend/
 ├── app/
 │   ├── services/
-│   │   └── scb_service.py              # Kärntjänst: HTTP, navigering, frågebyggare, v2+v1
+│   │   ├── scb_service.py              # Kärntjänst: HTTP, navigering, JSON-stat2-dekoder, auto-complete, v2+v1
+│   │   └── scb_regions.py              # Fullständigt regionregister (290+21+Riket) med diakritiknormalisering
 │   │
 │   ├── utils/
 │   │   └── text.py                     # Centraliserad textnormalisering (KQ-1)
@@ -116,15 +146,22 @@ surfsense_backend/
 │   └── agents/new_chat/
 │       ├── scb_tool_definitions.py      # 47 SCB-verktygsdefinitioner + scoring (KQ-3)
 │       ├── statistics_agent.py          # Agent-fabrik + tool-bygger
-│       ├── statistics_prompts.py        # System prompt för statistik-agenten
+│       ├── statistics_prompts.py        # System prompt med 4-stegs analytiskt arbetsflöde (v5.1)
+│       ├── supervisor_memory.py         # Artifact read-back: _load_recent_artifact_contents() (v5.1)
+│       ├── supervisor_pipeline_prompts.py # Planner/decomposer med analytisk resonering (v5.1)
 │       ├── bigtool_store.py             # Bigtool store med SCB-verktygsregistrering
 │       ├── domain_fan_out.py            # Parallell exekvering per domän
 │       ├── supervisor_constants.py      # Routing-konstanter inkl. SCB
 │       ├── supervisor_routing.py        # Intent detection + agent-alias
-│       └── tool_identity_defaults.py    # Metadata per SCB-verktyg
+│       ├── tool_identity_defaults.py    # Metadata per SCB-verktyg
+│       └── tools/
+│           ├── scb_llm_tools.py         # 7 LLM-drivna verktyg (v5.0)
+│           └── registry.py              # ToolDefinition-registrering för alla 7+47 SCB-verktyg
 │
 ├── tests/
-│   └── test_scb_service.py             # Enhets- och integrationstester
+│   ├── test_scb_llm_tools.py           # 46 tester för de 7 LLM-verktygen
+│   ├── test_scb_service.py             # 72 tester för ScbService
+│   └── test_scb_regions.py             # 36 tester för regionregistret
 │
 eval/api/scb/
 ├── be/scb-be_20260212_v1.json          # Eval: befolkningskategori
@@ -133,7 +170,7 @@ eval/api/scb/
 
 ---
 
-## 4. SCB PxWeb API — Nuvarande (v1)
+## 4. SCB PxWeb API — v1 (legacy, används för trädnavigering)
 
 ### Bas-URL
 
@@ -191,11 +228,11 @@ https://api.scb.se/OV0104/v1/doris/sv/ssd/
 
 ---
 
-## 5. SCB PxWebApi v2 — Migrationsplan
+## 5. SCB PxWebApi v2 — Aktiv (primär)
 
 ### Bakgrund
 
-SCB lanserade PxWebApi 2.0 i oktober 2025 som ersättare för v1. Den nya API:n har RESTful design, stabilare URL-struktur och stöd för fler output-format.
+SCB lanserade PxWebApi 2.0 i oktober 2025 som ersättare för v1. Den nya API:n har RESTful design, stabilare URL-struktur och stöd för fler output-format. **v2 är nu default i OneSeek.**
 
 ### Ny Bas-URL
 
@@ -358,7 +395,7 @@ SCB har angett att v2 är bakåtkompatibelt med v2-beta-formatet. Dock krävs an
 
 ## 6. ScbService — Kärntjänst
 
-**Fil:** `surfsense_backend/app/services/scb_service.py` (920+ rader)
+**Fil:** `surfsense_backend/app/services/scb_service.py` (1200+ rader)
 
 ### Klass-API
 
@@ -371,27 +408,58 @@ class ScbService:
     async def _post_json(self, url: str, payload: dict) -> Any
 
     # Navigering
-    async def list_nodes(self, path: str) -> list[dict]
-    async def collect_tables(self, base_path, query, *, max_tables=80,
-                             max_depth=4, max_nodes=140, max_children=8) -> list[ScbTable]
+    async def list_nodes(self, path: str) -> list[dict]           # v1 trädnavigering
+    async def search_tables(self, query, *, limit=80) -> list      # v2 textsökning
+    async def collect_tables(self, base_path, query, ...) -> list[ScbTable]
 
     # Tabellval
     async def get_table_metadata(self, table_path: str) -> dict
-    async def find_best_table(self, base_path, query, *, max_tables=80,
-                              metadata_limit=10) -> ScbTable | None
-    async def find_best_table_candidates(self, base_path, query, *, max_tables=80,
-                                          metadata_limit=10, candidate_limit=5)
-                                          -> tuple[ScbTable | None, list[ScbTable]]
+    async def get_default_selection(self, table_id: str) -> dict[str, list[str]]  # NYI v5.0
+    async def get_codelist(self, codelist_id: str) -> dict[str, Any]              # NYI v5.0
+    async def find_best_table_candidates(self, ...) -> tuple[ScbTable | None, list[ScbTable]]
+
+    # Auto-complete & validering (v5.0)
+    def auto_complete_selection(                                                   # NYI v5.0
+        self, metadata, selection, default_selection=None
+    ) -> tuple[dict[str, list[str]], list[str]]
 
     # Frågebyggare
-    def build_query_payload(self, metadata, query, *, max_cells, max_values_per_variable)
-                            -> tuple[dict, list[str], list[str]]
-    def build_query_payloads(self, metadata, query, *, max_cells, max_values_per_variable,
-                             max_batches) -> tuple[list[dict], list[str], list[str], list[list[str]]]
+    def build_query_payload(self, metadata, query, ...) -> tuple[dict, list[str], list[str]]
+    def build_query_payloads(self, metadata, query, ...) -> tuple[list[dict], ...]
 
-    # Datahämtning
+    # Datahämtning & dekodning
     async def query_table(self, table_path: str, payload: dict) -> dict
+    @staticmethod
+    def decode_jsonstat2_to_markdown(response, *, max_rows=100) -> dict  # NYI v5.0
 ```
+
+### Nya metoder i v5.0
+
+#### `get_default_selection(table_id)` → `dict[str, list[str]]`
+Hämtar SCB:s rekommenderade urval via `GET /tables/{id}/defaultselection`.
+Returnerar `{"Region": ["00"], "Tid": ["2024"], ...}`.
+
+#### `get_codelist(codelist_id)` → `dict`
+Hämtar en kodlista via `GET /codelists/{id}`.
+Returnerar `{"id": "vs_RegionLän", "values": [{"code": "01", "label": "Stockholm"}]}`.
+
+#### `auto_complete_selection(metadata, selection, default_selection?)` → `(selection, log)`
+Fyller i saknade variabler automatiskt:
+1. `elimination=true` + `eliminationValueCode` → använd det
+2. `elimination=true` utan eliminationValueCode → defaultselection → "tot"/"total" → `"*"`
+3. `elimination=false` → defaultselection → första värdet + varning
+
+#### `decode_jsonstat2_to_markdown(response, max_rows=100)` → `dict`
+**DEN KRITISKA NYA METODEN.** Konverterar JSON-stat2 flat value-array till läsbar markdown-tabell:
+1. Läser `id[]` (dimensioner), `size[]`, `value[]` (platt array)
+2. Bygger label-mappningar via `dimension.X.category.label`
+3. Cartesian product av dimensionskoder → rader
+4. Flat-index via stride-multiplikation (row-major ordning)
+5. Hanterar `status`-markörer (saknade värden → "..")
+6. Formaterar med svenska tusentalsavgränsare (mellanslag)
+7. Trunkerar vid `max_rows`
+
+Returnerar: `{data_table, row_count, truncated, unit, ref_period, footnotes, source}`
 
 ### Dataklasser
 
@@ -466,7 +534,7 @@ När celltalet överstiger 150 000:
 
 ## 7. Statistics Agent — LangGraph Bigtool
 
-**Fil:** `surfsense_backend/app/agents/new_chat/statistics_agent.py` (1151 rader)
+**Fil:** `surfsense_backend/app/agents/new_chat/statistics_agent.py` (~330 rader)
 
 ### Agent-skapande
 
@@ -485,12 +553,12 @@ def create_statistics_agent(
 
 Agenten skapas med `langgraph_bigtool.create_agent()`:
 - **limit=2**: Max 2 verktyg per tur
-- **retrieve_tools_function**: `retrieve_scb_tools()` — poängbaserad sökning
+- **retrieve_tools_function**: `retrieve_scb_tools()` — poängbaserad sökning bland 47+7 verktyg
 - **NormalizingChatWrapper**: Normaliserar LLM-input
 
 ### Verktygsval
 
-`retrieve_scb_tools(query, limit=2)` poängsätter alla 40 verktyg:
+`retrieve_scb_tools(query, limit=2)` poängsätter alla 47 domänverktyg:
 
 ```python
 Poängsättning:
@@ -500,23 +568,49 @@ Poängsättning:
   +1  per token i beskrivningen
 ```
 
-### System Prompt
+De 7 LLM-verktygen (scb_search, scb_browse, etc.) registreras separat via `tools/registry.py` som `BUILTIN_TOOLS` och är alltid tillgängliga.
+
+### System Prompt (v5.1)
+
+Prompten i `statistics_prompts.py` dokumenterar alla 7 verktyg med arbetsflöden.
+
+**Viktig ändring i v5.1:** Arbetsflödet har utökats från 3 till 4 steg med ett
+inledande analyssteg som tvingar agenten att tänka på vilken DATA som faktiskt
+behövs innan den gör tool calls. Detta löser problemet med att LLM:en tolkade
+frågor för bokstavligt (t.ex. "vanligaste dödsorsaken" → letade efter en tabell
+med exakt det namnet istället för att hämta ALL dödsorsaksdata och rangordna).
 
 ```
-Du ar SurfSense Statistik-agent. Du hjalper till att hamta officiell statistik fran SCB (PxWeb).
+Du har 7 SCB-verktyg:
 
-Riktlinjer:
-- Svara alltid pa svenska.
-- Anvand retrieve_tools for att hitta SCB-verktyg.
-- Om fragan ar oklar, stall en kort foljdfraga innan stora uttag.
-- Halla urvalet litet (Riket eller specifika regioner, senaste 1-5 ar).
-- Presentera alltid tabelltitel, tabellkod och urval.
-- Redovisa kalla som SCB med [citation:chunk_id].
+Discovery:
+- scb_search(query)  — Sök tabeller med nyckelord
+- scb_browse(path)   — Navigera SCB:s ämnesträd
+
+Inspektion:
+- scb_inspect(table_id)     — Full metadata, defaults, hints
+- scb_codelist(codelist_id) — Hämta kodlista (län, kommuner)
+
+Data:
+- scb_preview(table_id, selection?) — Snabb förhandsvisning (~20 rader)
+- scb_validate(table_id, selection) — Torrkörning utan datahämtning
+- scb_fetch(table_id, selection, codelist?) — Hämta data som markdown-tabell
+
+Arbetsflöde (4 steg):
+1. ANALYSERA — Tänk: "Vilken DATA behöver jag?" Översätt frågan till datakrav.
+   - "Vanligaste dödsorsaken?" → behöver ALLA dödsorsaker + antal, sedan rangordna
+   - "Nettoinvandring?"        → behöver BÅDE invandring OCH utvandring, sedan subtrahera
+   - "Störst befolkningsökning?" → behöver befolkning per region över tid, sedan jämföra
+2. HITTA — scb_search("befolkning") → hitta tabell
+3. INSPEKTERA — scb_inspect("TAB638") → se variabler, defaults
+4. HÄMTA — scb_fetch("TAB638", {"Region": ["0180"], "Tid": ["TOP(3)"]}) → data
+   VIKTIGT: Hämta TILLRÄCKLIGT BRED data för att kunna besvara frågan.
+   Om frågan frågar "vilken/störst/minst/vanligast" — hämta ALLA kategorier.
 ```
 
 ---
 
-## 8. Verktygsregistret — 47 SCB-verktyg
+## 8. Verktygsregistret — 47 domänverktyg + 7 LLM-verktyg
 
 ### Ämnesområden (20 breda + 20 specifika)
 
@@ -950,38 +1044,66 @@ FanOutCategory(name="kpi", tool_ids=("scb_priser_kpi",), priority=2),
 
 ## 15. Testsvit
 
-**Fil:** `surfsense_backend/tests/test_scb_service.py` (61 tester)
+**154 tester** fördelade på 3 testfiler:
 
-### Testöversikt
+### `tests/test_scb_llm_tools.py` — 46 tester (v5.0)
+
+| Kategori | Antal | Tester |
+|----------|-------|--------|
+| _format_table_inspection | 8 | basic, variable_type, truncation, time_hint, empty, gender, measure, eliminable |
+| _find_closest_variables | 2 | exact_substring, no_match_returns_all |
+| _find_closest_values | 3 | exact_match, normalized, no_match_sample |
+| _fuzzy_match_values | 4 | normalized_exact, code_exact, word_boundary, no_match |
+| v2-uttryck | 6 | TOP, BOTTOM, FROM/TO/RANGE, wildcards, not_expressions, size_estimation |
+| scb_search | 3 | create_tool, returns_results, empty_query |
+| scb_browse | 2 | create_tool, browse_top_level |
+| scb_inspect | 4 | create_tool, inspect_table, shows_eliminable, empty_table_id |
+| scb_validate | 6 | create_tool, valid+auto_complete, v2_passthrough, invalid_code, region_fuzzy, gender_alias |
+| scb_fetch | 4 | create_tool, basic_markdown, auto_complete, empty_selection |
+| scb_preview | 1 | create_tool |
+| scb_codelist | 3 | create_tool, fetch_codelist, empty |
+
+### `tests/test_scb_service.py` — 72 tester
 
 | Kategori | Antal | Tester |
 |----------|-------|--------|
 | Text-helpers | 3 | normalize_text, tokenize, score_text |
-| SCB-helpers | 11 | extract_years, is_time/region/gender/age, has_region/gender/age, match_values, pick_preferred, score_metadata (2) |
-| ScbService integration | 7 | find_best_table (3), build_query (2), selection_cell_count (2) |
-| v2-specifika | 12 | v2_detection, convert_payload (2), normalize_metadata (2), payload_from_selections (2), persistent_client, search_tables (2), encode_path |
-| TTL-cache (OPT-4) | 2 | ttl_cache_type, ttl_cache_custom_ttl |
-| Codelist (#16) | 3 | v1_returns_empty, v2_success (med cache), v2_http_error |
-| Output format (#15) | 2 | output_formats_constant, query_table_v2_output_format |
-| Parallell BFS (OPT-2) | 2 | parallel_fetch, priority_ordering |
-| Verktygsdef (#17, KQ-3) | 7 | count (47), unique_ids, new_tools_present (5), keyword_index, normalized_names, normalized_table_codes |
-| Scoring (OPT-7) | 5 | score_tool, retrieve_tools (4 inkl nya verktyg) |
+| SCB-helpers | 11 | extract_years, is_time/region/gender/age, etc. |
+| ScbService integration | 7 | find_best_table (3), build_query (2), cell_count (2) |
+| v2-specifika | 12 | v2_detection, convert_payload, normalize_metadata, etc. |
+| TTL-cache | 2 | ttl_cache_type, ttl_cache_custom_ttl |
+| Codelist | 3 | v1_returns_error, v2_success, v2_http_error |
+| Output format | 2 | output_formats_constant, query_table_v2_output_format |
+| Parallell BFS | 2 | parallel_fetch, priority_ordering |
+| Verktygsdef | 7 | count (47), unique_ids, new_tools_present, keyword_index, normalized_names |
+| Scoring | 5 | score_tool, retrieve_tools (4) |
 | Domain fan-out | 3 | new_categories, new_tool_ids, select_handel |
-| Diverse | 4 | split_batches, collect_tables_timeout, cache_lock, get_json_persistent |
+| Diverse | 4+ | split_batches, collect_tables_timeout, cache_lock, get_json_persistent |
+
+### `tests/test_scb_regions.py` — 36 tester
+
+| Kategori | Antal | Tester |
+|----------|-------|--------|
+| Registry integrity | 7 | not_empty, one_country, 21_counties, 290_municipalities, unique_codes, etc. |
+| normalize_diacritik | 9 | swedish chars, already_ascii, case_insensitive, etc. |
+| find_region_by_code | 5 | municipality, county, country, not_found, strips_whitespace |
+| find_region_by_name | 3 | exact, case_insensitive, not_found |
+| find_region_fuzzy | 10 | exact, diacritik, jonkoping, alias (sthlm/gbg/riket/skane), etc. |
+| resolve_region_codes | 5 | basic, with_table_values, not_in_table, fuzzy_in_table, empty |
+| format_region_for_llm | 3 | municipality, county, country |
 
 ### Testtäckning
 
 | Område | Status |
 |--------|--------|
-| Helper-funktioner | Fullständig (14 tester) |
+| 7 LLM-verktyg (v5.0) | Fullständig (46 tester) |
+| Helper-funktioner | Fullständig |
 | ScbService navigering | Fullständig (BFS, timeout, parallell) |
 | ScbService query-byggare | Fullständig (payloads, batching, cell count) |
 | v2 API-integration | Fullständig (metadata, search, query, codelist) |
-| Verktygsval/scoring | Fullständig (5 nya verktyg verifierade) |
-| Domain fan-out | Fullständig (9 kategorier, trigger-keywords) |
-| SCB Tool (dynamisk) | Nej | End-to-end verktygsanrop |
-| Domain Fan-Out | Nej (separat testfil) | SCB-specifika fan-out |
-| v2-migration | Nej | Krävs vid migration |
+| Regionregister | Fullständig (36 tester) |
+| Verktygsval/scoring | Fullständig |
+| Domain fan-out | Fullständig |
 
 ---
 
@@ -1035,7 +1157,339 @@ Bredare eval över alla kategorier:
 
 ---
 
-## 18. Implementeringslogg
+## 18. 7-verktygspipeline (v5.0)
+
+> **Implementerad:** 2026-03-10
+> **Inspirerad av:** [isakskogstad/SCB-MCP](https://github.com/isakskogstad/SCB-MCP)
+
+### Bakgrund — Varför 7 verktyg?
+
+v4.0 hade 3 LLM-verktyg (`scb_search_and_inspect`, `scb_validate_selection`, `scb_fetch_validated`). Problemen:
+
+1. **Oläsbar data** — Rå JSON-stat2 med platt value-array returnerades direkt
+2. **Saknade variabler** → krascher (SCB kräver alla dimensioner)
+3. **Ingen trädnavigering** — bara textsökning
+4. **Ingen preview** — omöjligt att snabbt kontrollera data
+5. **Inga kodlistor** — svårt att använda läns/kommunfilter
+
+### Arkitektur
+
+```
+┌─ DISCOVERY ─────────────────────────────────────────────────┐
+│  scb_search         Fulltextsökning bland tabeller          │
+│  scb_browse         Navigera ämnesträd steg för steg (v1)   │
+├─ INSPEKTION ────────────────────────────────────────────────┤
+│  scb_inspect        Full metadata + defaults + hints        │
+│  scb_codelist       Hämta kodlista (län, kommuner, etc.)    │
+├─ DATA ──────────────────────────────────────────────────────┤
+│  scb_preview        Auto-begränsad förhandsvisning (~20 rader) │
+│  scb_validate       Dry-run validering utan datahämtning    │
+│  scb_fetch          Hämta data → dekodad markdown-tabell    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Arbetsflöden
+
+**Typiskt (3 anrop):** `scb_search` → `scb_inspect` → `scb_fetch`
+**Explorativt (4 anrop):** `scb_browse` → `scb_browse` → `scb_inspect` → `scb_fetch`
+**Osäker fråga (4 anrop):** `scb_search` → `scb_inspect` → `scb_preview` → `scb_fetch`
+
+De 47 domänverktygen fungerar fortfarande som alternativa ingångar — de söker inom sitt domänområde och returnerar tabell-inspektioner som LLM:en sedan följer upp med `scb_fetch`.
+
+#### Analytiska arbetsflöden (v5.1)
+
+Många frågor kräver mer än bara datahämtning — de kräver **analys, beräkning eller rangordning** av hämtad data. Agenten har nu ett inledande analyssteg som översätter frågan till datakrav innan tool calls görs.
+
+**Rankningsfråga ("Vilken/störst/vanligast?"):**
+```
+Fråga: "Vanligaste dödsorsaken i Sverige?"
+  → Steg 1 (ANALYSERA): Jag behöver ALLA dödsorsaker + antal för att rangordna
+  → scb_hälsa("dödsorsaker per kategori")
+  → scb_validate med breda selektioner (alla orsaker)
+  → scb_fetch med Region=["00"], Tid=["TOP(1)"]  ← ALLA kategorier
+  → Agenten rangordnar resultatet → presenterar topplistan
+```
+
+**Beräkningsfråga ("Netto-X?"):**
+```
+Fråga: "Vad är nettoinvandringen?"
+  → Steg 1 (ANALYSERA): Netto = invandring - utvandring, behöver BÅDA
+  → scb_befolkning("invandring utvandring")
+  → scb_fetch med ContentsCode som inkluderar både invandring OCH utvandring
+  → Agenten beräknar netto = invandring - utvandring
+```
+
+**Jämförelsefråga ("Jämför X och Y"):**
+```
+Fråga: "Jämför arbetslösheten i Stockholm och Göteborg"
+  → Steg 1 (ANALYSERA): Behöver arbetslöshet per region för båda städerna
+  → scb_arbetsmarknad("arbetslöshet kommun")
+  → scb_fetch med Region=["0180","1480"], Tid=["TOP(5)"]
+  → Agenten jämför trenderna
+```
+
+**Trendfråga ("Hur har X utvecklats?"):**
+```
+Fråga: "Hur har bostadspriserna utvecklats senaste 10 åren?"
+  → Steg 1 (ANALYSERA): Behöver prisindex per år, tidsserie
+  → scb_boende_byggande("bostadspriser index")
+  → scb_fetch med Tid=["TOP(10)"]
+  → Agenten analyserar trenden (uppgång, nedgång, toppar)
+```
+
+### Verktygs-API
+
+#### `scb_search(query, max_results?, past_days?)`
+
+Fulltextsökning via v2 `GET /tables?query=`. Returnerar kompakt lista:
+
+```json
+{
+  "results": [
+    {"id": "TAB638", "title": "Folkmängd efter region, kön och år", "period": "1968-2024", "variables": 4}
+  ],
+  "total": 23
+}
+```
+
+#### `scb_browse(path?)`
+
+Navigerar SCB:s ämnesträd via v1 `list_nodes()`. Tom path → toppnivå.
+
+```json
+{
+  "path": "BE",
+  "items": [
+    {"id": "BE0101", "type": "folder", "text": "Befolkningsstatistik"},
+    {"id": "TAB638", "type": "table", "text": "Folkmängd..."}
+  ]
+}
+```
+
+#### `scb_inspect(table_id)`
+
+Full metadata med elimination-info, defaults, hints och kodlistor:
+
+```json
+{
+  "table_id": "TAB638",
+  "title": "Folkmängd efter region, kön och år",
+  "variables": [
+    {
+      "code": "Region",
+      "label": "Region",
+      "type": "region",
+      "total_values": 312,
+      "eliminable": true,
+      "default_value": "00",
+      "codelists": ["vs_RegionLän", "vs_RegionKommun"],
+      "sample_values": [{"code": "00", "label": "Riket"}, ...],
+      "usage_examples": {"single": ["0180"], "all": ["*"], "codelist": "vs_RegionLän"}
+    }
+  ],
+  "default_selection": {"Region": ["00"], "Tid": ["2024"]}
+}
+```
+
+#### `scb_codelist(codelist_id)`
+
+Hämtar alla värden i en kodlista:
+
+```json
+{
+  "id": "vs_RegionLän",
+  "label": "Län",
+  "values": [
+    {"code": "01", "label": "Stockholms län"},
+    {"code": "03", "label": "Uppsala län"}
+  ],
+  "total_values": 21
+}
+```
+
+#### `scb_preview(table_id, selection?)`
+
+Auto-begränsad förhandsvisning. Tid → `TOP(1)`, stora dimensioner → första 2 värden:
+
+```json
+{
+  "preview": true,
+  "data_table": "| Region | Kön | År | Folkmängd |\n|---|---|---|---:|\n| Riket | män | 2024 | 5 321 437 |",
+  "note": "Begränsad preview. Använd scb_fetch för full data."
+}
+```
+
+#### `scb_validate(table_id, selection)`
+
+Torrkörning med auto-complete för saknade variabler:
+
+```json
+{
+  "status": "valid",
+  "selection": {"Region": ["0180"], "Kon": ["1+2"], "ContentsCode": ["BE0101N1"], "Tid": ["TOP(3)"]},
+  "auto_completed": ["Kon: auto → '1+2' (elimination default)", "ContentsCode: auto → ['BE0101N1'] (defaultselection)"],
+  "estimated_cells": 3,
+  "warnings": []
+}
+```
+
+#### `scb_fetch(table_id, selection, codelist?, max_rows?)`
+
+Full datahämtning med auto-complete + JSON-stat2-dekodning till markdown:
+
+```json
+{
+  "table_id": "TAB638",
+  "title": "Folkmängd efter region, kön och år",
+  "source": "SCB",
+  "unit": "antal",
+  "data_table": "| Region | Kön | År | Folkmängd |\n|---|---|---|---:|\n| Stockholm | totalt | 2024 | 984 748 |\n| Stockholm | totalt | 2023 | 978 770 |",
+  "row_count": 3,
+  "auto_completed": ["Kon: auto → '1+2' (elimination default)"],
+  "selection_used": {"Region": ["0180"], "Tid": ["TOP(3)"], ...}
+}
+```
+
+### Nyckelförbättringar
+
+| Aspekt | v4.0 (3 verktyg) | v5.0 (7 verktyg) |
+|--------|---|---|
+| Dataformat | Rå JSON-stat2 (oläsbar) | Markdown-tabell med labels |
+| Saknade variabler | → kraschar | → auto-complete med defaults |
+| Navigation | Bara textsökning | Trädnavigering + textsökning |
+| Preview | Nej | Auto-begränsad (~20 rader) |
+| Kodlistor | Ej integrerade | scb_codelist + codelist i fetch |
+| v2-uttryck | Ej stödda | TOP, FROM, RANGE, *, wildcards |
+| Validering | Strikt (fel vid saknade) | Auto-complete + förslag |
+| Precision | Medel | Hög |
+
+### Filer
+
+| Fil | Syfte | Rader |
+|-----|-------|-------|
+| `tools/scb_llm_tools.py` | 7 LLM-verktyg + hjälpfunktioner | ~1230 |
+| `services/scb_service.py` | Kärntjänst med dekoder + auto-complete | ~1200 |
+| `services/scb_regions.py` | Regionregister (290+21+Riket) + fuzzy-matchning | ~450 |
+| `statistics_prompts.py` | Systemprompt med 7-verktygsflöde | ~100 |
+| `tools/registry.py` | 7 ToolDefinitions registrerade | ~500 |
+| `bigtool_store.py` | 7 verktyg i TOOL_NAMESPACE_OVERRIDES + TOOL_KEYWORDS | ~2500 |
+
+### v2-uttryck
+
+LLM:en kan använda PxWeb v2:s filteruttryck istället för att lista specifika koder:
+
+| Uttryck | Betydelse | Exempel |
+|---------|-----------|---------|
+| `TOP(n)` | Senaste n perioder | `{"Tid": ["TOP(5)"]}` |
+| `BOTTOM(n)` | Äldsta n perioder | `{"Tid": ["BOTTOM(3)"]}` |
+| `FROM(x)` | Från och med x | `{"Tid": ["FROM(2020)"]}` |
+| `TO(x)` | Till och med x | `{"Tid": ["TO(2020)"]}` |
+| `RANGE(x,y)` | Inklusivt intervall | `{"Tid": ["RANGE(2018,2024)"]}` |
+| `*` | Alla värden | `{"Region": ["*"]}` |
+| Prefix-wildcard | Alla med prefix | `{"Region": ["01*"]}` |
+
+---
+
+## 19. Supervisor-integrationer för SCB-data (v5.1)
+
+### Problemet: Artifact offload var write-only
+
+SCB-verktyg returnerar ofta stora datamängder (5-15KB markdown-tabeller). Supervisor-agentens
+`artifact_indexer` offloadar dessa till disk för att spara context window. **Men**: de
+nedströms-noder som behöver datan (synthesizer, critic, progressive_synthesizer) hade ingen
+mekanism att läsa tillbaka artifact-innehållet — de såg bara en 220-teckens sammanfattning.
+
+```
+Före v5.1:
+  scb_fetch → 10KB markdown-tabell
+      ↓
+  artifact_indexer → sparar till /tmp/oneseek-artifacts/...
+      ↓
+  manifest: {summary: "Folkmängd efter region... (220 tecken)", artifact_uri: "artifact://art-abc"}
+      ↓
+  synthesizer → ser BARA 220-teckens summary → HALLUCINERAR siffror
+  critic → ser INGET av artifact-datan → kan inte verifiera
+```
+
+### Lösning: Artifact content read-back
+
+Ny funktion i `supervisor_memory.py` som läser tillbaka offloadade artifacts,
+med stöd för **både lokal disk och sandbox-container** via `sandbox_read_fn` callback:
+
+```python
+_read_artifact_content(entry, sandbox_read_fn=None)  # Läser en artifact (lokal → sandbox fallback)
+_load_recent_artifact_contents(manifest, sandbox_read_fn=None)  # Laddar N senaste artifacts med storleksgräns
+_format_artifact_contents_for_context(items)  # Formaterar som <artifact_data>-XML för LLM
+```
+
+Supervisor-closuren skapar en `sandbox_read_fn` callback som binder `thread_id` och
+`runtime_hitl_cfg`, och skickar den till alla tre node-builders:
+
+```python
+# I supervisor closure (supervisor_agent.py):
+_sandbox_read_fn = None
+if sandbox_enabled:
+    def _sandbox_read_fn(path: str) -> str:
+        return sandbox_read_text_file(
+            thread_id=thread_id,
+            runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
+            path=path,
+        )
+```
+
+**Integrerad i tre noder:**
+
+| Nod | Fil | Max artifacts | Beskrivning |
+|-----|-----|--------------|-------------|
+| `synthesizer` | `nodes/synthesizer.py` | 3 st (4KB/st, 12KB total) | Full artifact-data injiceras i `synth_input` |
+| `critic` | `nodes/critic.py` | 2 st | Artifact-data för kvalitetsverifiering |
+| `progressive_synthesizer` | `nodes/progressive_synthesizer.py` | 2 st | Berikar draft med artifact-innehåll |
+
+```
+Efter v5.1:
+  scb_fetch → 10KB markdown-tabell
+      ↓
+  artifact_indexer → sparar till disk (som förut)
+      ↓
+  synthesizer → _load_recent_artifact_contents() → LÄSER tillbaka fullt innehåll
+      ↓
+  synthesizer skriver svar baserat på RIKTIG data
+  critic verifierar mot RIKTIG data
+```
+
+### Storleksgränser
+
+| Parameter | Värde | Syfte |
+|-----------|-------|-------|
+| `_ARTIFACT_READ_MAX_ITEMS` | 3 | Max antal artifacts att läsa per nod |
+| `_ARTIFACT_READ_MAX_CHARS_PER_ITEM` | 4 000 | Max tecken per artifact |
+| `_ARTIFACT_READ_MAX_TOTAL_CHARS` | 12 000 | Total gräns för context injection |
+
+Dessa gränser förhindrar att context window sprängs, samtidigt som tillräckligt
+med data injiceras för korrekta svar.
+
+### Supervisor-prompter för analytiska frågor
+
+Tre supervisor-prompter har förbättrats (i `supervisor_pipeline_prompts.py`):
+
+1. **Planner-prompt** — Ny "ANALYTISKA FRÅGOR"-sektion som lär planner att skapa multi-steg-planer:
+   - Ranking → "hämta ALL data, sedan analysera"
+   - Beräkning → "hämta komponent A + B (parallellt), sedan beräkna"
+   - Jämförelse → "hämta X + Y (parallellt), sedan sammanställ"
+   - **Aldrig** skapa en plan med bara "hämta data" när frågan kräver analys
+
+2. **Decomposer-prompt** — Ny instruktion för analytiska/beräkningsfrågor:
+   - "Tolka ALDRIG frågan så snävt att viktig data utelämnas"
+   - Om frågan frågar "vilken/störst/vanligast" → delfrågan ska uttryckligen be om ALL data
+   - Beräkningsfrågor → separata delfrågor per datakomponent
+
+3. **Statistics agent-prompt** — Nytt steg 0 "Analysera frågan":
+   - Översätter frågan till datakrav INNAN tool calls
+   - Explicita exempel: ranking, beräkning, jämförelse
+
+---
+
+## 20. Implementeringslogg
 
 Alla uppgifter från den ursprungliga analysen (P1, P2, P3) är nu implementerade.
 
@@ -1087,8 +1541,9 @@ Alla uppgifter från den ursprungliga analysen (P1, P2, P3) är nu implementerad
 
 ---
 
-## 19. Hybrid LLM-driven Variabelförståelse (v4.0)
+## 21. Historik: Hybrid LLM-driven Variabelförståelse (v4.0)
 
+> **Ersatt av:** v5.0 (7-verktygspipeline, se sektion 18)
 > **Implementerad:** 2026-03-10
 > **Inspirerad av:** [isakskogstad/SCB-MCP](https://github.com/isakskogstad/SCB-MCP)
 
@@ -1107,19 +1562,19 @@ Den tidigare implementationen (v3.0) hade ett fundamentalt problem: **LLM:en var
 
 v4.0 kombinerar det bästa från båda systemen:
 
-| Från OneSeek (v3.0) | Från SCB-MCP | Nytt i v4.0 |
-|---|---|---|
-| 47 domänverktyg med scoring | LLM ser variabelstruktur | 3 nya LLM-drivna verktyg |
-| Dual v1+v2 sökning | Dry-run validering | Fullständigt regionregister (290+21) |
-| TTL-cache (1h) | Fuzzy matchning | Diakritiknormalisering |
-| Connection pooling | Strukturerade felförslag | QUL → SCB regionkodskoppling |
-| Batching (>150k celler) | Naturligt-språk → kodöversättning | Retry-loop vid valideringsfel |
+| Från OneSeek (v3.0) | Från SCB-MCP | v4.0 | v5.0 |
+|---|---|---|---|
+| 47 domänverktyg | LLM ser variabelstruktur | 3 LLM-verktyg | **7 LLM-verktyg** |
+| Dual v1+v2 sökning | Dry-run validering | Regionregister (290+21) | **JSON-stat2-dekoder** |
+| TTL-cache (1h) | Fuzzy matchning | Diakritiknormalisering | **Auto-complete** |
+| Connection pooling | Strukturerade felförslag | QUL-koppling | **Trädnavigering** |
+| Batching (>150k celler) | NL → kodöversättning | Retry-loop | **Preview + v2-uttryck** |
 
-### Nytt dataflöde
+### v4.0 dataflöde (ersatt av v5.0 — se sektion 18)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  STEG 1: scb_search_and_inspect                          │
+│  STEG 1: scb_search_and_inspect  (→ ersatt av scb_search + scb_inspect)
 │                                                          │
 │  Bigtool routing → domänverktyg → dual v1+v2 sökning     │
 │  Returnerar: Top 5 tabeller MED variabelstruktur         │
@@ -1129,7 +1584,7 @@ v4.0 kombinerar det bästa från båda systemen:
 └──────────────────────┬───────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────┐
-│  STEG 2: scb_validate_selection                          │
+│  STEG 2: scb_validate_selection  (→ ersatt av scb_validate)
 │                                                          │
 │  LLM:en bygger selection baserat på variabelförståelse   │
 │  Validering utan datahämtning:                           │
@@ -1142,7 +1597,7 @@ v4.0 kombinerar det bästa från båda systemen:
 └──────────────────────┬───────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────┐
-│  STEG 3: scb_fetch_validated                             │
+│  STEG 3: scb_fetch_validated  (→ ersatt av scb_fetch)    │
 │                                                          │
 │  Validerad selection → query_table()                     │
 │  Automatisk batching om >150k celler                     │
@@ -1150,26 +1605,21 @@ v4.0 kombinerar det bästa från båda systemen:
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Nya filer
+### Filer (v4.0 → uppgraderade i v5.0)
 
-| Fil | Syfte | Rader |
-|-----|-------|-------|
-| `app/services/scb_regions.py` | Fullständigt regionregister (290+21+Riket) med diakritiknormalisering | ~450 |
-| `app/agents/new_chat/tools/scb_llm_tools.py` | 3 LLM-drivna verktyg (search+inspect, validate, fetch) | ~500 |
+| Fil | Syfte | Status i v5.0 |
+|-----|-------|---------------|
+| `app/services/scb_regions.py` | Regionregister (290+21+Riket) | Behållen |
+| `app/agents/new_chat/tools/scb_llm_tools.py` | LLM-verktyg | Uppgraderad: 3 → 7 verktyg |
+| `statistics_prompts.py` | Systemprompt | Uppgraderad: 7-verktygsflöde |
+| `tools/registry.py` | ToolDefinitions | Uppgraderad: 3 → 7 registreringar |
+| `app/services/scb_service.py` | Kärntjänst | Utökad: dekoder, auto-complete, defaultselection |
 
-### Modifierade filer
+### Verktygs-API (v4.0 — BORTTAGEN, se sektion 18 för v5.0 API)
 
-| Fil | Ändring |
-|-----|---------|
-| `statistics_prompts.py` | Ny systemprompt med 3-stegs arbetsflöde och SCB-variabelkonventioner |
-| `tools/registry.py` | 3 nya ToolDefinitions för LLM-verktyg |
-| `nexus/routing/qul.py` | Utökad entitetsextraktion med diakritiknormalisering via fullständigt regionregister |
+#### `scb_search_and_inspect(query, base_path?, table_id?)` — ERSATT av `scb_search` + `scb_inspect`
 
-### Verktygs-API
-
-#### `scb_search_and_inspect(query, base_path?, table_id?)`
-
-Söker SCB-tabeller och returnerar variabelstruktur:
+Sökte SCB-tabeller och returnerade variabelstruktur:
 
 ```json
 {
@@ -1202,9 +1652,9 @@ Söker SCB-tabeller och returnerar variabelstruktur:
 }
 ```
 
-#### `scb_validate_selection(table_id, selection)`
+#### `scb_validate_selection(table_id, selection)` — ERSATT av `scb_validate`
 
-Validerar utan datahämtning:
+Validerade utan datahämtning:
 
 ```json
 // Input
@@ -1217,9 +1667,9 @@ Validerar utan datahämtning:
 {"status": "invalid", "errors": [{"variable": "ContentsCode", "error": "Missing from selection — SCB requires ALL variables.", "suggestion": "Suggested: ['BE0101N1']"}]}
 ```
 
-#### `scb_fetch_validated(table_id, selection)`
+#### `scb_fetch_validated(table_id, selection)` — ERSATT av `scb_fetch`
 
-Hämtar data med validerad selection. Hanterar batching automatiskt.
+Hämtade data med validerad selection. Hanterade batching automatiskt. **Returnerade rå JSON-stat2 — detta var det största problemet.** v5.0:s `scb_fetch` returnerar istället läsbar markdown-tabell via `decode_jsonstat2_to_markdown()`.
 
 ### Regionregistret (`scb_regions.py`)
 
@@ -1254,28 +1704,61 @@ QUL:s entitetsextraktion (`nexus/routing/qul.py`) utökad med:
 2. **Diakritiknormalisering** — "goteborg", "jonkoping" fungerar nu
 3. **Bakåtkompatibel** — befintlig gazetteer+alias bibehållen som snabb sökväg
 
-### Jämförelse: Före och efter
+### Jämförelse: v3.0 → v4.0 → v5.0
 
-| Aspekt | v3.0 (heuristik) | v4.0 (hybrid LLM) |
-|--------|---|---|
-| Tabellval | `_score_table_metadata()` | LLM ser variabler, resonerar |
-| Variabelval | `_build_selections()` regex | LLM bygger selection manuellt |
-| Regionmatchning | ~70 hårdkodade + substring | 290+21 + fuzzy + diacritik |
-| Validering | Ingen (direkt datahämtning) | Dry-run med felförslag |
-| Felkorrigering | Ingen | LLM retry-loop (max 2) |
-| LLM-anrop/fråga | 1-2 | 3-5 |
-| Precision | Låg | Hög |
-| Latens | 3-8s | 8-20s |
-| Fallback | — | Automatisk till 47 domänverktyg |
+| Aspekt | v3.0 (heuristik) | v4.0 (3 verktyg) | v5.0 (7 verktyg) |
+|--------|---|---|---|
+| Tabellval | `_score_table_metadata()` | LLM ser variabler | LLM ser + browse/search |
+| Variabelval | `_build_selections()` regex | LLM bygger manuellt | **Auto-complete** + LLM |
+| Dataformat | Rå JSON-stat2 | Rå JSON-stat2 | **Markdown-tabell** |
+| Navigation | Bara trädnavigering | Bara textsökning | **Träd + textsökning** |
+| Regionmatchning | ~70 hårdkodade | 290+21 + fuzzy | 290+21 + fuzzy + diacritik |
+| Validering | Ingen | Dry-run, strikt | **Auto-complete + förslag** |
+| Preview | Ingen | Ingen | **Auto-begränsad preview** |
+| Kodlistor | Inga | Inga | **Integrerade** |
+| v2-uttryck | Inga | Inga | **TOP, FROM, RANGE, \*** |
+| LLM-anrop/fråga | 1-2 | 3-5 | 3-5 |
+| Precision | Låg | Medel | **Hög** |
 
-### Trade-offs
+### v5.0 Implementeringslogg
 
-| | Fördel | Kostnad |
-|---|---|---|
-| **Precision** | LLM resonerar om rätt tabell och variabler | 3-5x fler LLM-tokens |
-| **Robusthet** | Validering fångar fel före datahämtning | Extra API-anrop (metadata) |
-| **Flexibilitet** | Fungerar för nya tabeller utan kodändring | Beroende av LLM-kvalitet |
-| **Fallback** | 47 domänverktyg kvar som backup | Två parallella system att underhålla |
+| # | Uppgift | Status | Filer |
+|---|---------|--------|-------|
+| 27 | Bevara rik metadata i `_normalize_v2_metadata` (elimination, unit, refperiod) | KLAR | `scb_service.py` |
+| 28 | `decode_jsonstat2_to_markdown()` — JSON-stat2 → markdown-tabell | KLAR | `scb_service.py` |
+| 29 | `get_default_selection()` via v2 endpoint | KLAR | `scb_service.py` |
+| 30 | `auto_complete_selection()` med elimination-defaults | KLAR | `scb_service.py` |
+| 31 | 7 nya LLM-verktyg (search, browse, inspect, codelist, preview, validate, fetch) | KLAR | `scb_llm_tools.py` |
+| 32 | Systemprompt med 7-verktygsflöde | KLAR | `statistics_prompts.py` |
+| 33 | 7 ToolDefinitions i registry + bigtool_store | KLAR | `registry.py`, `bigtool_store.py` |
+| 34 | Uppdatera domänverktygens references (scb_validate, scb_fetch) | KLAR | `statistics_agent.py`, `scb_tool_definitions.py` |
+| 35 | 46 nya tester för LLM-verktygen | KLAR | `test_scb_llm_tools.py` |
+| 36 | Uppdatera SCB-dokumentation till v5.0 | KLAR | `docs/API/SCB.md` |
+
+---
+
+## 22. Framtida Arbete
+
+### Nyligen implementerat (v5.1)
+
+| Uppgift | Status | Beskrivning |
+|---------|--------|-------------|
+| Artifact content read-back | **KLAR** | Synthesizer, critic och progressive_synthesizer läser nu tillbaka offloadad artifact-data |
+| Sandbox artifact-läsning | **KLAR** | `sandbox_read_fn` callback från supervisor closure — stödjer både lokal och sandbox-lagrade artifacts |
+| Analytisk resonering i statistics agent | **KLAR** | 4-stegs arbetsflöde med inledande analyssteg |
+| Planner multi-steg för analytiska frågor | **KLAR** | Planner skapar nu flerstegplaner för ranking/beräknings/jämförelsefrågor |
+| Decomposer-förbättringar | **KLAR** | Bred datahämtning för analytiska frågor, aldrig för snäv tolkning |
+
+### Kvarvarande
+
+| Prioritet | Uppgift | Beskrivning |
+|-----------|---------|-------------|
+| P1 | Caching av codelist-resultat | TTL-cache för kodlistor (ofta återanvända) |
+| P2 | Dedikerat SCB Tool UI | Frontend-komponent med tabell-rendering istället för generisk ToolFallback |
+| P2 | Multi-tabell korrelation | Kombinera data från flera SCB-tabeller i en analys |
+| P2 | Cross-domain analytical plans | Planner ska kunna skapa planer som korsrefererar data från olika domäner (t.ex. väder + turism, demografi + ekonomi) |
+| P3 | Diagram-generering | Automatisk visualisering av tidsserier från scb_fetch |
+| P3 | CSV/Parquet export | Låt användaren ladda ner data i andra format |
 
 ---
 
@@ -1287,5 +1770,6 @@ QUL:s entitetsextraktion (`nexus/routing/qul.py`) utökad med:
 | Swagger UI (v2) | https://statistikdatabasen.scb.se/api/v2/index.html |
 | OpenAPI-specifikation (YAML) | https://github.com/statisticssweden/PxApiSpecs/blob/master/PxAPI-2.yml |
 | PxWebApi källkod | https://github.com/PxTools/PxWebApi |
-| SCB v1 API (nuvarande) | https://api.scb.se/OV0104/v1/doris/sv/ssd/ |
+| SCB v1 API (legacy) | https://api.scb.se/OV0104/v1/doris/sv/ssd/ |
+| SCB-MCP (referensimplementation) | https://github.com/isakskogstad/SCB-MCP |
 | SCB kontakt | px@scb.se |

@@ -274,13 +274,14 @@ def _tool_names_from_messages(messages: list[Any] | None) -> list[str]:
 
 
 def _all_tool_data_empty(messages: list[Any] | None) -> bool:
-    """Return True when every ToolMessage with JSON content had empty ``data``.
+    """Return True when every data-bearing ToolMessage had empty or error results.
 
     This catches the scenario where external APIs (SCB, Riksbank, etc.)
-    return ``{"status": "success", "data": {}}`` — the call itself succeeded
-    but no actual data was found.  When *all* tool outputs are data-empty
-    the worker LLM has nothing to ground its answer on, so the contract
-    should NOT be marked as ``success``/``actionable``.
+    return ``{"status": "success", "data": {}}`` or
+    ``{"error": "Data fetch failed: ..."}`` — the call itself may have
+    succeeded technically but no actual data was found.  When *all* tool
+    outputs are data-empty the worker LLM has nothing to ground its answer
+    on, so the contract should NOT be marked as ``success``/``actionable``.
 
     Returns False (safe default) when there are no tool messages or when at
     least one tool returned non-empty data.
@@ -305,21 +306,39 @@ def _all_tool_data_empty(messages: list[Any] | None) -> bool:
             "call_agents_parallel",
         }:
             continue
+        # Skip domain search tools (they return metadata, not final data)
+        if tool_name.startswith("scb_") and tool_name not in {
+            "scb_fetch",
+            "scb_preview",
+        }:
+            continue
         try:
             parsed = _json.loads(raw)
         except (ValueError, TypeError):
             continue
         if not isinstance(parsed, dict):
             continue
-        # Only check data-bearing tool results (must have "data" key)
-        if "data" not in parsed:
+        # Count tools that should return data (scb_fetch, scb_preview, etc.)
+        # Check for explicit error responses
+        if "error" in parsed:
+            data_tool_count += 1
+            empty_count += 1
             continue
-        data_tool_count += 1
-        data_field = parsed["data"]
-        if isinstance(data_field, dict) and not data_field:
-            empty_count += 1
-        elif isinstance(data_field, list) and not data_field:
-            empty_count += 1
+        # Check for data-bearing results
+        if "data" in parsed:
+            data_tool_count += 1
+            data_field = parsed["data"]
+            if isinstance(data_field, dict) and not data_field:
+                empty_count += 1
+            elif isinstance(data_field, list) and not data_field:
+                empty_count += 1
+            continue
+        # scb_fetch returns "data_table" instead of "data"
+        if "data_table" in parsed:
+            data_tool_count += 1
+            data_field = parsed["data_table"]
+            if not data_field or not str(data_field).strip():
+                empty_count += 1
     return data_tool_count > 0 and empty_count == data_tool_count
 
 
@@ -751,6 +770,21 @@ def _build_agent_result_contract(
         used_tool_count=len(used_tool_names),
         final_requested=bool(final_requested),
     )
+
+    # Boost for responses containing fetched data tables (SCB auto-fetch, etc.)
+    _resp_lower = cleaned_response.lower()
+    if (
+        "auto_fetched" in _resp_lower
+        or "data_table" in _resp_lower
+        or ("| ---" in _resp_lower or "|---" in _resp_lower)
+    ):
+        if not actionable:
+            actionable = True
+        if confidence < 0.65:
+            confidence = max(confidence, 0.65)
+        if status == "partial":
+            status = "success"
+
     retry_recommended = status in {"partial", "blocked", "error"}
     if status == "success" and confidence < 0.55:
         retry_recommended = True
@@ -828,10 +862,28 @@ def _contract_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
                 missing_fields = list(fallback.get("missing_fields") or [])
             if not reason:
                 reason = str(fallback.get("reason") or "").strip()
+        # Boost: if the response contains auto-fetched data (SCB inline fetch)
+        # the contract should recognize the data as actionable regardless of
+        # what the sub-agent LLM reported.  The auto_fetched flag is set by
+        # scb_validate when it successfully fetches data inline.
+        response_lower = str(source.get("response") or "").lower()
+        _has_data_table = (
+            "auto_fetched" in response_lower
+            or "data_table" in response_lower
+            or ("| ---" in response_lower or "|---" in response_lower)
+        )
+        final_actionable = bool(raw_contract.get("actionable"))
+        if _has_data_table and not final_actionable:
+            final_actionable = True
+        if _has_data_table and confidence < 0.65:
+            confidence = max(confidence, 0.65)
+        if _has_data_table and normalized_status == "partial":
+            normalized_status = "success"
+
         return {
             "status": normalized_status,
             "confidence": confidence,
-            "actionable": bool(raw_contract.get("actionable")),
+            "actionable": final_actionable,
             "missing_fields": missing_fields,
             "retry_recommended": bool(raw_contract.get("retry_recommended")),
             "used_tools": used_tools,
@@ -969,9 +1021,47 @@ def _looks_actionable_agent_answer(text: str) -> bool:
         "specificera",
         "ange mer",
     )
+    # Detect responses that contain raw XML tool calls (LLM format failure)
+    # or explicit fetch error messages — these are NOT actionable.
+    _broken_markers = (
+        "<tool_call>",
+        "data fetch failed",
+        "400 bad request",
+        "scb_fetch misslyckades",
+        "kunde inte hamta den efterfragade datan",
+        "kunde inte hämta den efterfrågade datan",
+        "selection must be a valid",
+        "selection måste vara",
+        "input should be a valid dictionary",
+        "enbart discovery-verktyg",
+        "alla verktyg returnerade tom data",
+        "validering misslyckades",
+        "pydantic_core._pydantic_core.validationerror",
+    )
+    if any(marker in lowered for marker in _broken_markers):
+        return False
     if "inga " in lowered and (
         "hittades" in lowered or "fanns" in lowered or "rapporterades" in lowered
     ):
+        return True
+    # Positive detection: responses containing data tables or numeric results
+    # from SCB/Kolada/SMHI are actionable even if they contain hedging language.
+    _data_markers = (
+        "| ---",
+        "|---",
+        "auto_fetched",
+        "data_table",
+        "row_count",
+        "genomsnittslön",
+        "medianlön",
+        "medellon",
+        "medellön",
+        "antal personer",
+        "tusental",
+        "procent",
+        "kronor",
+    )
+    if any(marker in lowered for marker in _data_markers):
         return True
     return not any(marker in lowered for marker in rejection_markers)
 

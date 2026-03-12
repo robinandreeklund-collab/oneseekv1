@@ -185,7 +185,9 @@ from app.agents.new_chat.supervisor_constants import (
     _live_phase_enabled,
     _normalize_live_routing_phase,
 )
+from app.agents.new_chat.sandbox_runtime import sandbox_read_text_file
 from app.agents.new_chat.supervisor_memory import (
+    _artifact_runtime_hitl_thread_scope,
     _persist_artifact_content,
     _render_cross_session_memory_context,
     _select_cross_session_memory_entries,
@@ -218,6 +220,7 @@ from app.agents.new_chat.supervisor_state_utils import (
     _format_route_hint,
     _format_selected_agents_context,
     _format_subagent_handoffs_context,
+    _make_artifact_manifest_context_fn,
     _tool_call_name_index,
 )
 from app.agents.new_chat.supervisor_text_utils import (
@@ -249,7 +252,7 @@ _MAX_SUPERVISOR_TOOL_CALLS_PER_STEP = 1
 # If the same direct tool (e.g. scb_befolkning, smhi_vaderprognoser_metfcst)
 # is called this many times consecutively, force finalization.
 _MAX_CONSECUTIVE_SAME_TOOL = 2
-_MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "2"))
+_MAX_REPLAN_ATTEMPTS = int(os.environ.get("MAX_REPLAN_ATTEMPTS", "3"))
 
 
 _HITL_APPROVE_RE = re.compile(
@@ -1490,8 +1493,12 @@ async def create_supervisor_agent(
     runtime_hitl_cfg = (
         dict(runtime_hitl_raw)
         if isinstance(runtime_hitl_raw, dict)
-        else {"enabled": bool(runtime_hitl_raw)}
+        # Default to enabled when no config provided (None → True).
+        # Explicit False disables HITL.
+        else {"enabled": runtime_hitl_raw is not False}
     )
+    print(f"[HITL-DEBUG] runtime_hitl_raw={runtime_hitl_raw!r}")
+    print(f"[HITL-DEBUG] runtime_hitl_cfg={runtime_hitl_cfg!r}")
     compare_external_prompt = external_model_prompt or DEFAULT_EXTERNAL_SYSTEM_PROMPT
 
     def _coerce_bool(value: Any, *, default: bool = False) -> bool:
@@ -1649,6 +1656,20 @@ async def create_supervisor_agent(
     )
     if artifact_offload_storage_mode not in {"auto", "sandbox", "local"}:
         artifact_offload_storage_mode = _ARTIFACT_DEFAULT_STORAGE_MODE
+
+    # Callback for reading artifact files from the sandbox runtime.
+    # Bound to thread_id and runtime_hitl_cfg so downstream nodes
+    # (synthesizer, critic, progressive_synthesizer) can read sandbox-
+    # stored artifacts without needing direct access to these values.
+    _sandbox_read_fn = None
+    if sandbox_enabled:
+        def _sandbox_read_fn(path: str) -> str:
+            return sandbox_read_text_file(
+                thread_id=thread_id,
+                runtime_hitl=_artifact_runtime_hitl_thread_scope(runtime_hitl_cfg),
+                path=path,
+            )
+
     context_compaction_enabled = _coerce_bool(
         runtime_hitl_cfg.get("context_compaction_enabled"),
         default=True,
@@ -1949,18 +1970,31 @@ async def create_supervisor_agent(
 
     def _hitl_enabled(stage: str) -> bool:
         if not bool(runtime_hitl_cfg.get("enabled", True)):
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → False (enabled=False)")
             return False
         normalized_stage = str(stage or "").strip().lower()
         if not normalized_stage:
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → False (empty stage)")
             return False
         if isinstance(runtime_hitl_raw, bool):
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → {runtime_hitl_raw} (raw is bool)")
             return bool(runtime_hitl_raw)
+        # Check if any stage-specific key explicitly disables this stage
         aliases = {
             normalized_stage,
             f"confirm_{normalized_stage}",
             f"hitl_{normalized_stage}",
         }
-        return any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
+        # If no stage-specific keys are present at all, default to enabled.
+        # This makes HITL gates active by default — the model waits for
+        # human approval at each gate (plan, execution, synthesis).
+        has_any_stage_key = any(alias in runtime_hitl_cfg for alias in aliases)
+        if not has_any_stage_key:
+            print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → True (no stage keys)")
+            return True
+        result = any(bool(runtime_hitl_cfg.get(alias)) for alias in aliases)
+        print(f"[HITL-DEBUG] _hitl_enabled({stage!r}) → {result} (stage keys found: {aliases & set(runtime_hitl_cfg.keys())})")
+        return result
 
     # Build route_to_intent_id dynamically from registry domains so that
     # domain-specific intent_ids (väder-och-klimat, trafik-och-transport …)
@@ -3347,6 +3381,10 @@ async def create_supervisor_agent(
                     "size_bytes": len(serialized_payload.encode("utf-8")),
                     "content_sha1": content_sha1,
                     "created_at": datetime.now(UTC).isoformat(),
+                    # Store content inline so downstream nodes (synthesizer,
+                    # critic) can read it back without filesystem access —
+                    # critical for isolated k8s pods / remote sandboxes.
+                    "inline_content": serialized_payload,
                 }
             )
             seen_source_ids.add(source_id)
@@ -3536,6 +3574,12 @@ async def create_supervisor_agent(
             ]
             if not selected_tool_ids:
                 selected_tool_ids = list(trafik_tool_ids)
+        # Statistik agents always need scb_validate + scb_fetch for the
+        # catalog → validate → fetch pipeline (bigtool agent internal tools).
+        if name.startswith("statistik"):
+            for pid in ("scb_validate", "scb_fetch"):
+                if pid not in selected_tool_ids:
+                    selected_tool_ids.append(pid)
         selected_tool_ids = _prioritize_sandbox_code_tools(
             selected_tool_ids,
             agent_name=name,
@@ -3786,7 +3830,7 @@ async def create_supervisor_agent(
                 )
         config = {
             "configurable": worker_configurable,
-            "recursion_limit": 12,
+            "recursion_limit": 24,
         }
         try:
             result = await asyncio.wait_for(
@@ -3999,6 +4043,15 @@ async def create_supervisor_agent(
                         )
         if not response_text:
             response_text = str(result)
+        # Strip leaked <tool_call> XML text — the LLM emitted tool calls as
+        # text instead of structured tool_calls.  Never propagate raw XML.
+        if "<tool_call>" in response_text:
+            response_text = re.sub(
+                r"<tool_call>.*?</tool_call>",
+                "",
+                response_text,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
         used_tool_names = _tool_names_from_messages(messages_out)
         explicit_file_read_required = bool(explicit_file_read_requested)
         used_explicit_read_tool = "sandbox_read_file" in used_tool_names
@@ -4115,6 +4168,89 @@ async def create_supervisor_agent(
                 name,
                 ",".join(used_tool_names[:4]),
             )
+        # Guard: if the inner (subagent) critic assessed the response as
+        # needing more work, downgrade the contract.  Previously the critic
+        # payload was included in the return JSON but never influenced the
+        # contract — causing the outer critic to accept hallucinated answers
+        # that the inner critic correctly flagged.
+        if (
+            not filesystem_sandbox_task
+            and isinstance(critic_payload, dict)
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            critic_status = str(critic_payload.get("status") or "").strip().lower()
+            if critic_status in {"needs_more", "error", "blocked", "retry"}:
+                result_contract.update(
+                    {
+                        "status": "partial",
+                        "actionable": False,
+                        "retry_recommended": True,
+                        "confidence": min(
+                            float(result_contract.get("confidence") or 0.40),
+                            0.40,
+                        ),
+                        "reason": (
+                            f"Inner critic flagged: {critic_status}. "
+                            + str(critic_payload.get("reason") or "")[:120]
+                        ),
+                    }
+                )
+                logger.info(
+                    "LLM gate guard: inner critic flagged %s for agent=%s — "
+                    "downgrading contract to partial",
+                    critic_status,
+                    name,
+                )
+        # Guard: if discovery tools (scb_befolkning_*, scb_validate) were
+        # used but NO data-producing tools (scb_fetch, scb_preview) were
+        # called, the LLM has no real data to ground its answer on.
+        # _all_tool_data_empty misses this because it only counts tools
+        # that WERE called — zero data-tools means data_tool_count=0
+        # which returns False (safe default).
+        if (
+            not filesystem_sandbox_task
+            and str(result_contract.get("status") or "") == "success"
+        ):
+            _DATA_PRODUCING_TOOLS = {
+                "scb_fetch", "scb_preview",
+                "kolada_fetch", "kolada_preview",
+                "riksbank_fetch",
+                "smhi_fetch", "smhi_vaderprognoser_metfcst",
+            }
+            _DISCOVERY_TOOLS = {
+                "scb_validate",
+                "scb_befolkning_dodsfall", "scb_befolkning_forandringar",
+                "scb_befolkning_folkmangd", "scb_befolkning_flyttningar",
+                "scb_befolkning_namnstatistik", "scb_befolkning_medborgarskap",
+                "scb_befolkning_fodda", "scb_befolkning_alder_kon",
+                "kolada_search", "kolada_validate",
+            }
+            used_set = set(used_tool_names)
+            has_discovery = bool(used_set & _DISCOVERY_TOOLS)
+            has_data = bool(used_set & _DATA_PRODUCING_TOOLS)
+            if has_discovery and not has_data:
+                result_contract.update(
+                    {
+                        "status": "partial",
+                        "actionable": False,
+                        "retry_recommended": True,
+                        "confidence": min(
+                            float(result_contract.get("confidence") or 0.30),
+                            0.30,
+                        ),
+                        "reason": (
+                            "Enbart discovery-verktyg anvandes utan datahämtning. "
+                            "scb_fetch/preview anropades aldrig."
+                        ),
+                    }
+                )
+                logger.warning(
+                    "LLM gate guard: discovery-only tools for agent=%s "
+                    "(discovery=%s, data=%s) — downgrading contract",
+                    name,
+                    ",".join(sorted(used_set & _DISCOVERY_TOOLS)),
+                    "none",
+                )
         if _live_phase_enabled(live_routing_config, "shadow"):
             logger.info(
                 "live-routing tool-outcome phase=%s agent=%s mode=%s predicted_top1=%s margin=%s worker_top1=%s used_count=%s",
@@ -4643,7 +4779,7 @@ async def create_supervisor_agent(
                         )
                 config = {
                     "configurable": worker_configurable,
-                    "recursion_limit": 12,
+                    "recursion_limit": 24,
                 }
                 try:
                     result = await asyncio.wait_for(
@@ -5084,6 +5220,7 @@ async def create_supervisor_agent(
         extract_first_json_object_fn=_extract_first_json_object,
         render_guard_message_fn=_render_guard_message,
         max_total_steps=MAX_TOTAL_STEPS,
+        sandbox_read_fn=_sandbox_read_fn,
     )
     smart_critic_node = build_smart_critic_node(
         fallback_critic_node=critic_node,
@@ -5109,9 +5246,11 @@ async def create_supervisor_agent(
         append_datetime_context_fn=append_datetime_context,
         extract_first_json_object_fn=_extract_first_json_object,
         strip_critic_json_fn=_strip_critic_json,
+        sandbox_read_fn=_sandbox_read_fn,
     )
     progressive_synthesizer_node = build_progressive_synthesizer_node(
         truncate_for_prompt_fn=_truncate_for_prompt,
+        sandbox_read_fn=_sandbox_read_fn,
     )
 
     domain_planner_node = build_domain_planner_node(
@@ -5153,7 +5292,9 @@ async def create_supervisor_agent(
         format_selected_agents_context_fn=_format_selected_agents_context,
         format_resolved_tools_context_fn=_format_resolved_tools_context,
         format_subagent_handoffs_context_fn=_format_subagent_handoffs_context,
-        format_artifact_manifest_context_fn=_format_artifact_manifest_context,
+        format_artifact_manifest_context_fn=_make_artifact_manifest_context_fn(
+            sandbox_read_fn=_sandbox_read_fn,
+        ),
         format_cross_session_memory_context_fn=_format_cross_session_memory_context,
         format_rolling_context_summary_context_fn=_format_rolling_context_summary_context,
         coerce_supervisor_tool_calls_fn=_coerce_supervisor_tool_calls,
@@ -5529,6 +5670,9 @@ async def create_supervisor_agent(
                 "size_bytes": len(serialized_payload.encode("utf-8")),
                 "content_sha1": content_sha1,
                 "created_at": datetime.now(UTC).isoformat(),
+                # Store content inline so downstream nodes can read it
+                # back without filesystem access (k8s pod isolation).
+                "inline_content": serialized_payload,
             }
             new_entries.append(entry)
             existing_source_ids.add(source_id)
@@ -5668,6 +5812,26 @@ async def create_supervisor_agent(
             state.get("messages") or [],
             turn_id=current_turn_id or None,
         )
+        # Track whether any call entry used a data-producing tool with a
+        # successful contract.  This lets the response_layer know whether
+        # the final answer is grounded in real tool data.
+        _DATA_TOOLS_FOR_GROUNDING = {
+            "scb_fetch", "scb_preview",
+            "kolada_fetch", "kolada_preview",
+            "riksbank_fetch",
+            "smhi_fetch", "smhi_vaderprognoser_metfcst",
+            "trafikverket_trainstation",
+        }
+        is_data_grounded = bool(state.get("data_grounded"))
+        if not is_data_grounded and call_entries:
+            for entry in call_entries:
+                entry_tools = entry.get("used_tools")
+                if isinstance(entry_tools, list) and set(entry_tools) & _DATA_TOOLS_FOR_GROUNDING:
+                    entry_contract = _contract_from_payload(entry)
+                    if str(entry_contract.get("status") or "") in {"success", "partial"}:
+                        is_data_grounded = True
+                        break
+        updates["data_grounded"] = is_data_grounded
         if not parallel_preview and call_entries:
             for item in reversed(call_entries):
                 response_text = _strip_critic_json(

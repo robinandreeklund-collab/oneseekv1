@@ -1,6 +1,7 @@
 """State formatting, message processing, and context building for supervisor agent."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -9,6 +10,11 @@ from app.agents.new_chat.supervisor_constants import (
     _ARTIFACT_CONTEXT_MAX_ITEMS,
     _CONTEXT_COMPACTION_DEFAULT_SUMMARY_MAX_CHARS,
     _SUBAGENT_MAX_HANDOFFS_IN_PROMPT,
+)
+from app.agents.new_chat.supervisor_memory import (
+    SandboxReadFn,
+    _format_artifact_contents_for_context,
+    _load_recent_artifact_contents,
 )
 from app.agents.new_chat.supervisor_text_utils import _truncate_for_prompt
 
@@ -178,10 +184,32 @@ def _format_subagent_handoffs_context(state: dict[str, Any]) -> str | None:
     return "<subagent_handoffs>\n" + "\n".join(lines) + "\n</subagent_handoffs>"
 
 
-def _format_artifact_manifest_context(state: dict[str, Any]) -> str | None:
+def _format_artifact_manifest_context(
+    state: dict[str, Any],
+    *,
+    sandbox_read_fn: SandboxReadFn | None = None,
+) -> str | None:
+    """Format artifact manifest with actual content read-back.
+
+    When artifact content can be loaded from disk/sandbox it is included
+    inline so the supervisor LLM can reason over the real data instead of
+    just seeing URI references and short summaries.
+    """
     artifacts = state.get("artifact_manifest")
     if not isinstance(artifacts, list) or not artifacts:
         return None
+
+    # ── Read-back: load actual artifact content for the supervisor ──
+    artifact_contents = _load_recent_artifact_contents(
+        artifacts,
+        sandbox_read_fn=sandbox_read_fn,
+    )
+    if artifact_contents:
+        content_block = _format_artifact_contents_for_context(artifact_contents)
+        if content_block:
+            return content_block
+
+    # ── Fallback: URI-only manifest when content cannot be read ──
     lines: list[str] = []
     for item in artifacts[-_ARTIFACT_CONTEXT_MAX_ITEMS:]:
         if not isinstance(item, dict):
@@ -207,6 +235,19 @@ def _format_artifact_manifest_context(state: dict[str, Any]) -> str | None:
     if not lines:
         return None
     return "<artifact_manifest>\n" + "\n".join(lines) + "\n</artifact_manifest>"
+
+
+def _make_artifact_manifest_context_fn(
+    sandbox_read_fn: SandboxReadFn | None = None,
+) -> Callable[[dict[str, Any]], str | None]:
+    """Factory that returns a state→context formatter with sandbox_read_fn bound."""
+
+    def _formatter(state: dict[str, Any]) -> str | None:
+        return _format_artifact_manifest_context(
+            state, sandbox_read_fn=sandbox_read_fn
+        )
+
+    return _formatter
 
 
 def _format_cross_session_memory_context(state: dict[str, Any]) -> str | None:

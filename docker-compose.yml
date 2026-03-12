@@ -45,6 +45,7 @@ services:
     volumes:
       - ./surfsense_backend/app:/app/app
       - shared_temp:/tmp
+      - sandbox_artifacts:/tmp/oneseek-artifacts
       # Uncomment and edit the line below to enable Obsidian vault indexing
       # - /path/to/your/obsidian/vault:/obsidian-vault:ro
     env_file:
@@ -163,3 +164,4 @@ volumes:
   pgadmin_data:
   redis_data:
   shared_temp:
+  sandbox_artifacts:

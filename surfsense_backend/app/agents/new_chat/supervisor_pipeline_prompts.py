@@ -44,9 +44,21 @@ Regler:
 - Max 4 delfragor.
 - Fokusera pa SEMANTISK uppdelning, inte syntaktisk.
 
+VIKTIGT — Analytiska och berakningsfragor:
+Manga fragor KRÄVER data fran FLERA kallor, eller data + berakning:
+- "Nettoinvandring?" → q1: hamta invandring (statistik), q2: hamta utvandring (statistik)
+  → Agenten beraknar netto fran bada dataserierna.
+- "Vanligaste dodsorsaken?" → EN delfråga (statistik) ar tillracklig,
+  men formulera den BRETT: "Hamta dodsorsaksstatistik per orsak for att kunna rangordna".
+- "Hur paverkar vadret turismen i Stockholm?" → q1: vaderdata (vader), q2: turismstatistik (statistik)
+Tolka ALDRIG fragan sa snavt att viktig data utelamnas. Om fragan fragar
+"vilken/storst/vanligast" maste delfrågan uttryckligen be om ALL relevant data
+for jamforelse/rangordning.
+
 Exempel:
 - "Hur manga bor i Goteborg och vad ar vadret dar?" -> 2 delfragor (statistik + vader), inga beroenden.
 - "Jamfor folkmangden i Stockholm och Goteborg, visa sedan pa karta" -> 2+1: tva statistik-fragor (parallella) + en kart-fraga (beror pa bada).
+- "Vilket lan har hogst medelinkomst?" -> 1 delfråga: "Hamta medelinkomst per lan fran SCB for att kunna rangordna" (statistik).
 
 INSTRUKTIONER FÖR OUTPUT:
 - All intern resonering ska skrivas i "thinking"-faltet.
@@ -105,6 +117,15 @@ Regler:
 - Om anvandaren explicit ber om att lasa filinnehall: lagg in ett steg som faktiskt laser filen
   (sandbox_read_file) innan slutsats.
 - Foredra artifact-first: stora mellanresultat ska kunna refereras via artifact path/uri.
+
+ANALYTISKA FRAGOR:
+Manga fragor kraver mer an bara en enkel datahamtning. Identifiera nar fragan
+kraver analys, berakning eller jamforelse — och skapa steg darefter:
+- "Vanligaste/storst/minst/hogst?" → Steg 1: hamta ALL relevant data, Steg 2: analysera och rangordna
+- "Netto-X?" → Steg 1: hamta komponent A, Steg 2: hamta komponent B (parallellt om mojligt), Steg 3: berakna
+- "Jamfor X och Y" → Steg 1: hamta X, Steg 2: hamta Y (parallellt), Steg 3: sammanstall
+- "Trend/utveckling over tid?" → Steg 1: hamta tidsserie, Steg 2: analysera forandringar
+Skapa ALDRIG en plan med bara "hamta data" nar fragan kraver analys av datan.
 
 INSTRUKTIONER FÖR OUTPUT:
 - All intern resonering ska skrivas i "thinking"-fältet.
@@ -168,6 +189,9 @@ Regler:
 - Kort och tydligt pa svenska.
 - For mixade fragor: strukturera svaret i sektioner per deldoman.
 - Om kallsvaret innehaller guardrail/no-data/not-found: bevara det, hitta inte pa data.
+- ALDRIG hitta pa siffror eller statistik. Om kallsvaret inte innehaller
+  faktiska datatabeller (data_table) eller specifika siffror, skriv att
+  data inte kunde hamtas. Fabricera ALDRIG nummer.
 - "response"-faltet ska BARA innehalla det slutgiltiga svaret till anvandaren,
   inga numrerade steg, ingen planering, inget "jag ska nu...".
 

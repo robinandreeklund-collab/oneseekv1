@@ -12,6 +12,11 @@ from ..structured_schemas import (
     pydantic_to_response_format,
     structured_output_enabled,
 )
+from ..supervisor_memory import (
+    SandboxReadFn,
+    _format_artifact_contents_for_context,
+    _load_recent_artifact_contents,
+)
 
 _FILESYSTEM_QUERY_RE = re.compile(
     r"(/workspace|/tmp|sandbox_|\\b(file|files|fil|filer|directory|katalog|mapp|read|write|l[aä]s|skriv)\\b)",
@@ -34,6 +39,23 @@ _GUARD_STYLE_MARKERS = (
     "loop guard",
     "skicka gärna frågan igen",
     "strikt enkel exekvering",
+)
+# Markers that indicate an SCB fetch failure — the subagent may still
+# produce plausible-sounding text, but no real data was retrieved.
+_SCB_FETCH_FAILURE_MARKERS = (
+    "kunde inte hamta",
+    "kunde inte hämta",
+    "fetch failed",
+    "data fetch failed",
+    "400 bad request",
+    "scb_fetch misslyckades",
+    "<tool_call>",  # LLM emitted XML tool call as text = format failure
+    '"next_step"',  # scb_validate succeeded but scb_fetch was never called
+)
+# Regex to strip leaked <tool_call> XML blocks from responses.
+_TEXT_TOOL_CALL_STRIP_RE = re.compile(
+    r"<tool_call>.*?</tool_call>",
+    re.DOTALL | re.IGNORECASE,
 )
 _SYNTH_PLACEHOLDER_RESPONSES = {
     "guardrail",
@@ -61,6 +83,8 @@ def _should_passthrough_synthesizer(
     if any(marker in lowered for marker in _NO_DATA_MARKERS):
         return True
     if any(marker in lowered for marker in _GUARD_STYLE_MARKERS):
+        return True
+    if any(marker in lowered for marker in _SCB_FETCH_FAILURE_MARKERS):
         return True
     return False
 
@@ -97,6 +121,28 @@ def _candidate_is_degenerate(source_response: str, candidate: str) -> bool:
     return False
 
 
+def _extract_best_agent_response(state: dict[str, Any]) -> str:
+    """Extract the best available agent response from recent_agent_calls.
+
+    Used as a last-resort fallback when final_response is empty but agents
+    DID produce output (e.g. budget exhaustion with partial results).
+    """
+    recent_calls: list[dict[str, Any]] = list(state.get("recent_agent_calls") or [])
+    if not recent_calls:
+        return ""
+    # Prefer the most recent call with a non-empty response
+    for call in reversed(recent_calls):
+        response = str(call.get("response") or "").strip()
+        if not response or len(response) < 20:
+            continue
+        # Skip responses that are clearly just error/guard messages
+        lowered = response.lower()
+        if any(marker in lowered for marker in _NO_DATA_MARKERS + _GUARD_STYLE_MARKERS):
+            continue
+        return response
+    return ""
+
+
 def build_synthesizer_node(
     *,
     llm: Any,
@@ -106,6 +152,7 @@ def build_synthesizer_node(
     append_datetime_context_fn: Callable[[str], str],
     extract_first_json_object_fn: Callable[[str], dict[str, Any]],
     strip_critic_json_fn: Callable[[str], str],
+    sandbox_read_fn: SandboxReadFn | None = None,
 ):
     async def synthesizer_node(
         state: dict[str, Any],
@@ -118,7 +165,16 @@ def build_synthesizer_node(
             state.get("final_response") or state.get("final_agent_response") or ""
         ).strip()
         if not source_response:
-            return {}
+            # Fallback: when orchestration budget is exhausted without populating
+            # final_response, extract the best available agent response from
+            # recent_agent_calls so the user gets *something* instead of silence.
+            source_response = _extract_best_agent_response(state)
+            if not source_response:
+                return {}
+        # Strip leaked <tool_call> XML blocks that the LLM emitted as text
+        # instead of structured tool calls — never let raw XML reach the user.
+        if "<tool_call>" in source_response:
+            source_response = _TEXT_TOOL_CALL_STRIP_RE.sub("", source_response).strip()
         latest_user_query = latest_user_query_fn(state.get("messages") or [])
         graph_complexity = str(state.get("graph_complexity") or "").strip().lower()
         if graph_complexity == "simple":
@@ -182,14 +238,27 @@ def build_synthesizer_node(
             prompt_template = synthesizer_prompt_template
         
         prompt = append_datetime_context_fn(prompt_template)
-        synth_input = json.dumps(
-            {
-                "query": latest_user_query,
-                "response": source_response,
-                "resolved_intent": state.get("resolved_intent") or {},
-            },
-            ensure_ascii=True,
+
+        # Inject artifact contents so the synthesizer has access to full
+        # tool data that was offloaded from context during artifact indexing.
+        artifact_data_context = ""
+        artifact_contents = _load_recent_artifact_contents(
+            state.get("artifact_manifest"),
+            sandbox_read_fn=sandbox_read_fn,
         )
+        if artifact_contents:
+            artifact_data_context = _format_artifact_contents_for_context(
+                artifact_contents
+            )
+
+        synth_payload: dict[str, Any] = {
+            "query": latest_user_query,
+            "response": source_response,
+            "resolved_intent": state.get("resolved_intent") or {},
+        }
+        if artifact_data_context:
+            synth_payload["artifact_data"] = artifact_data_context
+        synth_input = json.dumps(synth_payload, ensure_ascii=True)
         refined_response = source_response
         try:
             _invoke_kwargs: dict[str, Any] = {"max_tokens": 800}
