@@ -123,6 +123,13 @@ services:
   #     - redis
   #     - celery_worker
 
+  # Lightpanda MCP Server — headless browser automation for the AI agent
+  lightpanda-mcp:
+    build: ./lightpanda_mcp_server
+    ports:
+      - "${LIGHTPANDA_MCP_PORT:-8081}:8081"
+    restart: unless-stopped
+
   electric:
     image: electricsql/electric:latest
     ports:
